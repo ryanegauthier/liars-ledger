@@ -10,6 +10,20 @@ A browser extension that surfaces the voting records of politicians mentioned in
 2. Matches them to their official voting record
 3. Surfaces relevant votes in a sidebar — no searching, no tab switching
 
+## Design Philosophy
+
+Worth Noting is a neutral research tool, not a gotcha machine. It surfaces 
+voting records whether they confirm or contradict what a politician is saying. 
+The record might show they've been consistent, that they've evolved, or that 
+they've voted both ways over time — all of that is worth knowing.
+
+The sidebar never editorializes. It shows:
+- 🟢 Votes in line with the stated position
+- 🔴 Votes against the stated position
+- ⚪ No votes found on this topic (also notable)
+
+Draw your own conclusions.
+
 ## Data Sources
 
 - [ProPublica Congress API](https://projects.propublica.org/api-docs/congress-api/) — recent votes and bill details (free, no key required)
