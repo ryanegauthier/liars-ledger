@@ -1,0 +1,19 @@
+# API Keys - NEVER commit this
+src/config.js
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+
+# Build artifacts
+*.zip
+dist/
+
+# Node (if tooling is added later)
+node_modules/
+package-lock.json
