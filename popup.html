@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>VoteCheck</title>
+  <title>Worth Noting</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -54,18 +54,13 @@
       color: #8a8680;
     }
 
-    /* Toggle switch */
     .toggle {
       position: relative;
       width: 40px;
       height: 22px;
     }
 
-    .toggle input {
-      opacity: 0;
-      width: 0;
-      height: 0;
-    }
+    .toggle input { opacity: 0; width: 0; height: 0; }
 
     .slider {
       position: absolute;
@@ -88,19 +83,34 @@
       transition: transform 0.2s, background 0.2s;
     }
 
-    input:checked + .slider {
-      background: #1e3a2f;
-    }
-
+    input:checked + .slider { background: #1e3a2f; }
     input:checked + .slider::before {
       transform: translateX(18px);
       background: #4caf82;
     }
 
-    .info {
+    .scan-btn {
+      width: 100%;
+      padding: 8px;
+      background: #c8a96e;
+      color: #0f1117;
+      border: none;
+      border-radius: 4px;
+      font-family: 'Georgia', serif;
+      font-size: 13px;
+      cursor: pointer;
+      margin-bottom: 10px;
+      transition: background 0.2s;
+    }
+
+    .scan-btn:hover { background: #d4b87e; }
+    .scan-btn:disabled { background: #4a4540; color: #8a8680; cursor: not-allowed; }
+
+    .status {
       font-size: 11px;
-      color: #5a5855;
+      color: #8a8680;
       line-height: 1.5;
+      min-height: 16px;
     }
 
     .version {
@@ -114,22 +124,22 @@
 <body>
   <div class="header">
     <div class="logo">✓</div>
-    <h1>VoteCheck</h1>
+    <h1>Worth Noting</h1>
   </div>
 
   <div class="status-row">
-    <span class="status-label">Active on this page</span>
+    <span class="status-label">Active</span>
     <label class="toggle">
       <input type="checkbox" id="enableToggle" checked>
       <span class="slider"></span>
     </label>
   </div>
 
-  <p class="info">
-    Detects politicians in articles and surfaces their voting records in real time.
-  </p>
+  <button class="scan-btn" id="scanBtn">Scan This Page</button>
 
-  <div class="version">v0.1.0 — skeleton</div>
+  <div class="status" id="status">Ready.</div>
+
+  <div class="version">v0.2.0 — step 2</div>
 
   <script src="popup.js"></script>
 </body>
