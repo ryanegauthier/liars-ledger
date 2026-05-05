@@ -1,5 +1,6 @@
 # API Keys - NEVER commit this
 src/config.js
+src/Your API key.eml
 
 # OS
 .DS_Store

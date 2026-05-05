@@ -42,9 +42,9 @@ function fetchJSON(url) {
 async function fetchAllMembers() {
   const members = [];
   let offset = 0;
-  const limit = 250; // max allowed by Congress.gov API
+  const limit = 250;
 
-  console.log("Fetching members from Congress.gov...");
+  console.log("Fetching current members from Congress.gov...");
 
   while (true) {
     const url = `https://api.congress.gov/v3/member?limit=${limit}&offset=${offset}&currentMember=true&api_key=${API_KEY}&format=json`;
@@ -55,12 +55,9 @@ async function fetchAllMembers() {
     members.push(...data.members);
     console.log(`  → fetched ${members.length} members so far...`);
 
-    // If we got fewer than the limit, we're done
     if (data.members.length < limit) break;
 
     offset += limit;
-
-    // Small delay to be polite to the API
     await new Promise(r => setTimeout(r, 300));
   }
 
@@ -73,8 +70,13 @@ function normalizeKey(name) {
   return name.toLowerCase().trim();
 }
 
+// Strip middle names/initials: "Adam B. Schiff" → "Adam Schiff"
+function stripMiddle(firstName, lastName) {
+  const firstOnly = firstName.trim().split(/\s+/)[0];
+  return `${firstOnly} ${lastName}`;
+}
+
 function getChamber(member) {
-  // Congress.gov returns terms array; check most recent term
   if (!member.terms || !member.terms.item || member.terms.item.length === 0) {
     return "unknown";
   }
@@ -87,13 +89,28 @@ function buildAliases(firstName, lastName, chamber) {
   const title = chamber === "senate" ? "Sen." : "Rep.";
   const titleFull = chamber === "senate" ? "Senator" : "Representative";
   const full = `${firstName} ${lastName}`;
+  const shortFull = stripMiddle(firstName, lastName); // "Adam Schiff"
+  const firstOnly = firstName.trim().split(/\s+/)[0]; // "Adam"
 
+  // Full name variants
   aliases.add(normalizeKey(full));
+  aliases.add(normalizeKey(shortFull));
   aliases.add(normalizeKey(lastName));
+
+  // Titled variants - last name only
   aliases.add(normalizeKey(`${title} ${lastName}`));
-  aliases.add(normalizeKey(`${title} ${full}`));
   aliases.add(normalizeKey(`${titleFull} ${lastName}`));
+
+  // Titled variants - full name
+  aliases.add(normalizeKey(`${title} ${full}`));
   aliases.add(normalizeKey(`${titleFull} ${full}`));
+
+  // Titled variants - short name (no middle)
+  aliases.add(normalizeKey(`${title} ${shortFull}`));
+  aliases.add(normalizeKey(`${titleFull} ${shortFull}`));
+
+  // First + Last only (no title)
+  aliases.add(normalizeKey(`${firstOnly} ${lastName}`));
 
   return [...aliases];
 }
@@ -106,13 +123,12 @@ async function buildDictionary() {
 
   const dictionary = {};
   let count = 0;
+  let skipped = 0;
 
   for (const member of members) {
-    // Congress.gov name format: "Last, First" or just use name fields
     let firstName = member.firstName || "";
     let lastName = member.lastName || "";
 
-    // Some entries have a "name" field formatted as "Last, First"
     if ((!firstName || !lastName) && member.name) {
       const parts = member.name.split(",").map(s => s.trim());
       if (parts.length >= 2) {
@@ -122,7 +138,8 @@ async function buildDictionary() {
     }
 
     if (!firstName || !lastName) {
-      console.warn("  Skipping member with missing name:", member);
+      console.warn("  Skipping member with missing name:", member.bioguideId);
+      skipped++;
       continue;
     }
 
@@ -140,7 +157,7 @@ async function buildDictionary() {
       state: member.state || "",
       party: member.partyName || "",
       chamber: chamber,
-      bioguide_id: member.bioguideId || "",   // Congress.gov primary ID
+      bioguide_id: member.bioguideId || "",
       depiction: member.depiction?.imageUrl || null,
       aliases: aliases,
     };
@@ -155,13 +172,12 @@ async function buildDictionary() {
     count++;
   }
 
-  // Write output
   const outDir = path.join(__dirname, "src", "data");
   fs.mkdirSync(outDir, { recursive: true });
   const outPath = path.join(outDir, "politicians.json");
   fs.writeFileSync(outPath, JSON.stringify(dictionary, null, 2));
 
-  console.log(`\nDone. ${count} members indexed.`);
+  console.log(`\nDone. ${count} members indexed. ${skipped} skipped.`);
   console.log(`Dictionary written to: ${outPath}`);
   console.log(`Total lookup keys (including aliases): ${Object.keys(dictionary).length}`);
 }
