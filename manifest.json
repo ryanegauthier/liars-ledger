@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "VoteCheck",
-  "version": "0.1.0",
-  "description": "Real-time voting record fact-checker for news articles.",
+  "name": "Worth Noting",
+  "version": "0.4.0",
+  "description": "Surfaces voting records of politicians mentioned in news articles.",
 
   "permissions": [
     "activeTab",
@@ -10,7 +10,7 @@
   ],
 
   "host_permissions": [
-    "https://api.propublica.org/*",
+    "https://api.congress.gov/*",
     "https://api.votesmart.org/*"
   ],
 
@@ -28,13 +28,23 @@
 
   "action": {
     "default_popup": "popup.html",
-    "default_title": "VoteCheck",
+    "default_title": "Worth Noting",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
       "128": "icons/icon128.png"
     }
   },
+
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "src/data/politicians.json",
+        "src/config.js"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ],
 
   "icons": {
     "16": "icons/icon16.png",

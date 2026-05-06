@@ -4,7 +4,6 @@
 const browser = window.browser || window.chrome;
 
 // --- Article body detection ---
-// Try selectors in priority order, fall back to body
 function findArticleBody() {
   const selectors = [
     "article",
@@ -18,11 +17,11 @@ function findArticleBody() {
     ".content-body",
     "#article-body",
     "#main-content",
-    ".ArticleBody",              // Reuters
-    ".article__body",            // The Guardian
-    ".StoryBodyCompanionColumn", // NYT
-    ".article-text",             // Fox News
-    ".zn-body__paragraph",       // CNN
+    ".ArticleBody",
+    ".article__body",
+    ".StoryBodyCompanionColumn",
+    ".article-text",
+    ".zn-body__paragraph",
   ];
 
   for (const selector of selectors) {
@@ -38,24 +37,14 @@ function findArticleBody() {
 }
 
 // --- Politician name extraction ---
-// Matches patterns like:
-//   Sen. Warren / Senator Warren
-//   Rep. Bush / Representative Bush
-//   President Biden / Vice President Harris
-//   Governor Newsom / Gov. Newsom
-//   Mayor Adams
-//   Secretary Blinken
-
-const TITLE_PATTERN = /\b(?:President|Vice\s+President|Sen\.?|Senator|Rep\.?|Representative|Gov\.?|Governor|Mayor|Secretary|Sec\.?)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/g;
+const TITLE_PATTERN = /\b(?:President|Vice\s+President|Sen\.?|Senator|Rep\.?|Representative|Gov\.?|Governor|Mayor|Secretary|Sec\.?)\s+([A-Z][a-z]+(?:[-'\s][A-Z][a-z]+)?)/g;
 
 function extractPoliticianNames(text) {
   const found = new Set();
-
   let match;
   while ((match = TITLE_PATTERN.exec(text)) !== null) {
     found.add(match[0].trim());
   }
-
   return [...found];
 }
 
@@ -67,19 +56,17 @@ function scanPage() {
   const articleText = articleEl.innerText;
 
   if (articleText.length < 100) {
-    console.warn("[Worth Noting] article text too short, may not be a news page");
     return { error: "No article content detected on this page." };
   }
 
   const politicians = extractPoliticianNames(articleText);
-
-  if (politicians.length === 0) {
-    console.log("[Worth Noting] no politician names found");
-    return { politicians: [], text_length: articleText.length };
-  }
-
   console.log("[Worth Noting] politicians found:", politicians);
-  return { politicians, text_length: articleText.length };
+
+  return {
+    politicians,
+    articleText: articleText.slice(0, 5000), // cap at 5k chars for message size
+    text_length: articleText.length
+  };
 }
 
 // --- Message listener ---
