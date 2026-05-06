@@ -2,8 +2,6 @@
 // Handles all Congress.gov API calls from the background worker.
 // Uses session caching and batching to stay within free tier limits.
 
-const browser = globalThis.browser || globalThis.chrome;
-
 const BASE_URL = "https://api.congress.gov/v3";
 const CURRENT_CONGRESS = 119;
 
@@ -86,11 +84,38 @@ async function searchBillsByKeyword(keyword, apiKey, limit = 10) {
 }
 
 // --- Filter bills by topic relevance ---
+const TOPIC_TO_POLICY_AREA = {
+  "foreign policy": ["international affairs", "foreign policy", "armed forces", "international trade"],
+  "labor": ["labor and employment", "economics and public finance", "labor"],
+  "health care": ["health", "medicare", "medicaid"],
+  "climate change": ["environmental protection", "energy", "climate"],
+  "immigration": ["immigration", "border security"],
+  "firearms": ["firearms", "crime and law enforcement"],
+  "taxation": ["taxation", "economics and public finance"],
+  "defense": ["armed forces and national security", "defense"],
+  "education": ["education", "higher education"],
+  "infrastructure": ["transportation and public works", "infrastructure"],
+  "technology": ["science, technology, communications", "technology"],
+  "trade": ["foreign trade and international finance", "trade"],
+  "housing": ["housing and community development", "housing"],
+  "criminal justice": ["crime and law enforcement", "criminal justice"],
+  "social security": ["social welfare", "social security"],
+  "elections": ["government operations and politics", "elections"],
+  "federal budget": ["economics and public finance", "budget"],
+  "drug policy": ["crime and law enforcement", "drug trafficking"],
+};
+
 function billMatchesTopic(bill, topic) {
   const title = (bill.title || "").toLowerCase();
   const policyArea = (bill.policyArea?.name || "").toLowerCase();
   const topicLower = topic.toLowerCase();
-  return title.includes(topicLower) || policyArea.includes(topicLower);
+
+  // Direct match first
+  if (title.includes(topicLower) || policyArea.includes(topicLower)) return true;
+
+  // Check mapped policy areas
+  const mappedAreas = TOPIC_TO_POLICY_AREA[topicLower] || [];
+  return mappedAreas.some(area => policyArea.includes(area) || title.includes(area));
 }
 
 // --- Main: look up a politician's record on given topics ---

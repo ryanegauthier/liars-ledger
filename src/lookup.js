@@ -1,8 +1,6 @@
 // Worth Noting - src/lookup.js
 // Resolves politician names extracted from articles to dictionary entries.
 
-const browser = window.browser || chrome;
-
 let _dictionary = null;
 
 // --- People who appear in news but aren't in Congress ---

@@ -16,7 +16,7 @@ toggle.addEventListener("change", () => {
 
 // Load API key from storage (set once by user)
 async function getApiKey() {
-  return CONFIG?.congressApiKey || null;
+  return CONFIG?.CONGRESS_API_KEY || null;
 }
 
 // Scan button
