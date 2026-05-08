@@ -8,7 +8,7 @@
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
     body {
-      width: 240px;
+      width: 320px;
       font-family: 'Georgia', serif;
       background: #0f1117;
       color: #e8e4d9;
@@ -40,6 +40,7 @@
       font-weight: normal;
       letter-spacing: 0.05em;
       color: #c8a96e;
+      flex: 1;
     }
 
     .status-row {
@@ -49,19 +50,10 @@
       margin-bottom: 12px;
     }
 
-    .status-label {
-      font-size: 12px;
-      color: #8a8680;
-    }
+    .status-label { font-size: 12px; color: #8a8680; }
 
-    .toggle {
-      position: relative;
-      width: 40px;
-      height: 22px;
-    }
-
+    .toggle { position: relative; width: 40px; height: 22px; }
     .toggle input { opacity: 0; width: 0; height: 0; }
-
     .slider {
       position: absolute;
       inset: 0;
@@ -70,24 +62,17 @@
       cursor: pointer;
       transition: background 0.2s;
     }
-
     .slider::before {
       content: '';
       position: absolute;
-      width: 16px;
-      height: 16px;
-      left: 3px;
-      top: 3px;
+      width: 16px; height: 16px;
+      left: 3px; top: 3px;
       background: #8a8680;
       border-radius: 50%;
       transition: transform 0.2s, background 0.2s;
     }
-
     input:checked + .slider { background: #1e3a2f; }
-    input:checked + .slider::before {
-      transform: translateX(18px);
-      background: #4caf82;
-    }
+    input:checked + .slider::before { transform: translateX(18px); background: #4caf82; }
 
     .scan-btn {
       width: 100%;
@@ -102,7 +87,6 @@
       margin-bottom: 10px;
       transition: background 0.2s;
     }
-
     .scan-btn:hover { background: #d4b87e; }
     .scan-btn:disabled { background: #4a4540; color: #8a8680; cursor: not-allowed; }
 
@@ -111,10 +95,65 @@
       color: #8a8680;
       line-height: 1.5;
       min-height: 16px;
+      margin-bottom: 12px;
     }
 
+    /* Log panel */
+    .log-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 4px;
+    }
+
+    .log-label {
+      font-size: 10px;
+      color: #5a5855;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .log-actions {
+      display: flex;
+      gap: 6px;
+    }
+
+    .log-btn {
+      font-size: 10px;
+      color: #c8a96e;
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 0;
+      font-family: 'Georgia', serif;
+    }
+    .log-btn:hover { color: #d4b87e; }
+
+    .log-panel {
+      background: #080a0e;
+      border: 1px solid #2a2d35;
+      border-radius: 4px;
+      padding: 6px 8px;
+      height: 140px;
+      overflow-y: auto;
+      font-family: 'Courier New', monospace;
+      font-size: 10px;
+      color: #5a8a6a;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .log-panel:empty::before {
+      content: 'No log entries yet. Click Scan This Page to begin.';
+      color: #3a3835;
+    }
+
+    .log-entry-warn  { color: #c8a96e; }
+    .log-entry-error { color: #c85a5a; }
+
     .version {
-      margin-top: 12px;
+      margin-top: 10px;
       font-size: 10px;
       color: #3a3835;
       text-align: right;
@@ -136,10 +175,18 @@
   </div>
 
   <button class="scan-btn" id="scanBtn">Scan This Page</button>
-
   <div class="status" id="status">Ready.</div>
 
-  <div class="version">v0.2.0 — step 2</div>
+  <div class="log-header">
+    <span class="log-label">Debug Log</span>
+    <div class="log-actions">
+      <button class="log-btn" id="copyBtn">Copy</button>
+      <button class="log-btn" id="clearBtn">Clear</button>
+    </div>
+  </div>
+  <div class="log-panel" id="logPanel"></div>
+
+  <div class="version">v0.4.1</div>
 
   <script src="src/config.js"></script>
   <script src="popup.js"></script>

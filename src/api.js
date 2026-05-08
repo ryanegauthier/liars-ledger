@@ -47,10 +47,11 @@ async function apiFetch(path, apiKey) {
 }
 
 // --- Get sponsored legislation for a member filtered by keyword ---
-async function getMemberSponsoredBills(bioguideId, apiKey, limit = 20) {
+async function getMemberSponsoredBills(bioguideId, apiKey, limit = 50) {
   const path = `/member/${bioguideId}/sponsored-legislation?limit=${limit}&congress=${CURRENT_CONGRESS}`;
   try {
     const data = await apiFetch(path, apiKey);
+    console.log("[Worth Noting] sponsored bills raw:", JSON.stringify(data.sponsoredLegislation?.slice(0,3), null, 2));
     return data.sponsoredLegislation || [];
   } catch (e) {
     console.warn("[Worth Noting] sponsored bills fetch failed:", e.message);
@@ -59,10 +60,11 @@ async function getMemberSponsoredBills(bioguideId, apiKey, limit = 20) {
 }
 
 // --- Get cosponsored legislation for a member ---
-async function getMemberCosponsoredBills(bioguideId, apiKey, limit = 20) {
+async function getMemberCosponsoredBills(bioguideId, apiKey, limit = 50) {
   const path = `/member/${bioguideId}/cosponsored-legislation?limit=${limit}&congress=${CURRENT_CONGRESS}`;
   try {
     const data = await apiFetch(path, apiKey);
+    console.log("[Worth Noting] cosponsored bills raw:", JSON.stringify(data.cosponsoredLegislation?.slice(0,3), null, 2));
     return data.cosponsoredLegislation || [];
   } catch (e) {
     console.warn("[Worth Noting] cosponsored bills fetch failed:", e.message);
@@ -83,39 +85,35 @@ async function searchBillsByKeyword(keyword, apiKey, limit = 10) {
   }
 }
 
-// --- Filter bills by topic relevance ---
-const TOPIC_TO_POLICY_AREA = {
-  "foreign policy": ["international affairs", "foreign policy", "armed forces", "international trade"],
-  "labor": ["labor and employment", "economics and public finance", "labor"],
-  "health care": ["health", "medicare", "medicaid"],
-  "climate change": ["environmental protection", "energy", "climate"],
-  "immigration": ["immigration", "border security"],
-  "firearms": ["firearms", "crime and law enforcement"],
-  "taxation": ["taxation", "economics and public finance"],
-  "defense": ["armed forces and national security", "defense"],
-  "education": ["education", "higher education"],
-  "infrastructure": ["transportation and public works", "infrastructure"],
-  "technology": ["science, technology, communications", "technology"],
-  "trade": ["foreign trade and international finance", "trade"],
-  "housing": ["housing and community development", "housing"],
-  "criminal justice": ["crime and law enforcement", "criminal justice"],
-  "social security": ["social welfare", "social security"],
-  "elections": ["government operations and politics", "elections"],
-  "federal budget": ["economics and public finance", "budget"],
-  "drug policy": ["crime and law enforcement", "drug trafficking"],
+// Keywords to match against bill titles for each topic
+const TOPIC_TITLE_KEYWORDS = {
+  "foreign policy":   ["foreign", "international", "sanctions", "diplomatic", "treaty", "nato", "ukraine", "israel", "iran", "trade agreement"],
+  "labor": ["labor law", "worker", "wage", "employment", "union", "workforce", "pension", "overtime", "workplace", "workers compensation", "minimum wage"],
+  "health care":      ["health", "medicare", "medicaid", "drug", "prescription", "hospital", "patient", "insurance", "opioid"],
+  "climate change":   ["climate", "emission", "carbon", "clean energy", "renewable", "fossil", "environmental"],
+  "immigration":      ["immigration", "immigrant", "border", "asylum", "visa", "daca", "deportat"],
+  "firearms":         ["firearm", "gun", "weapon", "ammunition", "background check"],
+  "taxation":         ["tax", "irs", "revenue", "deduction", "fiscal"],
+  "defense":          ["defense", "military", "veteran", "armed forces", "pentagon", "weapon"],
+  "education":        ["education", "school", "student", "teacher", "college", "loan", "tuition"],
+  "infrastructure":   ["infrastructure", "highway", "bridge", "transit", "broadband", "rail"],
+  "technology":       ["technology", "cyber", "data", "artificial intelligence", "privacy", "surveillance"],
+  "trade":            ["trade", "tariff", "import", "export", "manufacturing"],
+  "housing":          ["housing", "rent", "mortgage", "eviction", "homeless"],
+  "criminal justice": ["criminal", "prison", "police", "sentencing", "incarceration", "justice"],
+  "social security":  ["social security", "retirement", "pension", "medicaid", "welfare", "snap"],
+  "elections":        ["election", "voting", "ballot", "campaign finance", "gerrymandering"],
+  "federal budget":   ["budget", "appropriation", "spending", "deficit", "debt ceiling"],
+  "drug policy":      ["drug", "opioid", "fentanyl", "cannabis", "marijuana", "dea"],
 };
 
 function billMatchesTopic(bill, topic) {
-  const title = (bill.title || "").toLowerCase();
-  const policyArea = (bill.policyArea?.name || "").toLowerCase();
-  const topicLower = topic.toLowerCase();
+  // Skip amendments — they have no title
+  if (!bill.title) return false;
 
-  // Direct match first
-  if (title.includes(topicLower) || policyArea.includes(topicLower)) return true;
-
-  // Check mapped policy areas
-  const mappedAreas = TOPIC_TO_POLICY_AREA[topicLower] || [];
-  return mappedAreas.some(area => policyArea.includes(area) || title.includes(area));
+  const title = bill.title.toLowerCase();
+  const keywords = TOPIC_TITLE_KEYWORDS[topic.toLowerCase()] || [topic.toLowerCase()];
+  return keywords.some(kw => title.includes(kw));
 }
 
 // --- Main: look up a politician's record on given topics ---

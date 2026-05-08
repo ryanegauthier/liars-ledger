@@ -42,7 +42,7 @@ function stripTitle(name) {
   return name
     .toLowerCase()
     .trim()
-    .replace(/^(rep\.?|sen\.?|senator|representative|president|vice\s+president|gov\.?|governor|mayor|secretary|sec\.?)\s+/i, "")
+    .replace(/^(rep\.?|sen\.?|senator|representative|president|vice\s+president|gov\.?|governor|mayor|secretary|sec\.?|democrat|republican|independent)\s+/i, "")
     .trim();
 }
 
