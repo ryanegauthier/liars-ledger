@@ -6,6 +6,7 @@ importScripts(
   "src/logger.js",
   "src/lookup.js",
   "src/keywords.js",
+  "src/ollama.js",
   "src/api.js"
 );
 
@@ -14,7 +15,7 @@ const browser = globalThis.browser || globalThis.chrome;
 // --- Message listener ---
 browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "ping") {
-    sendResponse({ status: "ok", version: "0.4.1" });
+    sendResponse({ status: "ok", version: "0.6.0" });
     return true;
   }
 
@@ -55,19 +56,71 @@ async function handleAnalyze({ politicians, articleText, apiKey }) {
 
     logger.info("background", `resolved: ${resolved.map(m => m.full_name).join(", ")}`);
 
-    const topics = getSearchTerms(articleText);
+    const fallbackTopics = getSearchTerms(articleText);
+    const labels = resolved.map((m) => m.matched_as);
 
-    if (topics.length === 0) {
-      logger.warn("background", "no policy topics detected in article");
-      return { status: "no_topics", resolved: resolved.map(m => m.full_name), message: "Politicians found but no policy topics detected." };
+    /** @type {Map<string, string[]>} */
+    let topicsByLabel = new Map();
+    /** @type {Map<string, string>} */
+    const claimByLabel = new Map();
+
+    const ollamaUrl = typeof CONFIG !== "undefined" && CONFIG.OLLAMA_BASE_URL;
+    const ollamaModel = typeof CONFIG !== "undefined" && CONFIG.OLLAMA_MODEL;
+
+    if (ollamaUrl && ollamaModel) {
+      logger.info("background", `Ollama claim extraction: ${ollamaUrl} model=${ollamaModel}`);
+      const ollamaResult = await extractPolicyClaimsViaOllama(articleText, labels, {
+        baseUrl: ollamaUrl,
+        model: ollamaModel,
+        timeoutMs: CONFIG.OLLAMA_TIMEOUT_MS || 45000,
+      });
+
+      if (ollamaResult.ok) {
+        topicsByLabel = normalizeTopicsFromOllama(ollamaResult.byLabel, labels, fallbackTopics);
+        for (const label of labels) {
+          const row = ollamaResult.byLabel.get(label);
+          if (row?.claim) claimByLabel.set(label, row.claim);
+        }
+        logger.info("background", "Ollama claim extraction succeeded");
+      } else {
+        logger.warn("background", `Ollama failed (${ollamaResult.error}) — using keyword topics`);
+        for (const label of labels) {
+          topicsByLabel.set(label, [...fallbackTopics]);
+        }
+      }
+    } else {
+      for (const label of labels) {
+        topicsByLabel.set(label, [...fallbackTopics]);
+      }
     }
 
-    logger.info("background", `topics detected: ${topics.join(", ")}`);
+    const memberJobs = resolved.map((m) => ({
+      member: m,
+      topics: topicsByLabel.get(m.matched_as) || [],
+    }));
 
-    const records = await lookupAll(resolved, topics, apiKey);
+    if (memberJobs.every((j) => j.topics.length === 0)) {
+      logger.warn("background", "no policy topics or search terms for any member");
+      return {
+        status: "no_topics",
+        resolved: resolved.map((m) => m.full_name),
+        message: "Politicians found but no policy topics detected.",
+      };
+    }
+
+    const topicsUnion = [...new Set(memberJobs.flatMap((j) => j.topics))];
+    logger.info("background", `search terms (union): ${topicsUnion.join(", ")}`);
+
+    const records = await lookupAll(memberJobs, apiKey);
+
+    for (let i = 0; i < records.length; i++) {
+      const label = resolved[i].matched_as;
+      const claim = claimByLabel.get(label);
+      if (claim) records[i].claim = claim;
+    }
 
     logger.info("background", `analysis complete — ${records.length} record(s) returned`);
-    return { status: "ok", topics, records, notMembers, notFound };
+    return { status: "ok", topics: topicsUnion, records, notMembers, notFound };
 
   } catch (err) {
     logger.error("background", `analysis failed: ${err.message}`);
@@ -75,4 +128,4 @@ async function handleAnalyze({ politicians, articleText, apiKey }) {
   }
 }
 
-logger.info("background", "service worker loaded v0.4.1");
+logger.info("background", "service worker loaded v0.6.0");

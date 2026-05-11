@@ -159,14 +159,13 @@ async function lookupPoliticianOnTopics(member, topics, apiKey) {
 }
 
 // --- Batch lookup for all resolved politicians ---
-async function lookupAll(resolvedMembers, topics, apiKey) {
-  // Run lookups in parallel but cap concurrency to avoid rate limiting
+// memberJobs: [{ member, topics }, ...] — topics differ per member when using claim extraction
+async function lookupAll(memberJobs, apiKey) {
   const results = [];
-  for (const member of resolvedMembers) {
+  for (const { member, topics } of memberJobs) {
     const result = await lookupPoliticianOnTopics(member, topics, apiKey);
     results.push(result);
-    // Small delay between members to be polite
-    await new Promise(r => setTimeout(r, 150));
+    await new Promise((r) => setTimeout(r, 150));
   }
   return results;
 }

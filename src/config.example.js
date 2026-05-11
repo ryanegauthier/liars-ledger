@@ -14,4 +14,11 @@ const CONFIG = {
 
   // GovTrack does not require a key — leave as-is
   GOVTRACK_KEY: null,
+
+  // Ollama (dev) — per-politician claim + bill search phrases. Leave URL null to use
+  // regex topic detection only (getSearchTerms). For a Tailscale peer, use e.g.
+  // "http://100.x.x.x:11434" and add the same origin to manifest.json host_permissions.
+  OLLAMA_BASE_URL: null,
+  OLLAMA_MODEL: "llama3.2:3b",
+  OLLAMA_TIMEOUT_MS: 45000,
 };

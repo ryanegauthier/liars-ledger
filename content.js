@@ -1,6 +1,14 @@
 // Worth Noting - content.js
 const browser = window.browser || window.chrome;
 
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 // --- Logger ---
 async function clog(message) {
   console.log("[Worth Noting]", message);
@@ -43,12 +51,14 @@ function initSidebar() {
     ".wn-indicator { font-size:11px; padding:2px 8px; border-radius:2px; white-space:nowrap; }",
     ".wn-indicator-green { background:#1e3a2f; color:#4caf82; border:1px solid #2a5a3f; }",
     ".wn-indicator-gray  { background:#1a1d25; color:#5a5855; border:1px solid #2a2d35; }",
+    ".wn-card-claim { font-size:11px; color:#8a8680; line-height:1.35; margin-top:6px; font-style:italic; }",
     ".wn-not-found-card { min-width:160px; padding:12px 16px; border-right:1px solid #1a1d25; flex-shrink:0; opacity:0.4; }",
     ".wn-not-found-name { font-size:12px; color:#8a8680; margin-bottom:2px; }",
     ".wn-not-found-reason { font-size:10px; color:#3a3835; font-style:italic; }",
     "#wn-detail { border-top:1px solid #2a2d35; padding:12px 16px; max-height:160px; overflow-y:auto; display:none; scrollbar-width:thin; scrollbar-color:#2a2d35 transparent; }",
     "#wn-detail.wn-visible { display:block; }",
     ".wn-detail-title { font-size:12px; color:#c8a96e; margin-bottom:8px; }",
+    ".wn-detail-claim { font-size:12px; color:#a8a49a; line-height:1.4; margin-bottom:10px; padding-bottom:8px; border-bottom:1px solid #1a1d25; }",
     ".wn-bill { padding:6px 0; border-bottom:1px solid #1a1d25; display:flex; gap:10px; align-items:flex-start; }",
     ".wn-bill:last-child { border-bottom:none; }",
     ".wn-bill-type { font-size:10px; color:#5a5855; white-space:nowrap; min-width:70px; padding-top:2px; }",
@@ -87,7 +97,7 @@ function renderSidebar(results) {
   var bar      = document.getElementById("wn-bar");
 
   topicsEl.innerHTML = results.topics.map(function(t) {
-    return "<span>" + t + "</span>";
+    return "<span>" + escapeHtml(t) + "</span>";
   }).join("");
 
   var cardsHTML = "";
@@ -102,11 +112,16 @@ function renderSidebar(results) {
       ? '<span class="wn-indicator wn-indicator-green">&#x1F7E2; ' + total + ' bill' + (total > 1 ? "s" : "") + " found</span>"
       : '<span class="wn-indicator wn-indicator-gray">&#x26AA; No bills found</span>';
 
+    var claimLine = record.claim
+      ? '<div class="wn-card-claim">' + escapeHtml(record.claim) + "</div>"
+      : "";
+
     cardsHTML +=
       '<div class="wn-card" data-idx="' + idx + '">' +
         '<div class="wn-card-name">' + p.display + "</div>" +
         '<div class="wn-card-meta"><span class="wn-party-' + partyCode + '">' + partyCode + "</span> &middot; " + p.state + " &middot; " + p.chamber + "</div>" +
         '<div class="wn-indicators">' + indicator + "</div>" +
+        claimLine +
       "</div>";
   });
 
@@ -150,7 +165,11 @@ function renderSidebar(results) {
         .concat((record.sponsored   || []).map(function(b) { return Object.assign({}, b, { role: "Sponsored"   }); }))
         .concat((record.cosponsored || []).map(function(b) { return Object.assign({}, b, { role: "Cosponsored" }); }));
 
-      var html = '<div class="wn-detail-title">' + p.full_name + " &mdash; " + record.topics.join(", ") + "</div>";
+      var html = '<div class="wn-detail-title">' + escapeHtml(p.full_name) + " &mdash; " + record.topics.map(escapeHtml).join(", ") + "</div>";
+
+      if (record.claim) {
+        html += '<div class="wn-detail-claim">' + escapeHtml(record.claim) + "</div>";
+      }
 
       if (allBills.length === 0) {
         html += '<div class="wn-empty">No sponsored or cosponsored bills found on these topics in the 119th Congress.</div>';
@@ -175,7 +194,7 @@ function renderSidebar(results) {
             '<div class="wn-bill">' +
               '<div class="wn-bill-type">' + bill.role + "<br>" + (bill.type || "") + " " + (bill.number || "") + "</div>" +
               "<div>" +
-                '<div class="wn-bill-title">' + (bill.title || "Untitled") + "</div>" +
+                '<div class="wn-bill-title">' + escapeHtml(bill.title || "Untitled") + "</div>" +
                 '<div class="wn-bill-date">' + (bill.introducedDate || "") +
                   ' &middot; <a class="wn-bill-link" href="' + url + '" target="_blank">View &rarr;</a>' +
                 "</div>" +
