@@ -1,4 +1,4 @@
-// Worth Noting - background.js
+// Liars Ledger - background.js
 // Service worker: handles API calls and message routing
 
 importScripts(
@@ -21,18 +21,18 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.action === "analyze") {
     logger.info("background", "received analyze request");
-    browser.storage.session.set({ wn_results: { status: "working" } });
+    browser.storage.session.set({ ll_results: { status: "working" } });
     handleAnalyze(message.payload).then(result => {
       result.apiKey = message.payload.apiKey;
-      browser.storage.session.set({ wn_results: result });
+      browser.storage.session.set({ ll_results: result });
     });
     sendResponse({ status: "accepted" });
     return true;
   }
 
   if (message.action === "getResults") {
-    browser.storage.session.get("wn_results", (data) => {
-      sendResponse(data.wn_results || { status: "working" });
+    browser.storage.session.get("ll_results", (data) => {
+      sendResponse(data.ll_results || { status: "working" });
     });
     return true;
   }

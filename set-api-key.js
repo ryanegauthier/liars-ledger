@@ -1,4 +1,4 @@
-// Worth Noting - set-api-key.js
+// Liars Ledger - set-api-key.js
 // Run this ONCE in the browser console on any page after loading the extension.
 // It stores your API key in local extension storage — never in code or files.
 //

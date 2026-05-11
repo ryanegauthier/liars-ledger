@@ -1,4 +1,4 @@
-// Worth Noting - config.example.js
+// Liars Ledger - config.example.js
 // Copy this file to config.js and fill in your API keys
 // config.js is gitignored and will NEVER be committed
 

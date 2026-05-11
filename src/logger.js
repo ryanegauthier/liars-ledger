@@ -1,10 +1,10 @@
-// Worth Noting - src/logger.js
+// Liars Ledger - src/logger.js
 // In-memory logger accessible from both background worker and popup.
 // Stores logs in chrome.storage.session so they persist across
 // popup open/close but clear when the browser closes.
 
 const MAX_ENTRIES = 200;
-const STORAGE_KEY = "wn_debug_log";
+const STORAGE_KEY = "ll_debug_log";
 
 // Uses global 'browser' declared in background.js
 
@@ -13,7 +13,7 @@ async function log(level, context, message) {
   const timestamp = new Date().toLocaleTimeString("en-US", { hour12: false });
   const entry = `[${timestamp}] ${context}: ${message}`;
 
-  console.log(`[Worth Noting] ${entry}`);
+  console.log(`[Liars Ledger] ${entry}`);
 
   try {
     const stored = await storageGet(STORAGE_KEY) || [];

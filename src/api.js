@@ -1,4 +1,4 @@
-// Worth Noting - src/api.js
+// Liars Ledger - src/api.js
 // Handles all Congress.gov API calls from the background worker.
 // Uses session caching and batching to stay within free tier limits.
 
@@ -29,12 +29,12 @@ async function apiFetch(path, apiKey) {
   const cacheKey = `api:${path}`;
   const cached = await cacheGet(cacheKey);
   if (cached) {
-    console.log("[Worth Noting] cache hit:", path.slice(0, 60));
+    console.log("[Liars Ledger] cache hit:", path.slice(0, 60));
     return cached;
   }
 
   const url = `${BASE_URL}${path}&api_key=${apiKey}&format=json`;
-  console.log("[Worth Noting] fetching:", path.slice(0, 80));
+  console.log("[Liars Ledger] fetching:", path.slice(0, 80));
 
   const res = await fetch(url);
   if (!res.ok) {
@@ -51,10 +51,10 @@ async function getMemberSponsoredBills(bioguideId, apiKey, limit = 50) {
   const path = `/member/${bioguideId}/sponsored-legislation?limit=${limit}&congress=${CURRENT_CONGRESS}`;
   try {
     const data = await apiFetch(path, apiKey);
-    console.log("[Worth Noting] sponsored bills raw:", JSON.stringify(data.sponsoredLegislation?.slice(0,3), null, 2));
+    console.log("[Liars Ledger] sponsored bills raw:", JSON.stringify(data.sponsoredLegislation?.slice(0,3), null, 2));
     return data.sponsoredLegislation || [];
   } catch (e) {
-    console.warn("[Worth Noting] sponsored bills fetch failed:", e.message);
+    console.warn("[Liars Ledger] sponsored bills fetch failed:", e.message);
     return [];
   }
 }
@@ -64,10 +64,10 @@ async function getMemberCosponsoredBills(bioguideId, apiKey, limit = 50) {
   const path = `/member/${bioguideId}/cosponsored-legislation?limit=${limit}&congress=${CURRENT_CONGRESS}`;
   try {
     const data = await apiFetch(path, apiKey);
-    console.log("[Worth Noting] cosponsored bills raw:", JSON.stringify(data.cosponsoredLegislation?.slice(0,3), null, 2));
+    console.log("[Liars Ledger] cosponsored bills raw:", JSON.stringify(data.cosponsoredLegislation?.slice(0,3), null, 2));
     return data.cosponsoredLegislation || [];
   } catch (e) {
-    console.warn("[Worth Noting] cosponsored bills fetch failed:", e.message);
+    console.warn("[Liars Ledger] cosponsored bills fetch failed:", e.message);
     return [];
   }
 }
@@ -80,7 +80,7 @@ async function searchBillsByKeyword(keyword, apiKey, limit = 10) {
     const data = await apiFetch(path, apiKey);
     return data.bills || [];
   } catch (e) {
-    console.warn("[Worth Noting] bill search failed for keyword:", keyword, e.message);
+    console.warn("[Liars Ledger] bill search failed for keyword:", keyword, e.message);
     return [];
   }
 }
@@ -154,7 +154,7 @@ async function lookupPoliticianOnTopics(member, topics, apiKey) {
     result.searched.push(...relevant.map(b => ({ ...b, topic })));
   }
 
-  console.log(`[Worth Noting] ${member.full_name}: ${result.sponsored.length} sponsored, ${result.cosponsored.length} cosponsored on topics`);
+  console.log(`[Liars Ledger] ${member.full_name}: ${result.sponsored.length} sponsored, ${result.cosponsored.length} cosponsored on topics`);
   return result;
 }
 

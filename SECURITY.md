@@ -1,7 +1,7 @@
 # Security Policy
 
 ## Current Status
-Worth Noting is in active development. The current build is intended for 
+Liars Ledger is in active development. The current build is intended for 
 personal/developer use only and has not been audited for public distribution.
 
 ---
@@ -57,7 +57,7 @@ webpage, including `src/config.js`.
 ---
 
 ### 5. No User Data Collection (By Design)
-Worth Noting does not collect, store, or transmit:
+Liars Ledger does not collect, store, or transmit:
 - Browsing history
 - Article content
 - User identity

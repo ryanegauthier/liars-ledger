@@ -1,4 +1,4 @@
-// Worth Noting - src/ollama.js
+// Liars Ledger - src/ollama.js
 // Calls a local or Tailscale-reachable Ollama server to extract per-politician
 // policy claims and bill search phrases from article text.
 

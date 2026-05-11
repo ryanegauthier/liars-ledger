@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Worth Noting",
+  "name": "Liars Ledger",
   "version": "0.6.0",
   "description": "Surfaces voting records of politicians mentioned in news articles.",
 
@@ -33,7 +33,7 @@
 
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Worth Noting",
+    "default_title": "Liars Ledger",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",

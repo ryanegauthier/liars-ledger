@@ -1,4 +1,4 @@
-// Worth Noting - src/lookup.js
+// Liars Ledger - src/lookup.js
 // Resolves politician names extracted from articles to dictionary entries.
 
 let _dictionary = null;
@@ -28,7 +28,7 @@ async function loadDictionary() {
   const url = browser.runtime.getURL("src/data/politicians.json");
   const res = await fetch(url);
   _dictionary = await res.json();
-  console.log("[Worth Noting] dictionary loaded,", Object.keys(_dictionary).length, "keys");
+  console.log("[Liars Ledger] dictionary loaded,", Object.keys(_dictionary).length, "keys");
   return _dictionary;
 }
 
@@ -89,9 +89,9 @@ async function resolveAll(names) {
     }
   }
 
-  console.log("[Worth Noting] resolved:", resolved.map(r => r.full_name));
-  if (notMembers.length) console.log("[Worth Noting] not current members:", notMembers);
-  if (notFound.length) console.log("[Worth Noting] not found:", notFound);
+  console.log("[Liars Ledger] resolved:", resolved.map(r => r.full_name));
+  if (notMembers.length) console.log("[Liars Ledger] not current members:", notMembers);
+  if (notFound.length) console.log("[Liars Ledger] not found:", notFound);
 
   return { resolved, notMembers, notFound };
 }

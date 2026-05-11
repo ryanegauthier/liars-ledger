@@ -1,4 +1,4 @@
-// Worth Noting - build-dictionary.js
+// Liars Ledger - build-dictionary.js
 // Run this locally with Node.js to generate the politician dictionary.
 // You only need to run this once, or when Congress changes.
 //

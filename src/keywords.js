@@ -1,4 +1,4 @@
-// Worth Noting - src/keywords.js
+// Liars Ledger - src/keywords.js
 // Extracts topic keywords from article text for use in Congress.gov bill searches.
 
 // Common words to ignore
@@ -84,12 +84,12 @@ function getSearchTerms(articleText) {
 
   // If we found mapped topics, use those
   if (topics.length > 0) {
-    console.log("[Worth Noting] topics detected:", topics);
+    console.log("[Liars Ledger] topics detected:", topics);
     return topics;
   }
 
   // Fallback to significant words
   const words = extractSignificantWords(articleText);
-  console.log("[Worth Noting] no topics matched, using significant words:", words);
+  console.log("[Liars Ledger] no topics matched, using significant words:", words);
   return words;
 }

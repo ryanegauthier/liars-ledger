@@ -1,4 +1,4 @@
-// Worth Noting - popup.js
+// Liars Ledger - popup.js
 
 const browser = window.browser || window.chrome;
 const toggle = document.getElementById("enableToggle");
@@ -24,8 +24,8 @@ async function getApiKey() {
 
 // --- Log panel ---
 async function refreshLog() {
-  browser.storage.session.get("wn_debug_log", (result) => {
-    const entries = result.wn_debug_log || [];
+  browser.storage.session.get("ll_debug_log", (result) => {
+    const entries = result.ll_debug_log || [];
     if (entries.length === 0) {
       logPanel.innerHTML = "";
       return;
@@ -47,8 +47,8 @@ window.addEventListener("unload", () => clearInterval(logInterval));
 
 // --- Copy log to clipboard ---
 copyBtn.addEventListener("click", () => {
-  browser.storage.session.get("wn_debug_log", (result) => {
-    const entries = result.wn_debug_log || [];
+  browser.storage.session.get("ll_debug_log", (result) => {
+    const entries = result.ll_debug_log || [];
     navigator.clipboard.writeText(entries.join("\n")).then(() => {
       copyBtn.textContent = "Copied!";
       setTimeout(() => copyBtn.textContent = "Copy", 1500);
@@ -58,7 +58,7 @@ copyBtn.addEventListener("click", () => {
 
 // --- Clear log ---
 clearBtn.addEventListener("click", () => {
-  browser.storage.session.set({ wn_debug_log: [] }, refreshLog);
+  browser.storage.session.set({ ll_debug_log: [] }, refreshLog);
 });
 
 // --- Scan button ---
@@ -104,8 +104,8 @@ scanBtn.addEventListener("click", async () => {
       }, () => {
         // Poll session storage for results
         const poll = setInterval(() => {
-          browser.storage.session.get("wn_results", (data) => {
-            const result = data.wn_results;
+          browser.storage.session.get("ll_results", (data) => {
+            const result = data.ll_results;
             if (!result || result.status === "working") return;
       
             clearInterval(poll);
@@ -127,7 +127,7 @@ scanBtn.addEventListener("click", async () => {
               const count = result.records.length;
               const topicList = result.topics.join(", ");
               statusEl.textContent = `✓ ${count} member${count > 1 ? "s" : ""} on: ${topicList}`;
-              console.log("[Worth Noting] full results:", JSON.stringify(result, null, 2));
+              console.log("[Liars Ledger] full results:", JSON.stringify(result, null, 2));
             }
           });
         }, 500); // check every 500ms

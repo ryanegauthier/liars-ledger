@@ -1,8 +1,8 @@
-# Worth Noting
+# Liars Ledger
 
 A browser extension that surfaces the voting records of politicians mentioned in news articles — in real time, as you read.
 
-> *Worth noting: they voted the opposite way.*
+> *Liars ledger: they voted the opposite way.*
 
 ## How It Works
 
@@ -12,7 +12,7 @@ A browser extension that surfaces the voting records of politicians mentioned in
 
 ## Design Philosophy
 
-Worth Noting is a neutral research tool, not a gotcha machine. It surfaces voting records whether they confirm or contradict what a politician is saying. The record might show they've been consistent, that they've evolved, or that they've voted both ways over time — all of that is worth knowing.
+Liars Ledger is a neutral research tool, not a gotcha machine. It surfaces voting records whether they confirm or contradict what a politician is saying. The record might show they've been consistent, that they've evolved, or that they've voted both ways over time — all of that is worth knowing.
 
 The sidebar never editorializes. It shows:
 - 🟢 Votes **in line** with the stated position
@@ -35,7 +35,7 @@ Draw your own conclusions.
 4. Open Chrome and go to `chrome://extensions`
 5. Enable **Developer mode** (top right)
 6. Click **Load unpacked** → select the project folder
-7. Navigate to any news article, click the Worth Noting icon, and hit **Scan This Page**
+7. Navigate to any news article, click the Liars Ledger icon, and hit **Scan This Page**
 
 ## Firefox
 
