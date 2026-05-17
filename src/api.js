@@ -108,22 +108,68 @@ async function lookupPoliticianOnTopics(member, topics, apiKey) {
     getMemberCosponsoredBills(member.bioguide_id, apiKey),
   ]);
 
-  // Filter to topic-relevant bills
-  for (const topic of topics) {
-    const matchingSponsored = sponsored.filter(b => billMatchesTopic(b, topic));
-    const matchingCosponsored = cosponsored.filter(b => billMatchesTopic(b, topic));
+  // --- Bill relevance check ---
+  // Two-pass matching:
+  // Pass 1: billMatchesTopic() — existing keyword category matching (19 topics)
+  // Pass 2: direct title substring match against LLM search_terms
+  // This fixes the core 0.9.0 issue: LLM returns specific search terms like
+  // "voting rights" or "budget reconciliation" but billMatchesTopic() only
+  // knows about broad predefined categories and misses them.
 
-    result.sponsored.push(...matchingSponsored.map(b => ({ ...b, topic })));
-    result.cosponsored.push(...matchingCosponsored.map(b => ({ ...b, topic })));
+  // Extract LLM search_terms from the figure attached to this member
+  // They live on member._llm_search_terms if background.js passes them through,
+  // or we fall back to topics only.
+  const llmSearchTerms = (member._llm_search_terms || [])
+    .map(t => t.toLowerCase().trim())
+    .filter(Boolean);
+
+  function billMatchesAny(bill) {
+    if (!bill.title) return false; // skip amendments without titles
+    const titleLower = bill.title.toLowerCase();
+
+    // Pass 1: topic keyword categories
+    for (const topic of topics) {
+      if (billMatchesTopic(bill, topic)) return true;
+    }
+
+    // Pass 2: direct LLM search term substring match
+    for (const term of llmSearchTerms) {
+      if (term.length > 3 && titleLower.includes(term)) return true;
+    }
+
+    return false;
   }
 
-  // Also do a direct keyword search and note if they appear
-  for (const topic of topics) {
-    const bills = await searchBillsByKeyword(topic, apiKey, 10);
+  // Filter and dedup by URL/number
+  const seenBillKeys = new Set();
+
+  function addIfNew(bill, arr, tag) {
+    if (!bill.title) return; // skip untitled amendments
+    const key = bill.url || `${bill.type}${bill.number}`;
+    if (seenBillKeys.has(key)) return;
+    seenBillKeys.add(key);
+    arr.push({ ...bill, topic: tag });
+  }
+
+  for (const bill of sponsored) {
+    if (billMatchesAny(bill)) addIfNew(bill, result.sponsored, "sponsored");
+  }
+  for (const bill of cosponsored) {
+    if (billMatchesAny(bill)) addIfNew(bill, result.cosponsored, "cosponsored");
+  }
+
+  // Direct keyword search — use a subset of most specific LLM terms
+  // to avoid too many API calls; cap at 6 most distinctive terms
+  const searchTermsToQuery = [
+    ...new Set([...llmSearchTerms.slice(0, 4), ...topics.slice(0, 2)])
+  ].slice(0, 6);
+
+  for (const term of searchTermsToQuery) {
+    const bills = await searchBillsByKeyword(term, apiKey, 10);
     const relevant = bills.filter(b =>
       b.sponsors?.some(s => s.bioguideId === member.bioguide_id)
     );
-    result.searched.push(...relevant.map(b => ({ ...b, topic })));
+    for (const b of relevant) addIfNew(b, result.searched, term);
   }
 
   const rollCallVotes = await findMemberRollCallVotesOnTopics(member, topics, apiKey);

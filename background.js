@@ -149,11 +149,18 @@ async function handleAnalyze({ politicians, articleText, apiKey }) {
       topicsByLabel.set(label, mergeTopicsForMember(fig, mainTopicsGlobal, fallbackTopics));
     }
 
-    const memberJobs = resolved.map((m) => ({
-      member: m,
-      topics: topicsByLabel.get(m.matched_as) || [],
-    }));
-
+    const memberJobs = resolved.map((m) => {
+      const fig = figureForMember(ollamaFigures, m);
+      const llmSearchTerms = fig?.search_terms || [];
+      return {
+        member: {
+          ...m,
+          _llm_search_terms: llmSearchTerms, // passed to api.js for direct title matching
+        },
+        topics: topicsByLabel.get(m.matched_as) || [],
+      };
+    });
+    
     if (memberJobs.every((j) => j.topics.length === 0)) {
       logger.warn("background", "no policy topics or search terms for any member");
       return {
