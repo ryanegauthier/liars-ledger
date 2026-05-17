@@ -184,6 +184,7 @@ async function extractArticleAnalysisViaClaude(articleText, options) {
         "Content-Type":      "application/json",
         "x-api-key":         apiKey,
         "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
       },
       body: JSON.stringify({
         model:      CLAUDE_MODEL,
@@ -292,6 +293,12 @@ async function extractArticleAnalysisDualVerified(articleText, options) {
     extractArticleAnalysisViaClaude(articleText, { ...options, timeoutMs }),
     extractArticleAnalysisViaMistral(articleText, { ...options, timeoutMs }),
   ]);
+
+  // Add these two lines:
+  if (typeof logger !== "undefined") {
+    logger.info("background", `Claude: ${claudeResult.status === "fulfilled" ? (claudeResult.value?.ok ? "ok" : claudeResult.value?.error) : claudeResult.reason?.message}`);
+    logger.info("background", `Mistral: ${mistralResult.status === "fulfilled" ? (mistralResult.value?.ok ? "ok" : mistralResult.value?.error) : mistralResult.reason?.message}`);
+  }
 
   const claudeOk  = claudeResult.status  === "fulfilled" && claudeResult.value?.ok;
   const mistralOk = mistralResult.status === "fulfilled" && mistralResult.value?.ok;

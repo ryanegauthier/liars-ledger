@@ -92,14 +92,16 @@ async function handleAnalyze({ politicians, articleText, apiKey }) {
         articleSummary   = ann.summary || null;
         ollamaFigures    = ann.figures || [];
         mainTopicsGlobal = ann.main_topics || [];
-   
+      
         if (ann._meta) {
-          logger.info("background", `LLM ok — provider=${ann._meta.provider}, figures=${ollamaFigures.length}, topics=${mainTopicsGlobal.length}, verified=${ann._meta.verified ?? "n/a"}, ambiguous=${ann._meta.ambiguous ?? "n/a"}`);
+          const loserError = ann.figures?.[0]?._loser_error || "unknown";
+          const logMsg = ann._meta.provider === "single_model"
+            ? `LLM ok — provider=single_model, winner=${ann._meta.winner}, loser=${ann._meta.loser}, loser_error=${loserError}, figures=${ollamaFigures.length}, topics=${mainTopicsGlobal.length}`
+            : `LLM ok — provider=${ann._meta.provider}, figures=${ollamaFigures.length}, topics=${mainTopicsGlobal.length}, verified=${ann._meta.verified ?? "n/a"}, ambiguous=${ann._meta.ambiguous ?? "n/a"}`;
+          logger.info("background", logMsg);
         } else {
           logger.info("background", `LLM ok — ${ollamaFigures.length} figure(s), ${mainTopicsGlobal.length} topic(s)`);
         }
-      } else {
-        logger.warn("background", `LLM analysis failed (${ann.error})`);
       }
     }
 
