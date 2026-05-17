@@ -15,10 +15,12 @@ const CONFIG = {
   // GovTrack does not require a key — leave as-is
   GOVTRACK_KEY: null,
 
-  // Ollama (dev) — per-politician claim + bill search phrases. Leave URL null to use
-  // regex topic detection only (getSearchTerms). For a Tailscale peer, use e.g.
-  // "http://100.x.x.x:11434" and add the same origin to manifest.json host_permissions.
+  // Ollama — when BASE_URL and MODEL are set, each scan runs one article-level call that
+  // summarizes the piece, lists current members of Congress discussed, main policy topics,
+  // and per-member claims + bill search terms (Congress.gov bills + roll-call votes still use the API key).
+  // Leave URL null to use on-page title-regex names only + keyword topics (getSearchTerms).
+  // Add the same origin to manifest.json host_permissions (e.g. Tailscale http://100.x.x.x:11434).
   OLLAMA_BASE_URL: null,
   OLLAMA_MODEL: "llama3.2:3b",
-  OLLAMA_TIMEOUT_MS: 45000,
+  OLLAMA_TIMEOUT_MS: 90000,
 };

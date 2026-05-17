@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0] - 2026-05-11
+
+- **Ollama article analysis** — single `extractArticleAnalysisViaOllama` call returns `article_summary`, `main_topics`, and `figures` (lookup names, claims, bill search terms); scan can run on Ollama alone when regex finds no names (`src/ollama.js`, `background.js`).
+- **Congress.gov roll-call votes** — beta `house-vote` / `senate-vote` list + member endpoints; topic-matched votes attached per member as `rollCallVotes` (`src/api.js`).
+- **Popup / content** — longer analyze timeout when Ollama is configured; `startResultsPoll` so the sidebar updates without regex names; larger article excerpt to background; sidebar shows summary + roll-call block (`popup.js`, `content.js`).
+- **Docs** — `docs/PRODUCTION-LLM.md`: milestone schedule (T‑minus weeks) for Anthropic Claude + Minstrel via backend proxy before public launch.
+
 ## [0.1.0] - Step 1 - Skeleton
 - Manifest V3 setup with correct permissions
 - Background service worker with message listener
@@ -61,11 +68,14 @@
 
 ## Planned
 
-### Claim Extraction (Next)
-- Lightweight LLM call to extract specific claims made about each politician
-- Dev: Ollama on dedicated Ubuntu server via Tailscale
-- Production: Claude API via backend proxy
-- Replace broad topic keyword matching with claim-specific bill relevance
+### LLM production (Anthropic / Minstrel)
+- **Dev (now):** Ollama on Tailscale or localhost; keys in gitignored `src/config.js`.
+- **Production:** Claude (Anthropic) and/or Minstrel **only through a backend proxy** — extension calls your HTTPS API; proxy holds provider keys and normalizes responses to the same JSON contract as `src/ollama.js`. See **`docs/PRODUCTION-LLM.md`** for T‑minus milestone dates to assign against your launch week.
+- **Implementation:** Provider adapter in code (e.g. `LLM_PROVIDER` + proxy URL) — not a config-only swap; track in repo when M3 in that doc is scheduled.
+
+### Claim & topic extraction (partially done)
+- Article-level summary + figures + topics via Ollama when configured; per-member claims merged into sidebar.
+- Remaining: hosted models, failover, and quotas entirely server-side for store builds.
 
 ### VoteSmart Integration
 - Awaiting educational API license

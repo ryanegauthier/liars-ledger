@@ -12,6 +12,22 @@ importScripts(
 
 const browser = globalThis.browser || globalThis.chrome;
 
+function figureForMember(figures, member) {
+  if (!figures?.length) return null;
+  const last = (member.last_name || "").toLowerCase().replace(/\./g, "").trim();
+  if (last) {
+    for (const fig of figures) {
+      const l = (fig.lookup_name || "").toLowerCase();
+      if (l.includes(last)) return fig;
+    }
+  }
+  const mNorm = stripTitle(member.matched_as || "").toLowerCase();
+  for (const fig of figures) {
+    if (stripTitle(fig.lookup_name || "").toLowerCase() === mNorm) return fig;
+  }
+  return null;
+}
+
 // --- Message listener ---
 browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "ping") {
@@ -22,7 +38,7 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "analyze") {
     logger.info("background", "received analyze request");
     browser.storage.session.set({ ll_results: { status: "working" } });
-    handleAnalyze(message.payload).then(result => {
+    handleAnalyze(message.payload).then((result) => {
       result.apiKey = message.payload.apiKey;
       browser.storage.session.set({ ll_results: result });
     });
@@ -43,8 +59,53 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // --- Main analysis pipeline ---
 async function handleAnalyze({ politicians, articleText, apiKey }) {
   try {
-    logger.info("background", `resolving ${politicians.length} politician(s): ${politicians.join(", ")}`);
-    const { resolved, notMembers, notFound } = await resolveAll(politicians);
+    const ollamaUrl = typeof CONFIG !== "undefined" && CONFIG.OLLAMA_BASE_URL;
+    const ollamaModel = typeof CONFIG !== "undefined" && CONFIG.OLLAMA_MODEL;
+    const ollamaOn = !!(ollamaUrl && ollamaModel && articleText?.trim());
+
+    let articleSummary = null;
+    let ollamaFigures = [];
+    let mainTopicsGlobal = [];
+
+    if (ollamaOn) {
+      logger.info("background", `Ollama article analysis: ${ollamaUrl} model=${ollamaModel}`);
+      const ann = await extractArticleAnalysisViaOllama(articleText, {
+        baseUrl: ollamaUrl,
+        model: ollamaModel,
+        timeoutMs: CONFIG.OLLAMA_TIMEOUT_MS || 90000,
+      });
+      if (ann.ok) {
+        articleSummary = ann.summary || null;
+        ollamaFigures = ann.figures || [];
+        mainTopicsGlobal = ann.main_topics || [];
+        logger.info(
+          "background",
+          `Ollama article analysis ok — ${ollamaFigures.length} figure(s), ${mainTopicsGlobal.length} topic(s)`
+        );
+      } else {
+        logger.warn("background", `Ollama article analysis failed (${ann.error})`);
+      }
+    }
+
+    let namesForResolve = Array.isArray(politicians) ? politicians.filter(Boolean) : [];
+    if (ollamaFigures.length) {
+      namesForResolve = ollamaFigures.map((f) => f.lookup_name).filter(Boolean);
+    }
+
+    if (!namesForResolve.length) {
+      logger.warn("background", "no politician names to resolve");
+      return {
+        status: "no_members",
+        notMembers: [],
+        notFound: [],
+        message: ollamaOn
+          ? "Ollama did not identify any current members of Congress in this article. Try another piece or check the model output."
+          : "No politicians to analyze.",
+      };
+    }
+
+    logger.info("background", `resolving ${namesForResolve.length} name(s): ${namesForResolve.join(", ")}`);
+    const { resolved, notMembers, notFound } = await resolveAll(namesForResolve);
 
     if (notMembers.length) logger.warn("background", `not current members: ${notMembers.join(", ")}`);
     if (notFound.length) logger.warn("background", `not found in dictionary: ${notFound.join(", ")}`);
@@ -54,44 +115,20 @@ async function handleAnalyze({ politicians, articleText, apiKey }) {
       return { status: "no_members", notMembers, notFound, message: "No current members of Congress detected." };
     }
 
-    logger.info("background", `resolved: ${resolved.map(m => m.full_name).join(", ")}`);
+    logger.info("background", `resolved: ${resolved.map((m) => m.full_name).join(", ")}`);
 
     const fallbackTopics = getSearchTerms(articleText);
-    const labels = resolved.map((m) => m.matched_as);
 
     /** @type {Map<string, string[]>} */
-    let topicsByLabel = new Map();
+    const topicsByLabel = new Map();
     /** @type {Map<string, string>} */
     const claimByLabel = new Map();
 
-    const ollamaUrl = typeof CONFIG !== "undefined" && CONFIG.OLLAMA_BASE_URL;
-    const ollamaModel = typeof CONFIG !== "undefined" && CONFIG.OLLAMA_MODEL;
-
-    if (ollamaUrl && ollamaModel) {
-      logger.info("background", `Ollama claim extraction: ${ollamaUrl} model=${ollamaModel}`);
-      const ollamaResult = await extractPolicyClaimsViaOllama(articleText, labels, {
-        baseUrl: ollamaUrl,
-        model: ollamaModel,
-        timeoutMs: CONFIG.OLLAMA_TIMEOUT_MS || 45000,
-      });
-
-      if (ollamaResult.ok) {
-        topicsByLabel = normalizeTopicsFromOllama(ollamaResult.byLabel, labels, fallbackTopics);
-        for (const label of labels) {
-          const row = ollamaResult.byLabel.get(label);
-          if (row?.claim) claimByLabel.set(label, row.claim);
-        }
-        logger.info("background", "Ollama claim extraction succeeded");
-      } else {
-        logger.warn("background", `Ollama failed (${ollamaResult.error}) — using keyword topics`);
-        for (const label of labels) {
-          topicsByLabel.set(label, [...fallbackTopics]);
-        }
-      }
-    } else {
-      for (const label of labels) {
-        topicsByLabel.set(label, [...fallbackTopics]);
-      }
+    for (const m of resolved) {
+      const label = m.matched_as;
+      const fig = figureForMember(ollamaFigures, m);
+      if (fig?.claim) claimByLabel.set(label, fig.claim);
+      topicsByLabel.set(label, mergeTopicsForMember(fig, mainTopicsGlobal, fallbackTopics));
     }
 
     const memberJobs = resolved.map((m) => ({
@@ -108,7 +145,7 @@ async function handleAnalyze({ politicians, articleText, apiKey }) {
       };
     }
 
-    const topicsUnion = [...new Set(memberJobs.flatMap((j) => j.topics))];
+    const topicsUnion = [...new Set([...mainTopicsGlobal, ...memberJobs.flatMap((j) => j.topics)])];
     logger.info("background", `search terms (union): ${topicsUnion.join(", ")}`);
 
     const records = await lookupAll(memberJobs, apiKey);
@@ -120,8 +157,14 @@ async function handleAnalyze({ politicians, articleText, apiKey }) {
     }
 
     logger.info("background", `analysis complete — ${records.length} record(s) returned`);
-    return { status: "ok", topics: topicsUnion, records, notMembers, notFound };
-
+    return {
+      status: "ok",
+      topics: topicsUnion,
+      records,
+      notMembers,
+      notFound,
+      articleSummary,
+    };
   } catch (err) {
     logger.error("background", `analysis failed: ${err.message}`);
     return { status: "error", message: err.message };

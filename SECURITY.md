@@ -32,14 +32,19 @@ possible. Evaluate whether `activeTab` alone can replace `<all_urls>`.
 ---
 
 ### 3. Article Text in Message Pipeline
-**Risk:** Up to 5,000 characters of article text passes through the extension 
-message pipeline from content script to background worker.
+**Risk:** A long excerpt of article text (on the order of tens of thousands of 
+characters when scanning) passes through the extension message pipeline from 
+the content script to the background worker, and to Ollama when configured.
 
-**Current mitigation:** All processing is local. Article text never leaves the 
-browser in the current build.
+**Current mitigation:** All processing is local unless you point Ollama at a 
+remote host (e.g. Tailscale). Article text is not sent to Congress.gov as a bulk 
+upload; only derived queries and API paths are used.
 
-**Pre-release mitigation:** When the backend is added, article text must not be 
-logged or stored server-side. A privacy policy must be published before release.
+**Pre-release mitigation:** When a backend proxy is added for Claude / Minstrel 
+(or any hosted LLM), article excerpts must not be logged or retained without 
+TTL/redaction. A privacy policy must be published before release, and the 
+extension should call **your** proxy only — never ship provider API keys in the 
+bundle.
 
 ---
 
@@ -69,7 +74,8 @@ backend must be architected to preserve this guarantee.
 ---
 
 ## Pre-Release Checklist
-- [ ] API keys moved to backend proxy
+- [ ] API keys moved to backend proxy (Congress.gov and LLM providers)
+- [ ] Anthropic / Minstrel (or other LLM) access **only** via proxy — see `docs/PRODUCTION-LLM.md` for milestone timing
 - [ ] `<all_urls>` permission reviewed and narrowed
 - [ ] `src/config.js` removed from web_accessible_resources
 - [ ] Privacy policy written and published

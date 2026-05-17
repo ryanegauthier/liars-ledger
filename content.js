@@ -66,7 +66,9 @@ function initSidebar() {
     ".ll-bill-date { font-size:10px; color:#5a5855; }",
     ".ll-bill-link { font-size:10px; color:#c8a96e; text-decoration:none; }",
     ".ll-bill-link:hover { text-decoration:underline; }",
-    ".ll-empty { font-size:12px; color:#5a5855; font-style:italic; padding:8px 0; }"
+    ".ll-empty { font-size:12px; color:#5a5855; font-style:italic; padding:8px 0; }",
+    ".ll-summary { font-size:11px; color:#8a8680; line-height:1.45; margin-bottom:8px; max-height:4.2em; overflow:hidden; }",
+    ".ll-vote-pos { font-size:11px; color:#c8a96e; margin-top:2px; }"
   ].join("\n");
   document.head.appendChild(style);
 
@@ -96,9 +98,14 @@ function renderSidebar(results) {
   var detailEl = document.getElementById("ll-detail");
   var bar      = document.getElementById("ll-bar");
 
-  topicsEl.innerHTML = results.topics.map(function(t) {
-    return "<span>" + escapeHtml(t) + "</span>";
-  }).join("");
+  var summaryHtml = results.articleSummary
+    ? '<div class="ll-summary">' + escapeHtml(results.articleSummary) + "</div>"
+    : "";
+  topicsEl.innerHTML =
+    summaryHtml +
+    results.topics.map(function(t) {
+      return "<span>" + escapeHtml(t) + "</span>";
+    }).join("");
 
   var cardsHTML = "";
 
@@ -106,11 +113,12 @@ function renderSidebar(results) {
     var p = record.politician;
     var sponsored   = record.sponsored   || [];
     var cosponsored = record.cosponsored || [];
-    var total = sponsored.length + cosponsored.length;
+    var rollVotes   = record.rollCallVotes || [];
+    var total = sponsored.length + cosponsored.length + rollVotes.length;
     var partyCode = p.party === "Democratic" ? "D" : p.party === "Republican" ? "R" : "I";
     var indicator = total > 0
-      ? '<span class="ll-indicator ll-indicator-green">&#x1F7E2; ' + total + ' bill' + (total > 1 ? "s" : "") + " found</span>"
-      : '<span class="ll-indicator ll-indicator-gray">&#x26AA; No bills found</span>';
+      ? '<span class="ll-indicator ll-indicator-green">&#x1F7E2; ' + total + " matche" + (total > 1 ? "s" : "") + " (bills / votes)</span>"
+      : '<span class="ll-indicator ll-indicator-gray">&#x26AA; No bills or roll-call votes found</span>';
 
     var claimLine = record.claim
       ? '<div class="ll-card-claim">' + escapeHtml(record.claim) + "</div>"
@@ -171,9 +179,44 @@ function renderSidebar(results) {
         html += '<div class="ll-detail-claim">' + escapeHtml(record.claim) + "</div>";
       }
 
-      if (allBills.length === 0) {
+      var rollVotes = record.rollCallVotes || [];
+      if (rollVotes.length > 0) {
+        html +=
+          '<div class="ll-detail-title" style="margin-top:10px">Roll-call votes (topic match)</div>';
+        rollVotes.forEach(function(v) {
+          var vurl = v.voteUrl ? escapeHtml(v.voteUrl) : "";
+          var link =
+            vurl
+              ? ' <a class="ll-bill-link" href="' + vurl + '" target="_blank">Vote page</a>'
+              : "";
+          html +=
+            '<div class="ll-bill">' +
+              '<div class="ll-bill-type">Roll ' +
+              escapeHtml(String(v.rollNumber || "")) +
+              "<br>" +
+              escapeHtml(String(v.session || "")) +
+              "</div>" +
+              "<div>" +
+              '<div class="ll-bill-title">' +
+              escapeHtml(v.question || "Roll call vote") +
+              "</div>" +
+              '<div class="ll-bill-date">' +
+              escapeHtml(v.date || "") +
+              (v.legislation ? " &middot; " + escapeHtml(v.legislation) : "") +
+              link +
+              "</div>" +
+              '<div class="ll-vote-pos">How they voted: ' +
+              escapeHtml(v.position || "—") +
+              "</div>" +
+              "</div>" +
+            "</div>";
+        });
+      }
+
+      if (allBills.length === 0 && rollVotes.length === 0) {
         html += '<div class="ll-empty">No sponsored or cosponsored bills found on these topics in the 119th Congress.</div>';
-      } else {
+      }
+      if (allBills.length > 0) {
         allBills.forEach(function(bill) {
           var congress = bill.congress || 119;
           var type = (bill.type || "").toLowerCase();
@@ -257,7 +300,7 @@ async function scanPage() {
   await clog("politicians found: " + (politicians.length > 0 ? politicians.join(", ") : "none"));
   return {
     politicians: politicians,
-    articleText: articleText.slice(0, 5000),
+    articleText: articleText.slice(0, 24000),
     text_length: articleText.length
   };
 }
@@ -285,11 +328,13 @@ browser.runtime.onMessage.addListener(function(message, sender, sendResponse) {
     browser.storage.session.set({ ll_results: { status: "working" } });
     scanPage().then(function(result) {
       sendResponse(result);
-      if (result.politicians && result.politicians.length > 0) {
-        console.log("[Liars Ledger] starting poll...");  // ← add this
-        startPolling();
-      }
     });
+    return true;
+  }
+  if (message.action === "startResultsPoll") {
+    startPolling();
+    sendResponse({ ok: true });
+    return true;
   }
   return true;
 });

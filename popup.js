@@ -74,6 +74,9 @@ scanBtn.addEventListener("click", async () => {
     return;
   }
 
+  const ollamaOn = !!(CONFIG?.OLLAMA_BASE_URL && CONFIG?.OLLAMA_MODEL);
+  const analyzeTimeoutMs = ollamaOn ? 120000 : 45000;
+
   browser.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
     browser.tabs.sendMessage(tab.id, { action: "scan" }, (scanResult) => {
       if (browser.runtime.lastError || !scanResult) {
@@ -90,55 +93,62 @@ scanBtn.addEventListener("click", async () => {
 
       const { politicians, articleText } = scanResult;
 
-      if (politicians.length === 0) {
-        statusEl.textContent = "No politicians detected in this article.";
+      if (!politicians.length && !ollamaOn) {
+        statusEl.textContent = "No politicians detected in this article. Configure Ollama in config.js for AI-driven detection.";
         scanBtn.disabled = false;
         return;
       }
 
-      statusEl.textContent = `Found ${politicians.length} politician${politicians.length > 1 ? "s" : ""}. Looking up records...`;
+      if (!politicians.length && ollamaOn) {
+        statusEl.textContent = "Analyzing article with Ollama (figures + topics)...";
+      } else {
+        statusEl.textContent = `Found ${politicians.length} politician${politicians.length > 1 ? "s" : ""}. Looking up records...`;
+      }
 
-      browser.runtime.sendMessage({
-        action: "analyze",
-        payload: { politicians, articleText, apiKey }
-      }, () => {
-        // Poll session storage for results
-        const poll = setInterval(() => {
-          browser.storage.session.get("ll_results", (data) => {
-            const result = data.ll_results;
-            if (!result || result.status === "working") return;
-      
+      browser.runtime.sendMessage(
+        {
+          action: "analyze",
+          payload: { politicians: politicians || [], articleText, apiKey },
+        },
+        () => {
+          browser.tabs.sendMessage(tab.id, { action: "startResultsPoll" }, () => {});
+
+          const poll = setInterval(() => {
+            browser.storage.session.get("ll_results", (data) => {
+              const result = data.ll_results;
+              if (!result || result.status === "working") return;
+
+              clearInterval(poll);
+              scanBtn.disabled = false;
+
+              if (result.status === "error") {
+                statusEl.textContent = "Error: " + result.message;
+                return;
+              }
+              if (result.status === "no_members") {
+                statusEl.textContent = result.message || "No current Congress members found.";
+                return;
+              }
+              if (result.status === "no_topics") {
+                statusEl.textContent = "Members found but no policy topics detected.";
+                return;
+              }
+              if (result.status === "ok") {
+                const count = result.records.length;
+                const topicList = result.topics.join(", ");
+                statusEl.textContent = `✓ ${count} member${count > 1 ? "s" : ""} on: ${topicList}`;
+                console.log("[Liars Ledger] full results:", JSON.stringify(result, null, 2));
+              }
+            });
+          }, 500);
+
+          setTimeout(() => {
             clearInterval(poll);
             scanBtn.disabled = false;
-      
-            if (result.status === "error") {
-              statusEl.textContent = "Error: " + result.message;
-              return;
-            }
-            if (result.status === "no_members") {
-              statusEl.textContent = "No current Congress members found.";
-              return;
-            }
-            if (result.status === "no_topics") {
-              statusEl.textContent = "Members found but no policy topics detected.";
-              return;
-            }
-            if (result.status === "ok") {
-              const count = result.records.length;
-              const topicList = result.topics.join(", ");
-              statusEl.textContent = `✓ ${count} member${count > 1 ? "s" : ""} on: ${topicList}`;
-              console.log("[Liars Ledger] full results:", JSON.stringify(result, null, 2));
-            }
-          });
-        }, 500); // check every 500ms
-      
-        // Timeout after 30 seconds
-        setTimeout(() => {
-          clearInterval(poll);
-          scanBtn.disabled = false;
-          statusEl.textContent = "Timed out. Try again.";
-        }, 30000);
-      });
+            statusEl.textContent = "Timed out. Try again.";
+          }, analyzeTimeoutMs);
+        }
+      );
     });
   });
 });

@@ -128,7 +128,10 @@ async function lookupPoliticianOnTopics(member, topics, apiKey) {
     notFound: topics.length === 0,
   };
 
-  if (topics.length === 0) return result;
+  if (topics.length === 0) {
+    result.rollCallVotes = [];
+    return result;
+  }
 
   // Fetch sponsored + cosponsored in parallel
   const [sponsored, cosponsored] = await Promise.all([
@@ -154,8 +157,198 @@ async function lookupPoliticianOnTopics(member, topics, apiKey) {
     result.searched.push(...relevant.map(b => ({ ...b, topic })));
   }
 
-  console.log(`[Liars Ledger] ${member.full_name}: ${result.sponsored.length} sponsored, ${result.cosponsored.length} cosponsored on topics`);
+  const rollCallVotes = await findMemberRollCallVotesOnTopics(member, topics, apiKey);
+  result.rollCallVotes = rollCallVotes;
+
+  console.log(
+    `[Liars Ledger] ${member.full_name}: ${result.sponsored.length} sponsored, ${result.cosponsored.length} cosponsored, ${rollCallVotes.length} roll-call hits`
+  );
   return result;
+}
+
+// --- Roll-call votes (Congress.gov beta house-vote / senate-vote) ---
+function chamberKey(ch) {
+  const s = String(ch || "").toLowerCase();
+  if (s === "house" || s === "h") return "house";
+  if (s === "senate" || s === "s") return "senate";
+  return "";
+}
+
+function extractRollCallList(chamber, data) {
+  const h = chamber === "house";
+  const direct = h ? data?.houseRollCallVotes : data?.senateRollCallVotes;
+  if (Array.isArray(direct) && direct.length) return direct;
+  for (const v of Object.values(data || {})) {
+    if (Array.isArray(v) && v.length && typeof v[0] === "object") {
+      const first = v[0];
+      if ("rollCall" in first || "number" in first || first?.vote?.rollCall) return v;
+    }
+  }
+  return [];
+}
+
+function extractRollNumber(vote) {
+  if (vote == null) return null;
+  const n = vote.rollCall ?? vote.number ?? vote?.vote?.rollCall ?? vote?.vote?.number;
+  if (n === undefined || n === null) return null;
+  const num = typeof n === "string" ? parseInt(n, 10) : n;
+  return Number.isFinite(num) ? num : null;
+}
+
+function sessionFromVote(vote) {
+  const s = vote.session ?? vote._session ?? vote?.vote?.session;
+  const n = typeof s === "string" ? parseInt(s, 10) : s;
+  return Number.isFinite(n) && n > 0 ? n : 1;
+}
+
+function voteSearchBlob(vote) {
+  const parts = [
+    vote.voteQuestion,
+    vote.question,
+    vote.questionText,
+    vote.description,
+    vote.title,
+    vote.text,
+    vote?.legislation?.title,
+    vote?.legislation?.type && vote?.legislation?.number
+      ? `${vote.legislation.type} ${vote.legislation.number}`
+      : null,
+    vote?.legislation?.url,
+    vote?.bill?.title,
+    vote?.bill?.type && vote?.bill?.number ? `${vote.bill.type} ${vote.bill.number}` : null,
+  ];
+  return parts.filter(Boolean).join(" ").toLowerCase();
+}
+
+function rollCallMatchesTopics(vote, topics) {
+  const hay = voteSearchBlob(vote);
+  if (!hay.trim()) return false;
+  for (const topic of topics) {
+    const t = String(topic).toLowerCase().trim();
+    if (t && hay.includes(t)) return true;
+  }
+  for (const topic of topics) {
+    const titleKeywords = TOPIC_TITLE_KEYWORDS[topic.toLowerCase()];
+    if (!titleKeywords) continue;
+    if (titleKeywords.some((kw) => hay.includes(kw))) return true;
+  }
+  return false;
+}
+
+function extractMemberVoteRows(data) {
+  const keys = ["members", "results", "voteMembers", "rollCallVoteMemberVotes", "memberVotes"];
+  for (const k of keys) {
+    const v = data?.[k];
+    if (Array.isArray(v)) return v;
+  }
+  for (const val of Object.values(data || {})) {
+    if (Array.isArray(val) && val.length && val[0] && typeof val[0] === "object") {
+      if ("bioguideId" in val[0] || "bioguide_id" in val[0]) return val;
+    }
+  }
+  return [];
+}
+
+function memberVotePosition(row) {
+  return (
+    row.voteCast ||
+    row.memberVote ||
+    row.vote ||
+    row.position ||
+    row.resultVote ||
+    ""
+  );
+}
+
+async function findMemberRollCallVotesOnTopics(member, topics, apiKey) {
+  const ck = chamberKey(member.chamber);
+  if (!ck || !topics.length) return [];
+
+  const prefix = ck === "house" ? "house-vote" : "senate-vote";
+  const congress = CURRENT_CONGRESS;
+  const collected = [];
+
+  for (const session of [1, 2]) {
+    const path = `/${prefix}/${congress}/${session}?limit=150&offset=0`;
+    let data;
+    try {
+      data = await apiFetch(path, apiKey);
+    } catch (e) {
+      console.warn("[Liars Ledger] roll-call list failed:", session, e.message);
+      continue;
+    }
+    const list = extractRollCallList(ck, data);
+    for (const v of list) {
+      collected.push(Object.assign({}, v, { _session: session }));
+    }
+  }
+
+  const candidates = collected.filter((v) => rollCallMatchesTopics(v, topics));
+  candidates.sort((a, b) => {
+    const da = new Date(a.updateDate || a.startDate || a.date || 0).getTime();
+    const db = new Date(b.updateDate || b.startDate || b.date || 0).getTime();
+    return db - da;
+  });
+
+  const seenRoll = new Set();
+  const unique = [];
+  for (const v of candidates) {
+    const roll = extractRollNumber(v);
+    const sess = sessionFromVote(v);
+    if (roll == null) continue;
+    const key = `${sess}:${roll}`;
+    if (seenRoll.has(key)) continue;
+    seenRoll.add(key);
+    unique.push(v);
+    if (unique.length >= 18) break;
+  }
+
+  const out = [];
+  const maxFetches = 8;
+  for (let i = 0; i < unique.length && out.length < maxFetches; i++) {
+    const v = unique[i];
+    const roll = extractRollNumber(v);
+    const sess = sessionFromVote(v);
+    if (roll == null) continue;
+    const path = `/${prefix}/${congress}/${sess}/${roll}/members?limit=500`;
+    let mdata;
+    try {
+      mdata = await apiFetch(path, apiKey);
+    } catch (e) {
+      console.warn("[Liars Ledger] roll-call members fetch failed:", e.message);
+      continue;
+    }
+    const rows = extractMemberVoteRows(mdata);
+    const hit = rows.find((r) => (r.bioguideId || r.bioguide_id) === member.bioguide_id);
+    if (!hit) continue;
+
+    const pos = String(memberVotePosition(hit) || "").trim() || "—";
+    const when = v.updateDate || v.startDate || v.date || "";
+    const q = v.voteQuestion || v.question || v.questionText || v.description || "";
+    const leg =
+      v.legislation?.type && v.legislation?.number
+        ? `${v.legislation.type} ${v.legislation.number}`
+        : v.bill?.type && v.bill?.number
+          ? `${v.bill.type} ${v.bill.number}`
+          : "";
+    const voteUrl =
+      typeof v.url === "string" && v.url.startsWith("http")
+        ? v.url
+        : `https://www.congress.gov/vote/${congress}th-congress/${ck}-session/${sess}/${roll}`;
+
+    out.push({
+      session: sess,
+      rollNumber: roll,
+      date: when,
+      question: q,
+      legislation: leg,
+      position: pos,
+      voteUrl,
+    });
+    await new Promise((r) => setTimeout(r, 120));
+  }
+
+  return out;
 }
 
 // --- Batch lookup for all resolved politicians ---
