@@ -93,7 +93,21 @@
 
 ## Planned
 
-### [0.9.0] — UI polish + vote display verification
+### [0.9.0] — Bill matching + UI polish
+
+**Bill matching fix (core):**
+- `billMatchesTopic()` in `topic-match.js` only matches against 19 predefined
+  keyword categories — it ignores the LLM's per-figure `search_terms` entirely
+- Fix: in `lookupPoliticianOnTopics`, after the topic filter, add a second pass
+  that does direct title substring match against the LLM search_terms
+- Example: Mistral returns `"voting rights"` for Cory Booker but
+  `billMatchesTopic(bill, "elections")` misses bills titled
+  "Voting Rights Act Advancement Act" because "voting rights" isn't in the
+  `elections` keyword list
+- Result: sponsored/cosponsored bills currently showing 0 matches on topical
+  articles even when relevant legislation exists
+
+**UI polish:**
 - Verify roll-call vote data renders correctly in expanded sidebar cards
 - Show vote position (Yea/Nay/Not Voting) prominently on each vote row
 - Filter amendments without titles from bill cards
