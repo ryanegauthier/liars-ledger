@@ -1,4 +1,4 @@
-// Liar's Ledger - background.js changes for v0.8.0
+// Liar's Ledger - background.js changes for v0.9.0
 // Apply these two changes to your existing background.js
 
 // ── CHANGE 1: importScripts ────────────────────────────────────────────────

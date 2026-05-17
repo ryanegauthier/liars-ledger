@@ -160,7 +160,7 @@ async function handleAnalyze({ politicians, articleText, apiKey }) {
         topics: topicsByLabel.get(m.matched_as) || [],
       };
     });
-    
+
     if (memberJobs.every((j) => j.topics.length === 0)) {
       logger.warn("background", "no policy topics or search terms for any member");
       return {
@@ -196,4 +196,4 @@ async function handleAnalyze({ politicians, articleText, apiKey }) {
   }
 }
 
-logger.info("background", "service worker loaded v0.8.0");
+logger.info("background", "service worker loaded v0.9.0");
