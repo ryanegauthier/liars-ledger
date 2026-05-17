@@ -3,102 +3,273 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Liars Ledger</title>
+  <title>Liar's Ledger</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg:         #0f1b3a;
+      --bg-2:       #0b1530;
+      --navy:       #121f44;
+      --accent:     #c8a96e;
+      --accent-dim: #9c7f4e;
+      --alert:      #c73a25;
+      --text:       #f1eedf;
+      --text-muted: #c4c9d7;
+      --text-faint: #5a5f6e;
+      --border:     rgba(239,233,221,0.12);
+      --border-acc: rgba(200,169,110,0.35);
+      --green:      #1b8a84;
+    }
+
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
     body {
-      width: 320px;
-      font-family: 'Georgia', serif;
-      background: #0f1117;
-      color: #e8e4d9;
-      padding: 16px;
+      width: 340px;
+      background: var(--bg-2);
+      color: var(--text);
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.72rem;
+      overflow: hidden;
     }
 
-    .header {
+    /* ── Ticker ── */
+    .ticker {
+      min-height: 28px;
       display: flex;
       align-items: center;
-      gap: 8px;
-      margin-bottom: 14px;
-      border-bottom: 1px solid #2a2d35;
-      padding-bottom: 12px;
+      gap: 0.6rem;
+      padding: 0 12px;
+      border-bottom: 1px solid var(--border);
+      color: rgba(241,238,223,0.45);
+      font-size: 0.56rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
     }
 
-    .logo {
-      width: 24px;
-      height: 24px;
-      background: #c8a96e;
-      border-radius: 4px;
+    .ticker-dot {
+      width: 5px; height: 5px;
+      border-radius: 50%;
+      background: var(--green);
+      flex-shrink: 0;
+      animation: pulse 2.5s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.2; }
+    }
+
+    /* ── Nav ── */
+    .nav {
+      min-height: 46px;
       display: flex;
       align-items: center;
-      justify-content: center;
-      font-size: 13px;
-    }
-
-    h1 {
-      font-size: 15px;
-      font-weight: normal;
-      letter-spacing: 0.05em;
-      color: #c8a96e;
-      flex: 1;
-    }
-
-    .status-row {
-      display: flex;
       justify-content: space-between;
-      align-items: center;
-      margin-bottom: 12px;
+      padding: 0 12px;
+      background: var(--navy);
+      border-bottom: 2px solid var(--border-acc);
     }
 
-    .status-label { font-size: 12px; color: #8a8680; }
+    .brand {
+      font-family: Oswald, sans-serif;
+      font-size: 1.05rem;
+      letter-spacing: -0.01em;
+      text-transform: uppercase;
+      line-height: 1;
+    }
+    .brand-liars  { color: var(--text); }
+    .brand-ledger { color: var(--accent); }
 
-    .toggle { position: relative; width: 40px; height: 22px; }
-    .toggle input { opacity: 0; width: 0; height: 0; }
+    .nav-right { display: flex; align-items: center; gap: 8px; }
+
+    .active-label {
+      font-size: 0.54rem;
+      color: var(--text-faint);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .toggle { position: relative; width: 32px; height: 17px; }
+    .toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
     .slider {
-      position: absolute;
-      inset: 0;
-      background: #2a2d35;
-      border-radius: 22px;
-      cursor: pointer;
+      position: absolute; inset: 0;
+      background: rgba(239,233,221,0.1);
+      border-radius: 17px; cursor: pointer;
       transition: background 0.2s;
     }
     .slider::before {
       content: '';
       position: absolute;
-      width: 16px; height: 16px;
+      width: 11px; height: 11px;
       left: 3px; top: 3px;
-      background: #8a8680;
+      background: var(--text-faint);
       border-radius: 50%;
       transition: transform 0.2s, background 0.2s;
     }
-    input:checked + .slider { background: #1e3a2f; }
-    input:checked + .slider::before { transform: translateX(18px); background: #4caf82; }
+    input:checked + .slider { background: rgba(27,138,132,0.25); border: 1px solid var(--green); }
+    input:checked + .slider::before { transform: translateX(15px); background: var(--green); }
 
+    /* ── Body ── */
+    .body { padding: 10px 12px; }
+
+    /* Scan — mirrors site .btn style (no border-radius, mono font, alert red) */
     .scan-btn {
       width: 100%;
-      padding: 8px;
-      background: #c8a96e;
-      color: #0f1117;
+      padding: 0.65rem 1rem;
+      background: var(--alert);
+      color: #fff6ef;
       border: none;
-      border-radius: 4px;
-      font-family: 'Georgia', serif;
-      font-size: 13px;
+      border-top: 2px solid transparent;
+      border-bottom: 2px solid transparent;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.64rem;
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
       cursor: pointer;
-      margin-bottom: 10px;
-      transition: background 0.2s;
+      transition: background 0.18s ease;
+      margin-bottom: 8px;
     }
-    .scan-btn:hover { background: #d4b87e; }
-    .scan-btn:disabled { background: #4a4540; color: #8a8680; cursor: not-allowed; }
+    .scan-btn:hover:not(:disabled) { background: #d3482f; }
+    .scan-btn:disabled {
+      background: rgba(239,233,221,0.07);
+      color: var(--text-faint);
+      cursor: not-allowed;
+    }
 
+    /* Status */
     .status {
-      font-size: 11px;
-      color: #8a8680;
+      font-size: 0.58rem;
+      color: var(--text-faint);
+      letter-spacing: 0.05em;
+      min-height: 13px;
+      margin-bottom: 8px;
       line-height: 1.5;
-      min-height: 16px;
-      margin-bottom: 12px;
+    }
+    .status.working { color: var(--accent-dim); animation: blink 1.4s ease-in-out infinite; }
+    .status.success { color: var(--green); }
+    .status.error   { color: var(--alert); }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
     }
 
-    /* Log panel */
+    /* ── Ledger cards — mirrors .mockup-bar from site ── */
+    .cards { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+
+    .ledger-card {
+      background: var(--navy);
+      border-top: 2px solid var(--accent-dim);
+      padding: 8px 10px 10px;
+      animation: fadeUp 0.2s ease;
+    }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(3px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .card-eyebrow {
+      font-size: 0.54rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 1px;
+    }
+
+    .card-name {
+      font-family: Oswald, sans-serif;
+      font-size: 0.92rem;
+      color: var(--text);
+      text-transform: uppercase;
+      letter-spacing: -0.01em;
+      line-height: 1.1;
+    }
+
+    .party-pill {
+      display: inline-block;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.48rem;
+      letter-spacing: 0.1em;
+      padding: 1px 5px;
+      border: 1px solid;
+      margin-left: 5px;
+      vertical-align: middle;
+      position: relative; top: -1px;
+    }
+    .party-D { color: #6a9abf; border-color: rgba(106,154,191,0.4); }
+    .party-R { color: #bf6a6a; border-color: rgba(191,106,106,0.4); }
+    .party-I { color: var(--text-faint); border-color: var(--text-faint); }
+
+    .card-meta {
+      font-size: 0.56rem;
+      color: var(--text-muted);
+      letter-spacing: 0.04em;
+      margin: 2px 0 6px;
+    }
+
+    .card-claim {
+      font-size: 0.6rem;
+      color: #c4c9d7;
+      line-height: 1.5;
+      margin-bottom: 6px;
+      padding: 5px 8px;
+      border-left: 2px solid var(--accent-dim);
+      background: rgba(0,0,0,0.2);
+      font-style: italic;
+    }
+
+    .bill-row {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+      padding: 4px 0;
+      border-top: 1px solid var(--border);
+    }
+
+    .bill-id {
+      font-size: 0.56rem;
+      color: var(--accent);
+      white-space: nowrap;
+      flex-shrink: 0;
+      letter-spacing: 0.04em;
+    }
+
+    .bill-title {
+      font-size: 0.58rem;
+      color: var(--text-muted);
+      line-height: 1.35;
+      flex: 1;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+
+    .bill-link {
+      font-size: 0.56rem;
+      color: #e8c98f;
+      text-decoration: none;
+      flex-shrink: 0;
+    }
+    .bill-link:hover { color: var(--accent); }
+
+    .no-bills {
+      font-size: 0.56rem;
+      color: var(--text-faint);
+      padding: 4px 0;
+      border-top: 1px solid var(--border);
+    }
+
+    hr {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 8px 0;
+    }
+
+    /* ── Log ── */
     .log-header {
       display: flex;
       justify-content: space-between;
@@ -107,86 +278,107 @@
     }
 
     .log-label {
-      font-size: 10px;
-      color: #5a5855;
-      letter-spacing: 0.08em;
+      font-size: 0.5rem;
+      color: var(--text-faint);
+      letter-spacing: 0.16em;
       text-transform: uppercase;
     }
 
-    .log-actions {
-      display: flex;
-      gap: 6px;
-    }
+    .log-actions { display: flex; gap: 8px; }
 
     .log-btn {
-      font-size: 10px;
-      color: #c8a96e;
-      background: none;
-      border: none;
-      cursor: pointer;
-      padding: 0;
-      font-family: 'Georgia', serif;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.5rem;
+      color: var(--accent-dim);
+      background: none; border: none;
+      cursor: pointer; padding: 0;
+      letter-spacing: 0.08em;
     }
-    .log-btn:hover { color: #d4b87e; }
+    .log-btn:hover { color: var(--accent); }
 
     .log-panel {
-      background: #080a0e;
-      border: 1px solid #2a2d35;
-      border-radius: 4px;
-      padding: 6px 8px;
-      height: 140px;
+      background: rgba(0,0,0,0.25);
+      border: 1px solid var(--border);
+      padding: 5px 7px;
+      height: 72px;
       overflow-y: auto;
-      font-family: 'Courier New', monospace;
-      font-size: 10px;
-      color: #5a8a6a;
-      line-height: 1.6;
+      font-size: 0.54rem;
+      color: rgba(27,138,132,0.55);
+      line-height: 1.65;
       white-space: pre-wrap;
       word-break: break-all;
     }
 
     .log-panel:empty::before {
-      content: 'No log entries yet. Click Scan This Page to begin.';
-      color: #3a3835;
+      content: 'No entries. Click Scan This Page to begin.';
+      color: var(--text-faint);
     }
 
-    .log-entry-warn  { color: #c8a96e; }
-    .log-entry-error { color: #c85a5a; }
+    .log-entry-warn  { color: rgba(200,169,110,0.65); }
+    .log-entry-error { color: rgba(199,58,37,0.75); }
+    .log-entry-ok    { color: rgba(27,138,132,0.85); }
 
-    .version {
-      margin-top: 10px;
-      font-size: 10px;
-      color: #3a3835;
-      text-align: right;
+    /* ── Footer ── */
+    .popup-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 5px 12px 7px;
+      border-top: 1px solid var(--border);
+      background: var(--bg-2);
     }
+
+    .footer-source, .footer-version {
+      font-size: 0.5rem;
+      color: var(--text-faint);
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    ::-webkit-scrollbar { width: 2px; }
+    ::-webkit-scrollbar-thumb { background: var(--border-acc); }
+    ::-webkit-scrollbar-track { background: transparent; }
   </style>
 </head>
 <body>
-  <div class="header">
-    <div class="logo">✓</div>
-    <h1>Liars Ledger</h1>
+
+  <div class="ticker">
+    <span class="ticker-dot"></span>
+    <span id="tickerText">Source: congress.gov · 119th Congress · Official Record</span>
   </div>
 
-  <div class="status-row">
-    <span class="status-label">Active</span>
-    <label class="toggle">
-      <input type="checkbox" id="enableToggle" checked>
-      <span class="slider"></span>
-    </label>
-  </div>
-
-  <button class="scan-btn" id="scanBtn">Scan This Page</button>
-  <div class="status" id="status">Ready.</div>
-
-  <div class="log-header">
-    <span class="log-label">Debug Log</span>
-    <div class="log-actions">
-      <button class="log-btn" id="copyBtn">Copy</button>
-      <button class="log-btn" id="clearBtn">Clear</button>
+  <div class="nav">
+    <div class="brand">
+      <span class="brand-liars">Liar's </span><span class="brand-ledger">Ledger</span>
+    </div>
+    <div class="nav-right">
+      <span class="active-label">Active</span>
+      <label class="toggle">
+        <input type="checkbox" id="enableToggle" checked>
+        <span class="slider"></span>
+      </label>
     </div>
   </div>
-  <div class="log-panel" id="logPanel"></div>
 
-  <div class="version">v0.6.0</div>
+  <div class="body">
+    <button class="scan-btn" id="scanBtn">Scan This Page</button>
+    <div class="status" id="status">Ready.</div>
+    <div class="cards" id="cardsContainer"></div>
+    <hr>
+    <div class="log-header">
+      <span class="log-label">Debug Log</span>
+      <div class="log-actions">
+        <button class="log-btn" id="copyBtn">Copy</button>
+        <button class="log-btn" id="clearBtn">Clear</button>
+      </div>
+    </div>
+    <div class="log-panel" id="logPanel"></div>
+  </div>
+
+  <div class="popup-footer">
+    <span class="footer-source">congress.gov · official record</span>
+    <span class="footer-version" id="versionLabel">v0.8.0</span>
+  </div>
 
   <script src="src/config.js"></script>
   <script src="popup.js"></script>

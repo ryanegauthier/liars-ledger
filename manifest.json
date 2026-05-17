@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Liars Ledger",
-  "version": "0.6.0",
+  "version": "0.8.0",
   "description": "Surfaces voting records of politicians mentioned in news articles.",
 
   "permissions": [
@@ -11,8 +11,13 @@
 
   "host_permissions": [
     "https://api.congress.gov/*",
+    "https://www.govtrack.us/*",
+    "https://api.anthropic.com/*",
+    "https://api.mistral.ai/*",
     "https://api.votesmart.org/*",
     "https://fonts.googleapis.com/*",
+    "https://raw.githubusercontent.com/*",
+    "https://unitedstates.github.io/*",
     "https://fonts.gstatic.com/*",
     "http://100.67.253.3:11434/*",
     "http://127.0.0.1:11434/*",

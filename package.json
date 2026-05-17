@@ -1,0 +1,14 @@
+{
+  "name": "liars-ledger",
+  "version": "0.7.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser extension: surface congressional records for politicians in news articles",
+  "scripts": {
+    "test": "node --test src/test/*.test.js",
+    "test:integration:ollama": "node src/test/test_ollama.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -6,8 +6,11 @@ importScripts(
   "src/logger.js",
   "src/lookup.js",
   "src/keywords.js",
+  "src/ollama-parse.js",
   "src/ollama.js",
-  "src/api.js"
+  "src/llm.js",
+  "src/topic-match.js",
+  "src/api.js",
 );
 
 const browser = globalThis.browser || globalThis.chrome;
@@ -31,7 +34,7 @@ function figureForMember(figures, member) {
 // --- Message listener ---
 browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "ping") {
-    sendResponse({ status: "ok", version: "0.6.0" });
+    sendResponse({ status: "ok", version: "0.8.0" });
     return true;
   }
 
@@ -67,23 +70,36 @@ async function handleAnalyze({ politicians, articleText, apiKey }) {
     let ollamaFigures = [];
     let mainTopicsGlobal = [];
 
-    if (ollamaOn) {
-      logger.info("background", `Ollama article analysis: ${ollamaUrl} model=${ollamaModel}`);
-      const ann = await extractArticleAnalysisViaOllama(articleText, {
-        baseUrl: ollamaUrl,
-        model: ollamaModel,
-        timeoutMs: CONFIG.OLLAMA_TIMEOUT_MS || 90000,
+    const llmProvider = (typeof CONFIG !== "undefined" && CONFIG.LLM_PROVIDER) || "ollama";
+    const llmOn = llmProvider === "ollama"
+      ? !!(CONFIG.OLLAMA_BASE_URL && CONFIG.OLLAMA_MODEL && articleText?.trim())
+      : !!(articleText?.trim());
+   
+    if (llmOn) {
+      logger.info("background", `LLM analysis: provider=${llmProvider}`);
+   
+      const ann = await extractArticleAnalysis(articleText, {
+        provider:      llmProvider,
+        claudeApiKey:  CONFIG.CLAUDE_API_KEY,
+        mistralApiKey: CONFIG.MISTRAL_API_KEY,
+        endpoint:      CONFIG.CLAUDE_API_ENDPOINT || undefined,
+        baseUrl:       CONFIG.OLLAMA_BASE_URL,
+        model:         CONFIG.OLLAMA_MODEL,
+        timeoutMs:     CONFIG.LLM_TIMEOUT_MS || 30000,
       });
+
       if (ann.ok) {
-        articleSummary = ann.summary || null;
-        ollamaFigures = ann.figures || [];
+        articleSummary   = ann.summary || null;
+        ollamaFigures    = ann.figures || [];
         mainTopicsGlobal = ann.main_topics || [];
-        logger.info(
-          "background",
-          `Ollama article analysis ok — ${ollamaFigures.length} figure(s), ${mainTopicsGlobal.length} topic(s)`
-        );
+   
+        if (ann._meta) {
+          logger.info("background", `LLM ok — provider=${ann._meta.provider}, figures=${ollamaFigures.length}, topics=${mainTopicsGlobal.length}, verified=${ann._meta.verified ?? "n/a"}, ambiguous=${ann._meta.ambiguous ?? "n/a"}`);
+        } else {
+          logger.info("background", `LLM ok — ${ollamaFigures.length} figure(s), ${mainTopicsGlobal.length} topic(s)`);
+        }
       } else {
-        logger.warn("background", `Ollama article analysis failed (${ann.error})`);
+        logger.warn("background", `LLM analysis failed (${ann.error})`);
       }
     }
 
@@ -171,4 +187,4 @@ async function handleAnalyze({ politicians, articleText, apiKey }) {
   }
 }
 
-logger.info("background", "service worker loaded v0.6.0");
+logger.info("background", "service worker loaded v0.8.0");
