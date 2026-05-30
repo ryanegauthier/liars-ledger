@@ -22,6 +22,7 @@ async function extract(articleText) {
       body: JSON.stringify({
         model:      CLAUDE_MODEL,
         max_tokens: 1024,
+        temperature: 0.0,
         messages:   [{ role: "user", content: buildPrompt(articleText) }],
       }),
       signal: AbortSignal.timeout(30000),

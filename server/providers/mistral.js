@@ -18,7 +18,7 @@ async function extract(articleText) {
       },
       body: JSON.stringify({
         model:       MISTRAL_MODEL,
-        temperature: 0.1,
+        temperature: 0.0,
         max_tokens:  1024,
         messages:    [{ role: "user", content: buildPrompt(articleText) }],
       }),

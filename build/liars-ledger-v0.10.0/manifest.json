@@ -1,0 +1,64 @@
+{
+  "manifest_version": 3,
+  "name": "Liars Ledger",
+  "version": "0.10.0",
+  "description": "Surfaces voting records of politicians mentioned in news articles.",
+
+  "permissions": [
+    "activeTab",
+    "storage"
+  ],
+
+  "host_permissions": [
+    "https://api.congress.gov/*",
+    "https://www.govtrack.us/*",
+    "https://api.liarsledger.com/*",
+    "https://api.votesmart.org/*",
+    "https://fonts.googleapis.com/*",
+    "https://raw.githubusercontent.com/*",
+    "https://unitedstates.github.io/*",
+    "https://fonts.gstatic.com/*",
+    "http://100.67.253.3:11434/*",
+    "http://127.0.0.1:11434/*",
+    "http://localhost:11434/*"
+  ],
+
+  "background": {
+    "service_worker": "background.js"
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Liars Ledger",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "src/data/politicians.json",
+        "src/config.js",
+        "src/sidebar.js"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ],
+
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
