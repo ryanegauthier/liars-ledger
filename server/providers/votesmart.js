@@ -1,0 +1,65 @@
+// server/providers/votesmart.js
+// VoteSmart v2 API proxy provider.
+// Handles JWT auth + automatic token refresh.
+// CORS blocked from browser — must go through this proxy.
+
+const VS_BASE     = "https://app.votesmart-api.org";
+const VS_LOGIN    = `${VS_BASE}/auth/login`;
+// Token buffer: refresh 5 minutes before expiry
+const REFRESH_BUFFER_MS = 5 * 60 * 1000;
+
+let _token     = null;
+let _expiresAt = 0;
+
+async function getToken() {
+  const now = Date.now();
+  if (_token && now < _expiresAt - REFRESH_BUFFER_MS) return _token;
+
+  const email    = process.env.VOTESMART_EMAIL;
+  const password = process.env.VOTESMART_PASSWORD;
+  if (!email || !password) throw new Error("VoteSmart credentials not configured");
+
+  const res = await fetch(VS_LOGIN, {
+    method:  "POST",
+    headers: { "Content-Type": "application/json" },
+    body:    JSON.stringify({ email, password }),
+    signal:  AbortSignal.timeout(10000),
+  });
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`VoteSmart auth failed: HTTP ${res.status}: ${body.slice(0, 120)}`);
+  }
+
+  const data = await res.json();
+  const token = data?.access_token;
+  if (!token) throw new Error("VoteSmart auth returned no access_token");
+
+  // Decode expiry from JWT payload (no library needed — just base64 decode)
+  try {
+    const payload = JSON.parse(Buffer.from(token.split(".")[1], "base64").toString());
+    _expiresAt = (payload.exp || 0) * 1000;
+  } catch {
+    // If we can't decode, assume 23h from now
+    _expiresAt = now + 23 * 60 * 60 * 1000;
+  }
+
+  _token = token;
+  console.log(`[VoteSmart] token refreshed, expires ${new Date(_expiresAt).toISOString()}`);
+  return _token;
+}
+
+async function votesmartFetch(path) {
+  const token = await getToken();
+  const res = await fetch(`${VS_BASE}${path}`, {
+    headers: { "Authorization": `Bearer ${token}` },
+    signal:  AbortSignal.timeout(15000),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`VoteSmart ${res.status} on ${path}: ${body.slice(0, 120)}`);
+  }
+  return res.json();
+}
+
+export const votesmart = { fetch: votesmartFetch };

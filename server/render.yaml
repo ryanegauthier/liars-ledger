@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: liars-ledger-api
+    runtime: node
+    rootDir: server
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: CLAUDE_API_KEY
+        sync: false
+      - key: MISTRAL_API_KEY
+        sync: false
+      - key: CONGRESS_API_KEY
+        sync: false
+      - key: VOTESMART_EMAIL
+        sync: false
+      - key: VOTESMART_PASSWORD
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
