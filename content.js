@@ -189,6 +189,44 @@ function initSidebar() {
       background: rgba(0,0,0,0.2);
       font-style: italic;
     }
+    .ll-card-claim.ll-verified {
+      border-left-color: #1b8a84;
+      border-left-width: 3px;
+      background: rgba(27,138,132,0.08);
+    }
+    .ll-card-claim.ll-ambiguous { border-left-color: #c8a96e; font-style: normal; }
+
+    .ll-verified-label {
+      font-size: 0.5rem; color: #1b8a84;
+      text-transform: uppercase; letter-spacing: 0.12em;
+      margin-bottom: 4px; display: block;
+      font-style: normal;
+    }
+    .ll-ambiguous-label {
+      font-size: 0.5rem; color: #c8a96e;
+      text-transform: uppercase; letter-spacing: 0.1em;
+      margin-bottom: 3px; display: block;
+    }
+    .ll-ambiguous-model {
+      font-size: 0.52rem; color: #5a5f6e;
+      text-transform: uppercase; letter-spacing: 0.08em;
+      margin-bottom: 1px; display: block;
+    }
+    .ll-ambiguous-text {
+      font-size: 0.58rem; color: #c4c9d7;
+      line-height: 1.5; font-style: italic;
+      display: block; margin-bottom: 4px;
+    }
+    .ll-verified-badge {
+      display: inline-block; font-size: 0.48rem;
+      color: #1b8a84; border: 1px solid rgba(27,138,132,0.4);
+      padding: 1px 5px; letter-spacing: 0.08em;
+      text-transform: uppercase; margin-top: 4px;
+    }
+
+    /* Green card border-top for dual-verified politicians */
+    .ll-card.ll-card-verified { border-top-color: #1b8a84; }
+    .ll-card.ll-card-verified:hover { border-top-color: #1b8a84; }
 
     /* Not-found cards */
     .ll-not-found-card {
@@ -403,12 +441,28 @@ function renderSidebar(results) {
       ? `<span class="ll-indicator ll-indicator-green">&#x25CF; ${total} match${total > 1 ? "es" : ""}</span>`
       : `<span class="ll-indicator ll-indicator-gray">&#x25CB; No bills or votes found</span>`;
 
-    const claimLine = record.claim
-      ? `<div class="ll-card-claim">${escapeHtml(record.claim)}</div>`
-      : "";
+    // Claim — three states:
+    // Claim — three states:
+    // dual_verified: green border + "✓ Verified Statement" label + green card top border
+    // ambiguous: amber border + both model interpretations
+    // single_model/other: plain italic claim
+    const isVerified = record._verification === "dual_verified";
+    let claimLine = "";
+    if (record._verification === "ambiguous" && (record._claude_claim || record._mistral_claim)) {
+      claimLine = `<div class="ll-card-claim ll-ambiguous">
+        <span class="ll-ambiguous-label">⚠ Models disagreed</span>
+        ${record._claude_claim ? `<span class="ll-ambiguous-model">Claude</span><span class="ll-ambiguous-text">${escapeHtml(record._claude_claim)}</span>` : ""}
+        ${record._mistral_claim ? `<span class="ll-ambiguous-model">Mistral</span><span class="ll-ambiguous-text">${escapeHtml(record._mistral_claim)}</span>` : ""}
+      </div>`;
+    } else if (record.claim) {
+      claimLine = `<div class="ll-card-claim${isVerified ? " ll-verified" : ""}">
+        ${isVerified ? `<span class="ll-verified-label">✓ Verified Statement</span>` : ""}
+        ${escapeHtml(record.claim)}
+      </div>`;
+    }
 
     cardsHTML += `
-      <div class="ll-card" data-idx="${idx}">
+      <div class="ll-card${isVerified ? " ll-card-verified" : ""}" data-idx="${idx}">
         <div class="ll-card-eyebrow">${escapeHtml(eyebrow)}</div>
         <div class="ll-card-name">${escapeHtml(p.full_name || p.matched_as || "")}</div>
         <div class="ll-card-meta">
@@ -462,8 +516,18 @@ function renderSidebar(results) {
 
       let html = `<div class="ll-detail-title">${escapeHtml(p.full_name || p.matched_as || "")} &mdash; ${(record.topics || []).map(escapeHtml).join(", ")}</div>`;
 
-      if (record.claim) {
-        html += `<div class="ll-detail-claim">${escapeHtml(record.claim)}</div>`;
+      if (record._verification === "ambiguous" && (record._claude_claim || record._mistral_claim)) {
+        html += `<div class="ll-detail-claim" style="border-left-color:#c8a96e">
+          <strong style="color:#c8a96e;font-size:0.54rem;text-transform:uppercase;letter-spacing:0.1em">⚠ Models disagreed on this claim</strong><br><br>
+          ${record._claude_claim ? `<span style="color:#5a5f6e;font-size:0.52rem;text-transform:uppercase">Claude:</span><br>${escapeHtml(record._claude_claim)}<br><br>` : ""}
+          ${record._mistral_claim ? `<span style="color:#5a5f6e;font-size:0.52rem;text-transform:uppercase">Mistral:</span><br>${escapeHtml(record._mistral_claim)}` : ""}
+        </div>`;
+      } else if (record.claim) {
+        const isVerified = record._verification === "dual_verified";
+        html += `<div class="ll-detail-claim"${isVerified ? ' style="border-left-color:#1b8a84"' : ""}>
+          ${escapeHtml(record.claim)}
+          ${isVerified ? `<br><span style="color:#1b8a84;font-size:0.52rem;text-transform:uppercase;letter-spacing:0.08em">✓ Dual verified — Claude &amp; Mistral agree</span>` : ""}
+        </div>`;
       }
 
       if (rollVotes.length > 0) {

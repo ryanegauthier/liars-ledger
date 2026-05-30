@@ -79,15 +79,15 @@ async function handleAnalyze({ politicians, articleText, apiKey }) {
       logger.info("background", `LLM analysis: provider=${llmProvider}`);
    
       const ann = await extractArticleAnalysis(articleText, {
-        provider:      llmProvider,
-        claudeApiKey:  CONFIG.CLAUDE_API_KEY,
-        mistralApiKey: CONFIG.MISTRAL_API_KEY,
-        endpoint:      CONFIG.CLAUDE_API_ENDPOINT || undefined,
-        baseUrl:       CONFIG.OLLAMA_BASE_URL,
-        model:         CONFIG.OLLAMA_MODEL,
-        timeoutMs:     CONFIG.LLM_TIMEOUT_MS || 30000,
+        provider:         llmProvider,
+        claudeApiKey:     CONFIG.CLAUDE_API_KEY,
+        mistralApiKey:    CONFIG.MISTRAL_API_KEY,
+        claudeEndpoint:   CONFIG.CLAUDE_API_ENDPOINT  || undefined,
+        mistralEndpoint:  CONFIG.MISTRAL_API_ENDPOINT || undefined,
+        baseUrl:          CONFIG.OLLAMA_BASE_URL,
+        model:            CONFIG.OLLAMA_MODEL,
+        timeoutMs:        CONFIG.LLM_TIMEOUT_MS || 30000,
       });
-
       if (ann.ok) {
         articleSummary   = ann.summary || null;
         ollamaFigures    = ann.figures || [];
@@ -177,9 +177,22 @@ async function handleAnalyze({ politicians, articleText, apiKey }) {
 
     for (let i = 0; i < records.length; i++) {
       const label = resolved[i].matched_as;
+      const fig   = figureForMember(ollamaFigures, resolved[i]);
+
+      // Verified claim
       const claim = claimByLabel.get(label);
       if (claim) records[i].claim = claim;
+
+      // Pass verification metadata through for UI display
+      if (fig) {
+        records[i]._verification  = fig._verification  || null;
+        records[i]._claude_claim  = fig._claude_claim  || null;
+        records[i]._mistral_claim = fig._mistral_claim || null;
+        records[i]._similarity    = fig._similarity    || null;
+      }
+      console.log(`[LL debug] ${records[i].politician?.full_name}: claim=${records[i].claim}, verification=${records[i]._verification}`);
     }
+    
 
     logger.info("background", `analysis complete — ${records.length} record(s) returned`);
     return {

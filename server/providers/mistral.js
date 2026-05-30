@@ -61,6 +61,7 @@ function buildPrompt(articleText) {
     "Rules:\n" +
     "- Only include people who are clearly discussed as federal lawmakers (current Congress).\n" +
     "- Include at most 10 figures. If none qualify, use an empty figures array.\n" +
+    "- Use the most formal version of each person's name consistently. Never return the same person twice with different name formats (e.g. 'Sen. Sanders' and 'Sen. Bernie Sanders' are the same person — pick one).\n" +
     "- main_topics must reflect the dominant legislation/policy threads in the article.\n" +
     "- search_terms must be useful for matching bill titles.\n\n" +
     "Article excerpt:\n\"\"\"\n" + excerpt + '\n"""'
