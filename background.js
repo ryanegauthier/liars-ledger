@@ -34,7 +34,7 @@ function figureForMember(figures, member) {
 // --- Message listener ---
 browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "ping") {
-    sendResponse({ status: "ok", version: "0.8.0" });
+    sendResponse({ status: "ok", version: "0.10.0" });
     return true;
   }
 
@@ -209,4 +209,4 @@ async function handleAnalyze({ politicians, articleText, apiKey }) {
   }
 }
 
-logger.info("background", "service worker loaded v0.9.0");
+logger.info("background", "service worker loaded v0.10.0");

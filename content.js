@@ -1,4 +1,4 @@
-// Liars Ledger - content.js v0.9.0
+// Liars Ledger - content.js v0.10.0
 const browser = window.browser || window.chrome;
 
 function escapeHtml(s) {
@@ -385,7 +385,7 @@ function initSidebar() {
       <span id="ll-footer-source">congress.gov · official record · non-partisan</span>
       <div id="ll-footer-right">
         <span class="ll-ticker-dot"></span>
-        <span id="ll-version">v0.9.0</span>
+        <span id="ll-version">v0.10.0</span>
       </div>
     </div>
   `;

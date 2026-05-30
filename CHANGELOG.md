@@ -1,28 +1,59 @@
 # Changelog
 
+## [0.10.0] - 2026-05-30
+
+### Backend proxy + verified/ambiguous UI
+
+- **`server/`** — Node.js/Express backend proxy, deployed to Render at `api.liarsledger.com`
+  - `server/index.js` — Express server with CORS, rate limiting, health check
+  - `server/providers/claude.js` — Claude Haiku 4.5 extraction, returns standard shape
+  - `server/providers/mistral.js` — Mistral Small extraction, returns standard shape
+  - `server/providers/congress.js` — Congress.gov proxy (appends API key server-side)
+  - `server/providers/votesmart.js` — VoteSmart v2 JWT auth + auto-refresh (CORS blocked from browser — must go through proxy)
+  - `server/render.yaml` — Render deployment config
+  - All API keys moved to server environment variables — removed from extension
+  - `ALLOWED_ORIGINS` env var restricts access to the extension's Chrome ID
+- **`src/llm.js`** — proxy-aware request routing
+  - Detects proxy vs direct mode based on endpoint URL
+  - Proxy mode: sends `{articleText}` — server handles auth and model calls
+  - Direct mode: sends full model request with API keys (dev fallback)
+  - `AGREEMENT_THRESHOLD` lowered from 0.65 to 0.55 — catches claims that agree on core assertion but differ in supporting detail
+  - Pronoun normalization in `jaccardSimilarity` — "He has called" and "Sanders has called" now score on content words, not subject
+  - Prompt updated in all three locations (llm.js, claude.js, mistral.js): added deduplication rule — models told never to return the same person twice with different name formats
+  - Separate `claudeEndpoint` / `mistralEndpoint` options — each provider routes independently
+- **`background.js`** — verification metadata passed through to records
+  - `_verification`, `_claude_claim`, `_mistral_claim`, `_similarity` now on each record
+  - `memberJobs` passes `claudeEndpoint` and `mistralEndpoint` separately
+- **`content.js`** — verified/ambiguous claim UI
+  - `dual_verified`: green left border (3px), teal background tint, `✓ Verified Statement` label, green card top border
+  - `ambiguous`: amber border, `⚠ Models disagreed` label, Claude and Mistral claims shown separately
+  - `single_model`: plain italic claim, no badge
+  - Detail panel mirrors same treatment with `✓ DUAL VERIFIED — CLAUDE & MISTRAL AGREE`
+- **`manifest.json`** — added `liars-ledger.onrender.com` to `host_permissions`; removed direct `api.anthropic.com` and `api.mistral.ai` (now proxied)
+- **DNS** — `api.liarsledger.com` CNAME → `liars-ledger.onrender.com` (DreamHost, propagating)
+
+### Startup cost reference
+| Service | Cost |
+|---|---|
+| Render Starter (always-on) | $7/month at launch |
+| Claude API | ~$0.00075/scan |
+| Mistral API | ~$0.00024/scan |
+| **Total per 1000 scans** | **~$1.00 + $7/month hosting** |
+
+---
+
 ## [0.9.0] - 2026-05-17
 
 ### Bill matching fix + GovTrack URL fix
 
-- **`src/api.js`** — two-pass bill relevance matching in `lookupPoliticianOnTopics`
-  - **Pass 1** (existing): `billMatchesTopic()` keyword category matching against 19 predefined topic buckets
-  - **Pass 2** (new): direct title substring match against the LLM's per-figure `search_terms` — fixes the core issue where specific terms like `"voting rights"` or `"budget reconciliation"` were being ignored because they didn't map to a category keyword
-  - Untitled amendments now filtered out of bill cards (no title = no useful display)
-  - Bills deduped by URL/number across sponsored and cosponsored — no more duplicates
-  - Keyword search queries capped at 6 most specific terms per member to reduce API call count
-  - `_llm_search_terms` passed from `background.js` through to each member object
-- **`background.js`** — `memberJobs` now includes `_llm_search_terms` from the matched LLM figure so `api.js` can use them for pass-2 matching
-- **`src/api.js`** — `resolveGovTrackId` URL corrected to `unitedstates.github.io` (was incorrectly pointing to `raw.githubusercontent.com` which returns 404)
-- **`src/llm.js`** — added `anthropic-dangerous-direct-browser-access: true` header required for Claude API calls from browser/extension context (was returning 401 CORS error)
-
-### Results before/after on same article (Fox News ballroom article, 7 senators)
-| Senator | Before | After |
-|---|---|---|
-| Jeff Merkley | 0 sponsored, 0 cosponsored | 1 sponsored, 8 cosponsored |
-| Charles E. Schumer | 0 sponsored, 0 cosponsored | 2 sponsored, 2 cosponsored |
-| Rick Scott | 0 sponsored, 0 cosponsored | 3 sponsored, 0 cosponsored |
-| Todd Young | 0 sponsored, 0 cosponsored | 3 sponsored, 0 cosponsored |
-| James Lankford | 1 sponsored, 1 cosponsored | 1 sponsored, 1 cosponsored |
+- **`src/api.js`** — two-pass bill relevance matching
+  - Pass 1: `billMatchesTopic()` keyword category matching (19 topic buckets)
+  - Pass 2: direct title substring match against LLM `search_terms`
+  - Untitled amendments filtered out; bills deduped by URL/number
+  - Keyword search capped at 6 most specific terms per member
+- **`background.js`** — `_llm_search_terms` passed through to `api.js`
+- **`src/api.js`** — `resolveGovTrackId` URL fixed to `unitedstates.github.io`
+- **`src/llm.js`** — `anthropic-dangerous-direct-browser-access: true` header added
 
 ---
 
@@ -30,88 +61,52 @@
 
 ### Dual-model LLM claim extraction — live
 
-- **`src/llm.js`** — unified provider module replacing direct Ollama dependency
-  - `extractArticleAnalysisViaMistral()` — Mistral Small latest (~$0.00024/scan)
-  - `extractArticleAnalysisViaClaude()` — Claude Haiku 4.5 (~$0.00075/scan)
-  - `extractArticleAnalysisDualVerified()` — runs both in parallel, compares claims via Jaccard similarity, returns `dual_verified` / `single_model` / `ambiguous` per figure
-  - `extractArticleAnalysis()` — unified entry point routed by `CONFIG.LLM_PROVIDER`
-  - Merged `search_terms` from both models on agreement
-  - `_meta` block: provider, models, verified/ambiguous/single_model counts
-- **`src/lookup.js`** — nickname resolution for LLM-returned names
-  - `FULL_NAME_OVERRIDES`: Chuck Schumer, Mitch McConnell, Ted Cruz, Bernie Sanders, 40+ others
-  - `NICKNAME_FIRST`: first-name substitution fallback
-  - Resolution order: exact → strip title → nickname map → last-name-only → non-member check
+- **`src/llm.js`** — Claude + Mistral in parallel, Jaccard similarity merge
+- **`src/lookup.js`** — nickname resolution (40+ overrides)
 - **`src/api.js`** — GovTrack roll-call vote integration
-  - Replaced broken Congress.gov `senate-vote`/`house-vote` beta endpoints (404 for 119th Congress)
-  - `resolveGovTrackId()` — fetches `unitedstates/congress-legislators` JSON, session-cached
-  - `findMemberRollCallVotesOnTopics()` — topic-filtered votes from GovTrack
-- **`src/config.example.js`** — `LLM_PROVIDER`, `CLAUDE_API_KEY`, `MISTRAL_API_KEY`, proxy endpoints, `LLM_TIMEOUT_MS`
-- **`manifest.json`** — added `api.anthropic.com`, `api.mistral.ai`, `unitedstates.github.io`, `raw.githubusercontent.com` to `host_permissions`
-- **UI** — popup and sidebar restyled to match liarsledger.com (Oswald + IBM Plex Mono, navy/gold/red)
-
-### Cost reference (per scan)
-| Mode | Cost |
-|---|---|
-| Mistral only | ~$0.00024 |
-| Claude only | ~$0.00075 |
-| Dual (production) | ~$0.001 |
+- **UI** — restyled to match liarsledger.com (Oswald + IBM Plex Mono, navy/gold/red)
 
 ---
 
 ## [0.7.0] - 2026-05-11
+- Ollama article analysis, Congress.gov roll-call vote beta (replaced by GovTrack)
 
-- **Ollama article analysis** — `extractArticleAnalysisViaOllama` returns `article_summary`, `main_topics`, `figures` with claims and bill search terms
-- **Congress.gov roll-call votes** — beta `house-vote`/`senate-vote` endpoints (replaced in 0.8.0 by GovTrack due to 404s on 119th Congress)
-- **Popup/content** — longer analyze timeout, `startResultsPoll`, larger article excerpt, sidebar shows summary + roll-call block
-
-## [0.6.0] - Step 6 - Sidebar UI
-- Inline bottom bar sidebar injected by content script
-- Politician cards: name, party, state, chamber, bill count indicator
-- Expandable bill detail panel on card click with congress.gov links
-- Greyed-out cards for notMembers and notFound
+## [0.6.0] - Sidebar UI
+- Bottom bar with politician cards, expandable bill detail, congress.gov links
 
 ## [0.4.1] - Logger
-- Session storage debug log, popup panel with Copy/Clear, auto-refresh
+- Session storage debug log, popup panel with Copy/Clear
 
-## [0.4.0] - Step 4 - Congress.gov API Integration
-- Sponsored/cosponsored legislation lookup, topic keyword extraction
-- Session caching, store-and-poll pattern
+## [0.4.0] - Congress.gov API Integration
+- Sponsored/cosponsored lookup, topic keywords, session caching
 
-## [0.3.0] - Step 3 - Politician Dictionary
-- 536 members, 3606 lookup keys, three resolution categories
+## [0.3.0] - Politician Dictionary
+- 536 members, 3606 lookup keys
 
-## [0.2.0] - Step 2 - Article Detection + Name Extraction
-- Article body detection, regex politician name extraction
-
-## [0.1.0] - Step 1 - Skeleton
-- Manifest V3, service worker, content script, popup toggle, cross-browser shim
+## [0.2.0] - Article Detection + Name Extraction
+## [0.1.0] - Skeleton
 
 ---
 
 ## Planned
 
-### [0.10.0] — Backend proxy (production hardening)
-- Node.js/Express proxy holds all API keys (Claude, Mistral, Congress.gov)
-- Extension calls `https://api.liarsledger.com/v1/analyze` — one endpoint
-- Proxy routes to Claude + Mistral in parallel, returns dual-verified result
-- Removes direct API keys from manifest `host_permissions`
-- Rate limiting and usage tracking per user/IP
-- Deploy target: Railway, Fly.io, or Render
-
 ### [0.11.0] — Freemium tier management
 - Anonymous free tier: 5 scans/day via session fingerprint
 - Pro tier: unlimited scans, Stripe subscription, JWT auth token
 - Popup shows scan count remaining for free users
-- Account creation via liarsledger.com
+- Account creation via liarsledger.com (not in extension)
+- Backend enforces limits; extension degrades gracefully on 429
 
 ### [0.12.0] — VoteSmart integration
-- Awaiting educational API license
-- Interest group ratings (NRA, ACLU, Chamber of Commerce, etc.)
+- Educational API license obtained — JWT auth, CORS-blocked, must go through proxy
+- Interest group ratings (NRA, ACLU, Chamber of Commerce, AFL-CIO, etc.)
 - Issue positions and candidate questionnaire responses
 - Historical key votes beyond 119th Congress
+- VoteSmart candidate IDs added to politician dictionary
 
 ### [0.13.0] — GovTrack extended data
-- Ideology scores, missed vote rates, committee assignments
+- Ideology scores (0.0 = most liberal, 1.0 = most conservative)
+- Missed vote rates and committee assignments
 - Historical roll-call votes back to 1990s
 
 ### [0.14.0] — Creator shareable graphics
@@ -126,3 +121,4 @@
 ### [Future] — Privacy policy + Chrome Web Store listing
 - Privacy policy at liarsledger.com/privacy
 - Chrome Web Store: Productivity / News category
+- Consider Firefox AMO simultaneous launch
