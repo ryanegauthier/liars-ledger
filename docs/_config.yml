@@ -1,0 +1,28 @@
+title: Liar's Ledger
+description: Technical documentation for the Liar's Ledger browser extension.
+url: "https://ryanegauthier.github.io"
+baseurl: "/liars-ledger"
+
+theme: just-the-docs
+
+# Color scheme — dark to match the extension UI
+color_scheme: dark
+
+# Navigation
+nav_sort: order
+
+# Footer
+footer_content: "Liar's Ledger · Independent · Non-partisan · Open source"
+
+# GitHub link
+gh_edit_link: true
+gh_edit_link_text: "Edit this page on GitHub"
+gh_edit_repository: "https://github.com/ryanegauthier/liars-ledger"
+gh_edit_branch: "main"
+gh_edit_source: docs
+gh_edit_view_mode: "edit"
+
+# Exclude build files
+exclude:
+  - node_modules/
+  - "*.gemspec"
