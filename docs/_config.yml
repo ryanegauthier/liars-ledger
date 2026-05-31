@@ -3,7 +3,8 @@ description: Technical documentation for the Liar's Ledger browser extension.
 url: "https://docs.liarsledger.com"
 baseurl: ""
 
-# No remote theme — using custom layout in _layouts/default.html
+# Disable default theme — using custom layout in _layouts/default.html
+theme: null
 
 plugins:
   - jekyll-relative-links
