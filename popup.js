@@ -1,4 +1,4 @@
-// Liar's Ledger - popup.js v0.11.0
+// Liar's Ledger - popup.js v0.11.1
 
 const browser = window.browser || window.chrome;
 const toggle         = document.getElementById("enableToggle");

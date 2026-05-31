@@ -78,50 +78,44 @@ for (const f of iconFiles) {
 }
 
 // Write a setup README into the zip
-const setupReadme = `# Liar's Ledger v${version} — Setup Instructions
+const setupReadme = `# Liar's Ledger — Setup
 
-## Installation
+## Step 1 — Get a free API key
 
-1. Unzip this folder somewhere permanent on your computer
-2. Rename \`src/config.example.js\` to \`src/config.js\`
-3. Open \`src/config.js\` and fill in your API keys (see below)
-4. Open Chrome and go to \`chrome://extensions\`
-5. Enable **Developer mode** (toggle in the top right)
-6. Click **Load unpacked**
-7. Select this unzipped folder
-8. Navigate to any political news article and click the Liar's Ledger icon
+Go to **https://api.congress.gov/sign-up/** and sign up.
+You'll get an API key instantly by email. It looks like this:
 
-## API Keys Required
-
-You need a Congress.gov API key (free, instant):
-- Register at: https://api.congress.gov/sign-up/
-- Paste the key into \`src/config.js\` as \`CONGRESS_API_KEY\`
-
-The AI claim extraction uses the shared backend at api.liarsledger.com.
-No additional keys needed — the backend is already configured.
-
-## config.js
-
-\`\`\`js
-const CONFIG = {
-  CONGRESS_API_KEY:     "your-key-here",
-  LLM_PROVIDER:         "dual",
-  CLAUDE_API_KEY:       null,
-  MISTRAL_API_KEY:      null,
-  CLAUDE_API_ENDPOINT:  "https://api.liarsledger.com/api/claude/extract",
-  MISTRAL_API_ENDPOINT: "https://api.liarsledger.com/api/mistral/extract",
-  LLM_TIMEOUT_MS:       30000,
-  OLLAMA_BASE_URL:      null,
-  OLLAMA_MODEL:         null,
-  OLLAMA_TIMEOUT_MS:    30000,
-  GOVTRACK_KEY:         null,
-  VOTESMART_KEY:        null,
-};
+\`\`\`
+fkSi1mOoP72Irlcd4X978pc51HWTkhqLCucfSCwJ
 \`\`\`
 
-## Questions?
+## Step 2 — Add your key
 
-See the full project at: https://github.com/ryanegauthier/worth-noting
+Open the \`src\` folder and rename \`config.example.js\` to \`config.js\`.
+
+Open \`config.js\` in any text editor and replace \`YOUR_CONGRESS_API_KEY_HERE\` with your key:
+
+\`\`\`js
+CONGRESS_API_KEY: "paste-your-key-here",
+\`\`\`
+
+Save the file. Everything else is already configured — no other keys needed.
+
+## Step 3 — Load the extension
+
+1. Open Chrome and go to \`chrome://extensions\`
+2. Turn on **Developer mode** (toggle in the top right)
+3. Click **Load unpacked**
+4. Select this folder
+5. The Liar's Ledger icon will appear in your toolbar
+
+## Step 4 — Use it
+
+Navigate to any political news article, click the Liar's Ledger icon, and hit **Scan This Page**.
+
+---
+
+Questions? https://github.com/ryanegauthier/worth-noting
 `;
 
 writeFileSync(join(buildDir, "SETUP.md"), setupReadme);
