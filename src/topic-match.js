@@ -117,5 +117,9 @@ function memberVotePosition(row) {
 
 function mergeTopicsForMember(fig, mainTopicsGlobal, fallbackTopics) {
   const figSearchTerms = fig?.search_terms || [];
-  return [...new Set([...figSearchTerms, ...mainTopicsGlobal, ...fallbackTopics])].filter(Boolean);
+  const llmTopics = [...figSearchTerms, ...mainTopicsGlobal].filter(Boolean);
+  // When the LLM provided specific terms, use only those.
+  // Mixing in broad keyword fallback (taxation, defense, etc.) produces
+  // too many irrelevant bill matches.
+  return [...new Set(llmTopics.length > 0 ? llmTopics : fallbackTopics)];
 }
