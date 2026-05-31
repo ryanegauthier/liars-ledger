@@ -51,7 +51,10 @@ async function getMemberSponsoredBills(bioguideId, apiKey, limit = 50) {
   const path = `/member/${bioguideId}/sponsored-legislation?limit=${limit}&congress=${CURRENT_CONGRESS}`;
   try {
     const data = await apiFetch(path, apiKey);
-    console.log("[Liars Ledger] sponsored bills raw:", JSON.stringify(data.sponsoredLegislation?.slice(0,3), null, 2));
+    console.log(
+      "[Liars Ledger] sponsored bills raw:",
+      JSON.stringify(data.sponsoredLegislation?.slice(0, 3), null, 2),
+    );
     return data.sponsoredLegislation || [];
   } catch (e) {
     console.warn("[Liars Ledger] sponsored bills fetch failed:", e.message);
@@ -64,7 +67,10 @@ async function getMemberCosponsoredBills(bioguideId, apiKey, limit = 50) {
   const path = `/member/${bioguideId}/cosponsored-legislation?limit=${limit}&congress=${CURRENT_CONGRESS}`;
   try {
     const data = await apiFetch(path, apiKey);
-    console.log("[Liars Ledger] cosponsored bills raw:", JSON.stringify(data.cosponsoredLegislation?.slice(0,3), null, 2));
+    console.log(
+      "[Liars Ledger] cosponsored bills raw:",
+      JSON.stringify(data.cosponsoredLegislation?.slice(0, 3), null, 2),
+    );
     return data.cosponsoredLegislation || [];
   } catch (e) {
     console.warn("[Liars Ledger] cosponsored bills fetch failed:", e.message);
@@ -80,7 +86,11 @@ async function searchBillsByKeyword(keyword, apiKey, limit = 10) {
     const data = await apiFetch(path, apiKey);
     return data.bills || [];
   } catch (e) {
-    console.warn("[Liars Ledger] bill search failed for keyword:", keyword, e.message);
+    console.warn(
+      "[Liars Ledger] bill search failed for keyword:",
+      keyword,
+      e.message,
+    );
     return [];
   }
 }
@@ -91,9 +101,9 @@ async function lookupPoliticianOnTopics(member, topics, apiKey) {
   const result = {
     politician: member,
     topics,
-    sponsored: [],   // bills they sponsored related to topics
+    sponsored: [], // bills they sponsored related to topics
     cosponsored: [], // bills they cosponsored related to topics
-    searched: [],    // topic-matched bills from keyword search
+    searched: [], // topic-matched bills from keyword search
     notFound: topics.length === 0,
   };
 
@@ -120,7 +130,7 @@ async function lookupPoliticianOnTopics(member, topics, apiKey) {
   // They live on member._llm_search_terms if background.js passes them through,
   // or we fall back to topics only.
   const llmSearchTerms = (member._llm_search_terms || [])
-    .map(t => t.toLowerCase().trim())
+    .map((t) => t.toLowerCase().trim())
     .filter(Boolean);
 
   function billMatchesAny(bill) {
@@ -161,22 +171,47 @@ async function lookupPoliticianOnTopics(member, topics, apiKey) {
   // Direct keyword search — use a subset of most specific LLM terms
   // to avoid too many API calls; cap at 6 most distinctive terms
   const searchTermsToQuery = [
-    ...new Set([...llmSearchTerms.slice(0, 4), ...topics.slice(0, 2)])
+    ...new Set([...llmSearchTerms.slice(0, 4), ...topics.slice(0, 2)]),
   ].slice(0, 6);
 
   for (const term of searchTermsToQuery) {
     const bills = await searchBillsByKeyword(term, apiKey, 10);
-    const relevant = bills.filter(b =>
-      b.sponsors?.some(s => s.bioguideId === member.bioguide_id)
+    const relevant = bills.filter((b) =>
+      b.sponsors?.some((s) => s.bioguideId === member.bioguide_id),
     );
     for (const b of relevant) addIfNew(b, result.searched, term);
   }
 
-  const rollCallVotes = await findMemberRollCallVotesOnTopics(member, topics, apiKey);
+  // Fetch GovTrack roll-call votes + VoteSmart data in parallel
+  const vsEnabled =
+    typeof lookupVoteSmart === "function" &&
+    typeof CONFIG !== "undefined" &&
+    CONFIG.PROXY_URL;
+
+  const [rollCallVotes, vsData] = await Promise.all([
+    findMemberRollCallVotesOnTopics(member, topics, apiKey),
+    vsEnabled
+      ? lookupVoteSmart(member, [
+          ...new Set([...(member._main_topics || []), ...topics]),
+        ])
+      : Promise.resolve(null),
+  ]);
+
   result.rollCallVotes = rollCallVotes;
 
+  if (vsData) {
+    result.voteSmartId = vsData.candidateId;
+    result.voteSmartRatings = vsData.ratings || [];
+    result.voteSmartVotes = vsData.votes || [];
+  } else {
+    result.voteSmartRatings = [];
+    result.voteSmartVotes = [];
+  }
+
   console.log(
-    `[Liars Ledger] ${member.full_name}: ${result.sponsored.length} sponsored, ${result.cosponsored.length} cosponsored, ${rollCallVotes.length} roll-call hits`
+    `[Liars Ledger] ${member.full_name}: ${result.sponsored.length} sponsored, ` +
+      `${result.cosponsored.length} cosponsored, ${rollCallVotes.length} roll-call hits, ` +
+      `${result.voteSmartRatings.length} VS ratings, ${result.voteSmartVotes.length} VS votes`,
   );
   return result;
 }
@@ -195,7 +230,10 @@ async function findMemberRollCallVotesOnTopics(member, topics, apiKey) {
   // Step 1: resolve bioguide_id → GovTrack person ID (cached)
   const govtrackId = await resolveGovTrackId(member.bioguide_id);
   if (!govtrackId) {
-    console.warn("[Liars Ledger] GovTrack ID not found for", member.bioguide_id);
+    console.warn(
+      "[Liars Ledger] GovTrack ID not found for",
+      member.bioguide_id,
+    );
     return [];
   }
 
@@ -219,31 +257,36 @@ async function findMemberRollCallVotesOnTopics(member, topics, apiKey) {
   if (!voteEntries.length) return [];
 
   // Step 3: filter to topic-relevant votes
-  const topicsLower = topics.map(t => t.toLowerCase());
+  const topicsLower = topics.map((t) => t.toLowerCase());
 
-  const matched = voteEntries.filter(entry => {
+  const matched = voteEntries.filter((entry) => {
     const vote = entry.vote || {};
     const blob = [
-      vote.question    || "",
+      vote.question || "",
       vote.description || "",
       vote.related_bill?.title || "",
-    ].join(" ").toLowerCase();
+    ]
+      .join(" ")
+      .toLowerCase();
 
-    return topicsLower.some(topic => {
+    return topicsLower.some((topic) => {
       if (blob.includes(topic)) return true;
-      const keywords = (typeof TOPIC_TITLE_KEYWORDS !== "undefined" && TOPIC_TITLE_KEYWORDS[topic]) || [];
-      return keywords.some(kw => blob.includes(kw));
+      const keywords =
+        (typeof TOPIC_TITLE_KEYWORDS !== "undefined" &&
+          TOPIC_TITLE_KEYWORDS[topic]) ||
+        [];
+      return keywords.some((kw) => blob.includes(kw));
     });
   });
 
   // Step 4: shape to match existing rollCallVotes format used by content.js
-  return matched.slice(0, 8).map(entry => {
-    const vote    = entry.vote || {};
-    const pos     = entry.option?.value || entry.vote_type || "—";
+  return matched.slice(0, 8).map((entry) => {
+    const vote = entry.vote || {};
+    const pos = entry.option?.value || entry.vote_type || "—";
     const chamber = vote.chamber === "s" ? "senate" : "house";
     const congress = vote.congress || CURRENT_CONGRESS;
-    const session  = vote.session  || 1;
-    const rollNum  = vote.number   || null;
+    const session = vote.session || 1;
+    const rollNum = vote.number || null;
 
     const voteUrl = rollNum
       ? `https://www.govtrack.us/congress/votes/${congress}-${session}/${chamber}${rollNum}`
@@ -252,8 +295,8 @@ async function findMemberRollCallVotesOnTopics(member, topics, apiKey) {
     return {
       session,
       rollNumber: rollNum,
-      date:       vote.created ? vote.created.slice(0, 10) : "",
-      question:   vote.question || vote.description || "Roll call vote",
+      date: vote.created ? vote.created.slice(0, 10) : "",
+      question: vote.question || vote.description || "Roll call vote",
       legislation: vote.related_bill
         ? `${(vote.related_bill.bill_type || "").toUpperCase()} ${vote.related_bill.number || ""}`.trim()
         : "",
@@ -265,46 +308,52 @@ async function findMemberRollCallVotesOnTopics(member, topics, apiKey) {
 
 function normalizeVotePosition(raw) {
   const map = {
-    "Yea": "Yea", "Yes": "Yea", "+": "Yea",
-    "Nay": "Nay", "No":  "Nay", "-": "Nay",
-    "P":   "Present",
-    "Not Voting": "Not Voting", "Abstain": "Not Voting",
+    Yea: "Yea",
+    Yes: "Yea",
+    "+": "Yea",
+    Nay: "Nay",
+    No: "Nay",
+    "-": "Nay",
+    P: "Present",
+    "Not Voting": "Not Voting",
+    Abstain: "Not Voting",
   };
   return map[raw] || raw || "—";
 }
 
 async function resolveGovTrackId(bioguideId) {
   if (!bioguideId) return null;
-  
-    const cacheKey = `govtrack:id:${bioguideId}`;
-    const cached = await cacheGet(cacheKey);
-    if (cached) return cached;
-  
-    try {
-      const url = "https://unitedstates.github.io/congress-legislators/legislators-current.json";
-      const cacheKeyAll = "govtrack:legislators_map";
-      let map = await cacheGet(cacheKeyAll);
-  
-      if (!map) {
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`legislators fetch HTTP ${res.status}`);
-        const data = await res.json();
-        map = {};
-        for (const leg of data) {
-          if (leg.id?.bioguide && leg.id?.govtrack) {
-            map[leg.id.bioguide] = leg.id.govtrack;
-          }
+
+  const cacheKey = `govtrack:id:${bioguideId}`;
+  const cached = await cacheGet(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const url =
+      "https://unitedstates.github.io/congress-legislators/legislators-current.json";
+    const cacheKeyAll = "govtrack:legislators_map";
+    let map = await cacheGet(cacheKeyAll);
+
+    if (!map) {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`legislators fetch HTTP ${res.status}`);
+      const data = await res.json();
+      map = {};
+      for (const leg of data) {
+        if (leg.id?.bioguide && leg.id?.govtrack) {
+          map[leg.id.bioguide] = leg.id.govtrack;
         }
-        await cacheSet(cacheKeyAll, map);
       }
-  
-      const id = map[bioguideId] || null;
-      if (id) await cacheSet(cacheKey, id);
-      return id;
-    } catch (e) {
-      console.warn("[Liars Ledger] GovTrack ID resolution failed:", e.message);
-      return null;
+      await cacheSet(cacheKeyAll, map);
     }
+
+    const id = map[bioguideId] || null;
+    if (id) await cacheSet(cacheKey, id);
+    return id;
+  } catch (e) {
+    console.warn("[Liars Ledger] GovTrack ID resolution failed:", e.message);
+    return null;
+  }
 }
 
 // --- Batch lookup for all resolved politicians ---

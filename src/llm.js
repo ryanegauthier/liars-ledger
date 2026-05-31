@@ -277,7 +277,7 @@ function mergeFigures(claudeFigures, mistralFigures) {
       merged.push({ ...cf, _verification: "single_model", _verified_by: "claude" });
       continue;
     }
-    const similarity = jaccardSimilarity(cf.claim, mf.claim);
+    const similarity = Math.round(jaccardSimilarity(cf.claim, mf.claim) * 100) / 100;
     console.log(`[LL jaccard] ${cf.lookup_name}: score=${similarity.toFixed(2)} threshold=${AGREEMENT_THRESHOLD}`);
     console.log(`  Claude:  ${cf.claim}`);
     console.log(`  Mistral: ${mf.claim}`);

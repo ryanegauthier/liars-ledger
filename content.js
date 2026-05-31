@@ -1,4 +1,4 @@
-// Liars Ledger - content.js v0.10.0
+// Liars Ledger - content.js v0.9.0
 const browser = window.browser || window.chrome;
 
 function escapeHtml(s) {
@@ -228,6 +228,23 @@ function initSidebar() {
     .ll-card.ll-card-verified { border-top-color: #1b8a84; }
     .ll-card.ll-card-verified:hover { border-top-color: #1b8a84; }
 
+    .ll-report-btn {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.5rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: rgba(200,169,110,0.6);
+      background: none;
+      border: 1px solid rgba(200,169,110,0.2);
+      padding: 2px 7px;
+      cursor: pointer;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .ll-report-btn:hover {
+      color: #c8a96e;
+      border-color: rgba(200,169,110,0.5);
+    }
+
     /* Not-found cards */
     .ll-not-found-card {
       min-width: 160px;
@@ -385,7 +402,7 @@ function initSidebar() {
       <span id="ll-footer-source">congress.gov · official record · non-partisan</span>
       <div id="ll-footer-right">
         <span class="ll-ticker-dot"></span>
-        <span id="ll-version">v0.10.0</span>
+        <span id="ll-version">v0.9.0</span>
       </div>
     </div>
   `;
@@ -471,6 +488,9 @@ function renderSidebar(results) {
         </div>
         <div class="ll-indicators">${indicator}</div>
         ${claimLine}
+        <div style="margin-top:6px">
+          <button class="ll-report-btn" data-idx="${idx}">↗ Full Report</button>
+        </div>
       </div>`;
   });
 
@@ -575,12 +595,55 @@ function renderSidebar(results) {
         html += `<div class="ll-empty">No sponsored or cosponsored bills found on these topics in the 119th Congress.</div>`;
       }
 
+      // VoteSmart vote history
+      const vsVotes = record.voteSmartVotes || [];
+      if (vsVotes.length > 0) {
+        html += `<div class="ll-detail-title" style="margin-top:10px">Vote History <span style="color:#5a5f6e;font-size:0.48rem;text-transform:uppercase;letter-spacing:0.08em">&nbsp;· VoteSmart</span></div>`;
+        vsVotes.forEach(function(v) {
+          const posColor = v.vote === "Yea" ? "#1b8a84" : v.vote === "Nay" ? "#c73a25" : "#5a5f6e";
+          html += `
+            <div class="ll-bill">
+              <div class="ll-bill-type" style="color:${posColor};font-weight:500">${escapeHtml(v.vote)}<br><span style="color:#5a5f6e;font-weight:400">${escapeHtml(v.date || "")}</span></div>
+              <div>
+                <div class="ll-bill-title">${escapeHtml(v.title || v.billNumber || "")}</div>
+                <div class="ll-bill-date">${escapeHtml(v.billNumber || "")}${v.stage ? " &middot; " + escapeHtml(v.stage) : ""}${v.categories?.length ? " &middot; " + v.categories.map(escapeHtml).join(", ") : ""}</div>
+              </div>
+            </div>`;
+        });
+      }
+
+      // VoteSmart interest group ratings
+      const vsRatings = record.voteSmartRatings || [];
+      if (vsRatings.length > 0) {
+        html += `<div class="ll-detail-title" style="margin-top:10px">Interest Group Ratings <span style="color:#5a5f6e;font-size:0.48rem;text-transform:uppercase;letter-spacing:0.08em">&nbsp;· VoteSmart</span></div>`;
+        vsRatings.forEach(function(r) {
+          const pct     = typeof r.rating === "number" ? r.rating : parseInt(r.rating, 10);
+          const barColor = pct >= 70 ? "#1b8a84" : pct >= 40 ? "#c8a96e" : "#c73a25";
+          html += `
+            <div class="ll-bill">
+              <div class="ll-bill-type" style="color:${barColor};font-weight:500;font-size:0.78rem">${pct}%<br><span style="color:#5a5f6e;font-weight:400;font-size:0.5rem">${escapeHtml(r.year || "")}</span></div>
+              <div>
+                <div class="ll-bill-title">${escapeHtml(r.sigName || "")}</div>
+                <div class="ll-bill-date">${escapeHtml(r.categories?.join(", ") || "")}</div>
+              </div>
+            </div>`;
+        });
+      }
+
       detailEl.innerHTML = html;
       detailEl.classList.add("ll-visible");
     });
   });
 
-  // Nudge page content so bar doesn't cover footer
+  // Report button — open standalone report page in new tab
+  cardsEl.querySelectorAll(".ll-report-btn").forEach(function(btn) {
+    btn.addEventListener("click", function(e) {
+      e.stopPropagation(); // don't trigger card expand
+      const idx = btn.dataset.idx;
+      const url = browser.runtime.getURL(`report.html?idx=${idx}`);
+      window.open(url, "_blank");
+    });
+  });
   _savedMargin = document.body.style.marginBottom || "";
   document.body.style.marginBottom = "200px";
 

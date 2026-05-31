@@ -4,6 +4,11 @@
 
 const CONFIG = {
 
+  // ── Backend Proxy ────────────────────────────────────────────────────────────
+  // Production: https://api.liarsledger.com
+  // Local dev:  http://localhost:3001
+  PROXY_URL: "YOUR_PROXY_URL_HERE",
+  
   // ── Congress.gov ────────────────────────────────────────────────────────────
   // Register at: https://api.congress.gov/sign-up/
   // Free, instant, 5000 requests/hour

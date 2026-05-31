@@ -11,6 +11,7 @@ importScripts(
   "src/llm.js",
   "src/topic-match.js",
   "src/api.js",
+  "src/votesmart.js",
 );
 
 const browser = globalThis.browser || globalThis.chrome;
@@ -92,7 +93,7 @@ async function handleAnalyze({ politicians, articleText, apiKey }) {
         articleSummary   = ann.summary || null;
         ollamaFigures    = ann.figures || [];
         mainTopicsGlobal = ann.main_topics || [];
-      
+        console.log("[LL debug] mainTopicsGlobal:", mainTopicsGlobal);      
         if (ann._meta) {
           const loserError = ann.figures?.[0]?._loser_error || "unknown";
           const logMsg = ann._meta.provider === "single_model"
@@ -156,6 +157,7 @@ async function handleAnalyze({ politicians, articleText, apiKey }) {
         member: {
           ...m,
           _llm_search_terms: llmSearchTerms, // passed to api.js for direct title matching
+          _main_topics: fallbackTopics,
         },
         topics: topicsByLabel.get(m.matched_as) || [],
       };

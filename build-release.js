@@ -129,15 +129,10 @@ console.log("  ✓ SETUP.md written");
 
 // Create zip
 try {
-  execSync(`cd build && zip -r ../${zipName} liars-ledger-v${version}/`, { stdio: "inherit" });
+  execSync(`zip -r ${zipName} build/liars-ledger-v${version}/`, { stdio: "inherit" });
   console.log(`\n✅ Built: ${zipName}`);
-  console.log(`\nNext steps:`);
-  console.log(`  1. git tag v${version}`);
-  console.log(`  2. git push origin v${version}`);
-  console.log(`  3. Go to GitHub → Releases → Draft a new release`);
-  console.log(`  4. Select tag v${version}, upload ${zipName}`);
 } catch (e) {
-  // zip not available on Windows — try PowerShell
+  // Windows fallback
   try {
     execSync(
       `powershell Compress-Archive -Path "build/liars-ledger-v${version}" -DestinationPath "${zipName}" -Force`,
@@ -145,8 +140,7 @@ try {
     );
     console.log(`\n✅ Built: ${zipName}`);
   } catch (e2) {
-    console.error("Could not create zip. Install zip or run from WSL.");
-    console.log(`Build folder ready at: ${buildDir}`);
-    console.log("Zip it manually and upload to GitHub Releases.");
+    console.error("Could not create zip.");
+    console.log(`Build folder ready at: build/liars-ledger-v${version}`);
   }
 }

@@ -50,7 +50,9 @@
       "resources": [
         "src/data/politicians.json",
         "src/config.js",
-        "src/sidebar.js"
+        "src/sidebar.js",
+        "report.html",
+        "report.js"
       ],
       "matches": ["<all_urls>"]
     }
