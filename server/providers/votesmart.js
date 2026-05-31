@@ -5,48 +5,56 @@
 
 const VS_BASE     = "https://app.votesmart-api.org";
 const VS_LOGIN    = `${VS_BASE}/auth/login`;
-// Token buffer: refresh 5 minutes before expiry
-const REFRESH_BUFFER_MS = 5 * 60 * 1000;
+const REFRESH_BUFFER_MS = 5 * 60 * 1000; // refresh 5 min before expiry
 
-let _token     = null;
-let _expiresAt = 0;
+let _token        = null;
+let _expiresAt    = 0;
+let _tokenPromise = null; // in-flight promise — prevents concurrent refresh stampede
 
 async function getToken() {
   const now = Date.now();
   if (_token && now < _expiresAt - REFRESH_BUFFER_MS) return _token;
 
-  const email    = process.env.VOTESMART_EMAIL;
-  const password = process.env.VOTESMART_PASSWORD;
-  if (!email || !password) throw new Error("VoteSmart credentials not configured");
+  // If a refresh is already in flight, wait for it instead of firing another
+  if (_tokenPromise) return _tokenPromise;
 
-  const res = await fetch(VS_LOGIN, {
-    method:  "POST",
-    headers: { "Content-Type": "application/json" },
-    body:    JSON.stringify({ email, password }),
-    signal:  AbortSignal.timeout(10000),
+  _tokenPromise = (async () => {
+    const email    = process.env.VOTESMART_EMAIL;
+    const password = process.env.VOTESMART_PASSWORD;
+    if (!email || !password) throw new Error("VoteSmart credentials not configured");
+
+    const res = await fetch(VS_LOGIN, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ email, password }),
+      signal:  AbortSignal.timeout(10000),
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`VoteSmart auth failed: HTTP ${res.status}: ${body.slice(0, 120)}`);
+    }
+
+    const data  = await res.json();
+    const token = data?.access_token;
+    if (!token) throw new Error("VoteSmart auth returned no access_token");
+
+    // Decode expiry from JWT payload
+    try {
+      const payload = JSON.parse(Buffer.from(token.split(".")[1], "base64").toString());
+      _expiresAt = (payload.exp || 0) * 1000;
+    } catch {
+      _expiresAt = Date.now() + 23 * 60 * 60 * 1000; // fallback: 23h
+    }
+
+    _token = token;
+    console.log(`[VoteSmart] token refreshed, expires ${new Date(_expiresAt).toISOString()}`);
+    return _token;
+  })().finally(() => {
+    _tokenPromise = null; // clear in-flight flag whether resolved or rejected
   });
 
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`VoteSmart auth failed: HTTP ${res.status}: ${body.slice(0, 120)}`);
-  }
-
-  const data = await res.json();
-  const token = data?.access_token;
-  if (!token) throw new Error("VoteSmart auth returned no access_token");
-
-  // Decode expiry from JWT payload (no library needed — just base64 decode)
-  try {
-    const payload = JSON.parse(Buffer.from(token.split(".")[1], "base64").toString());
-    _expiresAt = (payload.exp || 0) * 1000;
-  } catch {
-    // If we can't decode, assume 23h from now
-    _expiresAt = now + 23 * 60 * 60 * 1000;
-  }
-
-  _token = token;
-  console.log(`[VoteSmart] token refreshed, expires ${new Date(_expiresAt).toISOString()}`);
-  return _token;
+  return _tokenPromise;
 }
 
 async function votesmartFetch(path) {

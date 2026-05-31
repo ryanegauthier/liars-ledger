@@ -25,24 +25,26 @@ mkdirSync(`${buildDir}/src/data`, { recursive: true });
 mkdirSync(`${buildDir}/icons`, { recursive: true });
 
 // Files to include
+// NOTE: rootFiles and srcFiles must stay in sync with background.js importScripts
 const rootFiles = [
   "manifest.json",
   "background.js",
   "content.js",
   "popup.html",
   "popup.js",
+  "report.html",
+  "report.js",
 ];
 
 const srcFiles = [
-  "src/config.example.js",  // included as reference — user must rename to config.js
+  "src/config.example.js",  // user renames to config.js
   "src/logger.js",
   "src/lookup.js",
   "src/keywords.js",
-  "src/ollama-parse.js",
-  "src/ollama.js",
   "src/llm.js",
   "src/topic-match.js",
   "src/api.js",
+  "src/votesmart.js",
   "src/data/politicians.json",
 ];
 
@@ -80,28 +82,13 @@ for (const f of iconFiles) {
 // Write a setup README into the zip
 const setupReadme = `# Liar's Ledger — Setup
 
-## Step 1 — Get a free API key
-
-Go to **https://api.congress.gov/sign-up/** and sign up.
-You'll get an API key instantly by email. It looks like this:
-
-\`\`\`
-fkSi1mOoP72Irlcd4X978pc51HWTkhqLCucfSCwJ
-\`\`\`
-
-## Step 2 — Add your key
+## Step 1 — Rename the config file
 
 Open the \`src\` folder and rename \`config.example.js\` to \`config.js\`.
 
-Open \`config.js\` in any text editor and replace \`YOUR_CONGRESS_API_KEY_HERE\` with your key:
+That's it. No API keys needed — everything runs through api.liarsledger.com.
 
-\`\`\`js
-CONGRESS_API_KEY: "paste-your-key-here",
-\`\`\`
-
-Save the file. Everything else is already configured — no other keys needed.
-
-## Step 3 — Load the extension
+## Step 2 — Load the extension
 
 1. Open Chrome and go to \`chrome://extensions\`
 2. Turn on **Developer mode** (toggle in the top right)
@@ -109,13 +96,13 @@ Save the file. Everything else is already configured — no other keys needed.
 4. Select this folder
 5. The Liar's Ledger icon will appear in your toolbar
 
-## Step 4 — Use it
+## Step 3 — Use it
 
 Navigate to any political news article, click the Liar's Ledger icon, and hit **Scan This Page**.
 
 ---
 
-Questions? https://github.com/ryanegauthier/worth-noting
+Questions? https://github.com/ryanegauthier/liars-ledger
 `;
 
 writeFileSync(join(buildDir, "SETUP.md"), setupReadme);

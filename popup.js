@@ -1,4 +1,4 @@
-// Liar's Ledger - popup.js v0.11.1
+// Liar's Ledger - popup.js v0.11.2
 
 const browser = window.browser || window.chrome;
 const toggle         = document.getElementById("enableToggle");
@@ -19,9 +19,9 @@ toggle.addEventListener("change", () => {
   browser.storage.local.set({ enabled: toggle.checked });
 });
 
-// ── API key ───────────────────────────────────────────────────────────────────
-async function getApiKey() {
-  return CONFIG?.CONGRESS_API_KEY || null;
+// ── Proxy check ───────────────────────────────────────────────────────────────
+function getProxyUrl() {
+  return CONFIG?.PROXY_URL || CONFIG?.CLAUDE_API_ENDPOINT || null;
 }
 
 // ── Status helpers ────────────────────────────────────────────────────────────
@@ -149,16 +149,13 @@ scanBtn.addEventListener("click", async () => {
   setStatus("Scanning page…", "working");
   scanBtn.disabled = true;
 
-  const apiKey = await getApiKey();
-  if (!apiKey) {
-    setStatus("No API key set. See README.", "error");
+  if (!getProxyUrl()) {
+    setStatus("Proxy not configured. Check src/config.js.", "error");
     scanBtn.disabled = false;
     return;
   }
 
-  const ollamaOn = !!(CONFIG?.OLLAMA_BASE_URL && CONFIG?.OLLAMA_MODEL);
-  const ollamaMs = CONFIG?.OLLAMA_TIMEOUT_MS || 60000;
-  const analyzeTimeoutMs = ollamaOn ? ollamaMs + 60000 : 45000;
+  const analyzeTimeoutMs = 45000;
 
   browser.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
     browser.tabs.sendMessage(tab.id, { action: "scan" }, (scanResult) => {
@@ -175,26 +172,25 @@ scanBtn.addEventListener("click", async () => {
 
       const { politicians, articleText } = scanResult;
 
-      if (!politicians.length && !ollamaOn) {
-        setStatus("No politicians detected. Enable Ollama for AI detection.", "");
+      if (!articleText || articleText.trim().length < 200) {
+        setStatus("Not enough article text to analyze.", "");
         scanBtn.disabled = false;
         return;
       }
 
-      setStatus(
-        ollamaOn ? "Analyzing with AI…" : `Found ${politicians.length} politician${politicians.length !== 1 ? "s" : ""}. Looking up records…`,
-        "working"
-      );
+      const hint = politicians.length
+        ? `Found ${politicians.length} politician${politicians.length !== 1 ? "s" : ""}. Analyzing…`
+        : "Analyzing with AI…";
+      setStatus(hint, "working");
 
       browser.runtime.sendMessage(
-        { action: "analyze", payload: { politicians: politicians || [], articleText, apiKey } },
+        { action: "analyze", payload: { politicians: politicians || [], articleText } },
         () => {
           browser.tabs.sendMessage(tab.id, { action: "startResultsPoll" }, () => {});
 
           let elapsed = 0;
           const poll = setInterval(() => {
             elapsed += 500;
-            if (ollamaOn) setStatus(`Analyzing… ${Math.floor(elapsed / 1000)}s`, "working");
 
             browser.storage.session.get("ll_results", (data) => {
               const result = data.ll_results;
@@ -217,7 +213,7 @@ scanBtn.addEventListener("click", async () => {
               } else if (result && result.status !== "working") {
                 handleResult(result);
               } else {
-                setStatus("Timed out. AI model slow — try again or increase OLLAMA_TIMEOUT_MS.", "error");
+                setStatus("Timed out. Try again.", "error");
               }
             });
           }, analyzeTimeoutMs);
@@ -240,3 +236,4 @@ function handleResult(result) {
     renderCards(result);
   }
 }
+

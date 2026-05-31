@@ -1,26 +1,35 @@
 // Liar's Ledger - src/llm.js
 // Unified LLM provider module.
 //
-// Dev mode:  calls Claude + Mistral APIs directly (keys in config.js)
-// Prod mode: calls backend proxy (keys stay server-side)
+// Exports three functions with identical signatures:
+//   extractArticleAnalysisViaMistral(articleText, options)
+//   extractArticleAnalysisViaClaude(articleText, options)
+//   extractArticleAnalysisDualVerified(articleText, options)  ← production path
 //
-// The switch is automatic — if CLAUDE_API_ENDPOINT / MISTRAL_API_ENDPOINT
-// are set in config.js, the proxy path is used. If not, direct API calls.
+// All return:
+//   { ok: true,  summary, main_topics, figures, _meta }
+//   { ok: false, error }
 //
-// Proxy expects:  POST { articleText: "..." }
-// Direct expects: POST { model, messages, ... } with API key headers
+// background.js integration:
+//   const provider = CONFIG.LLM_PROVIDER; // "mistral" | "claude" | "dual"
+//
+// Dev:  API keys in src/config.js (gitignored)
+// Prod: Keys move to backend proxy. Swap endpoint URLs in CONFIG —
+//       no code changes needed, just config.
 
 // ---------------------------------------------------------------------------
-// Direct API endpoints (used when no proxy is configured)
+// Endpoints — override in config.js for proxy in production
 // ---------------------------------------------------------------------------
 const MISTRAL_API_URL = "https://api.mistral.ai/v1/chat/completions";
 const CLAUDE_API_URL  = "https://api.anthropic.com/v1/messages";
 
-const MISTRAL_MODEL = "mistral-small-latest";
-const CLAUDE_MODEL  = "claude-haiku-4-5-20251001";
+// Models — cheap tiers for dev, upgrade in prod
+const MISTRAL_MODEL = "mistral-small-latest";   // ~$0.10/1M tokens in
+const CLAUDE_MODEL  = "claude-haiku-4-5-20251001"; // cheapest Claude 4 tier
 
 // ---------------------------------------------------------------------------
-// Prompt — shared across all providers
+// Prompt — canonical version. Must match server/providers/_shared.js exactly.
+// When changing this, update _shared.js too (and vice versa).
 // ---------------------------------------------------------------------------
 const MAX_ARTICLE_CHARS = 12000;
 
@@ -49,33 +58,23 @@ function buildPrompt(articleText) {
 }
 
 // ---------------------------------------------------------------------------
-// JSON parser — handles markdown fences from any model
+// JSON parser — matches server/providers/_shared.js exactly
 // ---------------------------------------------------------------------------
 function parseContent(content, providerName) {
-  let raw = content.trim();
-  const fence = /^```(?:json)?\s*([\s\S]*?)```$/im.exec(raw);
-  if (fence) raw = fence[1].trim();
+  let raw = content.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "").trim();
+  const start = raw.indexOf("{");
+  const end   = raw.lastIndexOf("}");
+  if (start >= 0 && end > start) raw = raw.slice(start, end + 1);
 
   let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    const start = raw.indexOf("{");
-    const end   = raw.lastIndexOf("}");
-    if (start >= 0 && end > start) {
-      try { parsed = JSON.parse(raw.slice(start, end + 1)); }
-      catch { return { ok: false, error: `${providerName} returned unparseable JSON` }; }
-    } else {
-      return { ok: false, error: `${providerName} returned unparseable JSON` };
-    }
-  }
+  try { parsed = JSON.parse(raw); }
+  catch { return { ok: false, error: `${providerName} returned unparseable JSON` }; }
 
   const summary = typeof parsed?.article_summary === "string"
     ? parsed.article_summary.trim() : "";
 
   const main_topics = Array.isArray(parsed?.main_topics)
-    ? parsed.main_topics.map(t => String(t).trim()).filter(Boolean)
-    : [];
+    ? parsed.main_topics.map(t => String(t).trim()).filter(Boolean) : [];
 
   const figures = [];
   for (const row of (Array.isArray(parsed?.figures) ? parsed.figures : [])) {
@@ -92,58 +91,40 @@ function parseContent(content, providerName) {
 }
 
 // ---------------------------------------------------------------------------
-// Fetch wrapper with timeout
+// Fetch wrapper — uses AbortSignal.timeout (Node 18+ / modern browsers)
 // ---------------------------------------------------------------------------
 async function doFetch(url, init, timeoutMs) {
-  const ctrl  = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, { ...init, signal: ctrl.signal });
-    return res;
-  } finally {
-    clearTimeout(timer);
-  }
+  return fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
 }
 
 // ---------------------------------------------------------------------------
 // Mistral
 // ---------------------------------------------------------------------------
 async function extractArticleAnalysisViaMistral(articleText, options) {
+  const apiKey = options.mistralApiKey
+  || (typeof CONFIG !== "undefined" && CONFIG.MISTRAL_API_KEY);
   const timeoutMs = options.timeoutMs ?? 30000;
-  const endpoint  = options.mistralEndpoint || options.endpoint || MISTRAL_API_URL;
-  const isProxy   = endpoint !== MISTRAL_API_URL;
+  const endpoint = options.mistralEndpoint || options.endpoint || MISTRAL_API_URL;
+
+  if (!apiKey) return { ok: false, error: "Mistral API key not configured" };
 
   let res;
   try {
-    if (isProxy) {
-      // Proxy mode — send articleText, server handles auth + model call
-      res = await doFetch(endpoint, {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ articleText }),
-      }, timeoutMs);
-    } else {
-      // Direct mode — send full Mistral API request with key
-      const apiKey = options.mistralApiKey
-        || (typeof CONFIG !== "undefined" && CONFIG.MISTRAL_API_KEY);
-      if (!apiKey) return { ok: false, error: "Mistral API key not configured" };
-
-      res = await doFetch(endpoint, {
-        method:  "POST",
-        headers: {
-          "Content-Type":  "application/json",
-          "Authorization": `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model:       MISTRAL_MODEL,
-          temperature: 0.1,
-          max_tokens:  1024,
-          messages:    [{ role: "user", content: buildPrompt(articleText) }],
-        }),
-      }, timeoutMs);
-    }
+    res = await doFetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type":  "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model:       MISTRAL_MODEL,
+        temperature: 0.0,
+        max_tokens:  1024,
+        messages:    [{ role: "user", content: buildPrompt(articleText) }],
+      }),
+    }, timeoutMs);
   } catch (e) {
-    return { ok: false, error: e?.name === "AbortError" ? "Mistral request timed out" : e.message };
+    return { ok: false, error: e?.name === "TimeoutError" || e?.name === "AbortError" ? "Mistral request timed out" : e.message };
   }
 
   if (!res.ok) {
@@ -151,21 +132,15 @@ async function extractArticleAnalysisViaMistral(articleText, options) {
     return { ok: false, error: `Mistral HTTP ${res.status}: ${body.slice(0, 120)}` };
   }
 
-  const data = await res.json();
+  let data;
+  try { data = await res.json(); }
+  catch { return { ok: false, error: "Mistral returned non-JSON response" }; }
 
-  // Proxy returns our standard shape directly
-  if (isProxy) {
-    if (!data.ok) return { ok: false, error: data.error || "Proxy returned error" };
-    const result = { ok: true, summary: data.summary, main_topics: data.main_topics, figures: data.figures };
-    result._meta = { provider: "mistral", model: MISTRAL_MODEL };
-    return result;
-  }
-
-  // Direct Mistral API response
   const content = data?.choices?.[0]?.message?.content;
   if (typeof content !== "string" || !content.trim()) {
     return { ok: false, error: "Mistral returned empty content" };
   }
+
   const result = parseContent(content, "Mistral");
   if (result.ok) result._meta = { provider: "mistral", model: MISTRAL_MODEL };
   return result;
@@ -175,42 +150,32 @@ async function extractArticleAnalysisViaMistral(articleText, options) {
 // Claude
 // ---------------------------------------------------------------------------
 async function extractArticleAnalysisViaClaude(articleText, options) {
+  const apiKey = options.claudeApiKey
+  || (typeof CONFIG !== "undefined" && CONFIG.CLAUDE_API_KEY);
   const timeoutMs = options.timeoutMs ?? 30000;
-  const endpoint  = options.claudeEndpoint || options.endpoint || CLAUDE_API_URL;
-  const isProxy   = endpoint !== CLAUDE_API_URL;
+  const endpoint = options.claudeEndpoint || options.endpoint || CLAUDE_API_URL;
+
+  if (!apiKey) return { ok: false, error: "Claude API key not configured" };
 
   let res;
   try {
-    if (isProxy) {
-      // Proxy mode — send articleText, server handles auth + model call
-      res = await doFetch(endpoint, {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ articleText }),
-      }, timeoutMs);
-    } else {
-      // Direct mode — send full Claude API request with key + CORS header
-      const apiKey = options.claudeApiKey
-        || (typeof CONFIG !== "undefined" && CONFIG.CLAUDE_API_KEY);
-      if (!apiKey) return { ok: false, error: "Claude API key not configured" };
-
-      res = await doFetch(endpoint, {
-        method:  "POST",
-        headers: {
-          "Content-Type":      "application/json",
-          "x-api-key":         apiKey,
-          "anthropic-version": "2023-06-01",
-          "anthropic-dangerous-direct-browser-access": "true",
-        },
-        body: JSON.stringify({
-          model:      CLAUDE_MODEL,
-          max_tokens: 1024,
-          messages:   [{ role: "user", content: buildPrompt(articleText) }],
-        }),
-      }, timeoutMs);
-    }
+    res = await doFetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type":      "application/json",
+        "x-api-key":         apiKey,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
+      body: JSON.stringify({
+        model:       CLAUDE_MODEL,
+        max_tokens:  1024,
+        temperature: 0.0,
+        messages:    [{ role: "user", content: buildPrompt(articleText) }],
+      }),
+    }, timeoutMs);
   } catch (e) {
-    return { ok: false, error: e?.name === "AbortError" ? "Claude request timed out" : e.message };
+    return { ok: false, error: e?.name === "TimeoutError" || e?.name === "AbortError" ? "Claude request timed out" : e.message };
   }
 
   if (!res.ok) {
@@ -218,47 +183,39 @@ async function extractArticleAnalysisViaClaude(articleText, options) {
     return { ok: false, error: `Claude HTTP ${res.status}: ${body.slice(0, 120)}` };
   }
 
-  const data = await res.json();
+  let data;
+  try { data = await res.json(); }
+  catch { return { ok: false, error: "Claude returned non-JSON response" }; }
 
-  // Proxy returns our standard shape directly
-  if (isProxy) {
-    if (!data.ok) return { ok: false, error: data.error || "Proxy returned error" };
-    const result = { ok: true, summary: data.summary, main_topics: data.main_topics, figures: data.figures };
-    result._meta = { provider: "claude", model: CLAUDE_MODEL };
-    return result;
-  }
-
-  // Direct Claude API response
   const content = data?.content?.[0]?.text;
   if (typeof content !== "string" || !content.trim()) {
     return { ok: false, error: "Claude returned empty content" };
   }
+
   const result = parseContent(content, "Claude");
   if (result.ok) result._meta = { provider: "claude", model: CLAUDE_MODEL };
   return result;
 }
 
 // ---------------------------------------------------------------------------
-// Dual-model verification
+// Dual-model verification — the production architecture
+//
+// Both models run in parallel on the same article.
+// Claims are compared per politician using Jaccard word overlap.
+// Result gets a verification badge:
+//   "dual_verified"  — both models agree (similarity >= threshold)
+//   "single_model"   — one model failed, showing the other's result
+//   "ambiguous"      — both succeeded but claims diverge
 // ---------------------------------------------------------------------------
-const AGREEMENT_THRESHOLD = 0.55;
+
+const AGREEMENT_THRESHOLD = 0.65; // Jaccard similarity floor for "verified"
 
 function jaccardSimilarity(a, b) {
   if (!a && !b) return 1.0;
   if (!a || !b) return 0.0;
-
-  // Normalize pronouns so "He has called" and "Sanders has called"
-  // don't get penalized for subject mismatch
-  const normalize = str => str
-    .toLowerCase()
-    .replace(/\b(he|she|they|the senator|the representative|the congressman|the congresswoman)\b/g, "politician")
-    .replace(/\b(his|her|their)\b/g, "politician")
-    .replace(/[^a-z0-9\s]/g, "");
-
   const tokenize = str => new Set(
-    normalize(str).split(/\s+/).filter(w => w.length > 2)
+    str.toLowerCase().replace(/[^a-z0-9\s]/g, "").split(/\s+/).filter(w => w.length > 2)
   );
-  // ... rest stays the same
   const sa = tokenize(a);
   const sb = tokenize(b);
   let intersection = 0;
@@ -273,36 +230,41 @@ function mergeFigures(claudeFigures, mistralFigures) {
 
   for (const cf of claudeFigures) {
     const mf = mistralMap.get(cf.lookup_name.toLowerCase());
+
     if (!mf) {
       merged.push({ ...cf, _verification: "single_model", _verified_by: "claude" });
       continue;
     }
-    const similarity = Math.round(jaccardSimilarity(cf.claim, mf.claim) * 100) / 100;
-    console.log(`[LL jaccard] ${cf.lookup_name}: score=${similarity.toFixed(2)} threshold=${AGREEMENT_THRESHOLD}`);
-    console.log(`  Claude:  ${cf.claim}`);
-    console.log(`  Mistral: ${mf.claim}`);
+
+    const similarity = jaccardSimilarity(cf.claim, mf.claim);
+
     if (similarity >= AGREEMENT_THRESHOLD) {
       merged.push({
         ...cf,
-        search_terms:  [...new Set([...cf.search_terms, ...mf.search_terms])].slice(0, 10),
+        // Merge search_terms from both models — more signal for Congress.gov matching
+        search_terms: [...new Set([...cf.search_terms, ...mf.search_terms])].slice(0, 10),
         _verification: "dual_verified",
-        _similarity:   Math.round(similarity * 100),
+        _similarity: Math.round(similarity * 100),
       });
     } else {
       merged.push({
         ...cf,
-        _verification:  "ambiguous",
+        _verification: "ambiguous",
         _claude_claim:  cf.claim,
         _mistral_claim: mf.claim,
-        _similarity:    Math.round(similarity * 100),
-        claim:          null,
+        _similarity: Math.round(similarity * 100),
+        // Use null claim so sidebar doesn't display an unverified claim
+        claim: null,
       });
     }
   }
 
+  // Add any figures Mistral found that Claude missed
   for (const mf of mistralFigures) {
-    const already = merged.some(f => f.lookup_name.toLowerCase() === mf.lookup_name.toLowerCase());
-    if (!already) merged.push({ ...mf, _verification: "single_model", _verified_by: "mistral" });
+    const alreadyMerged = merged.some(f => f.lookup_name.toLowerCase() === mf.lookup_name.toLowerCase());
+    if (!alreadyMerged) {
+      merged.push({ ...mf, _verification: "single_model", _verified_by: "mistral" });
+    }
   }
 
   return merged;
@@ -311,25 +273,29 @@ function mergeFigures(claudeFigures, mistralFigures) {
 async function extractArticleAnalysisDualVerified(articleText, options) {
   const timeoutMs = options.timeoutMs ?? 30000;
 
+  // Run both models in parallel
   const [claudeResult, mistralResult] = await Promise.allSettled([
-    extractArticleAnalysisViaClaude(articleText,  { ...options, timeoutMs }),
+    extractArticleAnalysisViaClaude(articleText, { ...options, timeoutMs }),
     extractArticleAnalysisViaMistral(articleText, { ...options, timeoutMs }),
   ]);
 
+  // Add these two lines:
   if (typeof logger !== "undefined") {
     logger.info("background", `Claude: ${claudeResult.status === "fulfilled" ? (claudeResult.value?.ok ? "ok" : claudeResult.value?.error) : claudeResult.reason?.message}`);
     logger.info("background", `Mistral: ${mistralResult.status === "fulfilled" ? (mistralResult.value?.ok ? "ok" : mistralResult.value?.error) : mistralResult.reason?.message}`);
   }
 
-  const claudeOk  = claudeResult.status === "fulfilled" && claudeResult.value?.ok;
+  const claudeOk  = claudeResult.status  === "fulfilled" && claudeResult.value?.ok;
   const mistralOk = mistralResult.status === "fulfilled" && mistralResult.value?.ok;
 
+  // Both failed
   if (!claudeOk && !mistralOk) {
     const ce = claudeResult.status  === "fulfilled" ? claudeResult.value?.error  : claudeResult.reason?.message;
     const me = mistralResult.status === "fulfilled" ? mistralResult.value?.error : mistralResult.reason?.message;
     return { ok: false, error: `Both models failed. Claude: ${ce}. Mistral: ${me}` };
   }
 
+  // Only one succeeded — return it with single_model badge
   if (!claudeOk || !mistralOk) {
     const winner = claudeOk ? claudeResult.value : mistralResult.value;
     const loser  = claudeOk ? "mistral" : "claude";
@@ -347,11 +313,18 @@ async function extractArticleAnalysisDualVerified(articleText, options) {
     };
   }
 
+  // Both succeeded — merge and compare
   const cv = claudeResult.value;
   const mv = mistralResult.value;
+
+  // Merge main_topics from both (union, deduped)
   const main_topics = [...new Set([...cv.main_topics, ...mv.main_topics])].slice(0, 10);
-  const summary     = cv.summary || mv.summary;
-  const figures     = mergeFigures(cv.figures, mv.figures);
+
+  // Prefer Claude's summary (it's typically more precise) but note both ran
+  const summary = cv.summary || mv.summary;
+
+  const figures = mergeFigures(cv.figures, mv.figures);
+
   const verifiedCount  = figures.filter(f => f._verification === "dual_verified").length;
   const ambiguousCount = figures.filter(f => f._verification === "ambiguous").length;
 
@@ -361,18 +334,19 @@ async function extractArticleAnalysisDualVerified(articleText, options) {
     main_topics,
     figures,
     _meta: {
-      provider:      "dual_verified",
-      claude_model:  CLAUDE_MODEL,
-      mistral_model: MISTRAL_MODEL,
-      verified:      verifiedCount,
-      ambiguous:     ambiguousCount,
-      single_model:  figures.filter(f => f._verification === "single_model").length,
+      provider:       "dual_verified",
+      claude_model:   CLAUDE_MODEL,
+      mistral_model:  MISTRAL_MODEL,
+      verified:       verifiedCount,
+      ambiguous:      ambiguousCount,
+      single_model:   figures.filter(f => f._verification === "single_model").length,
     },
   };
 }
 
 // ---------------------------------------------------------------------------
-// Unified entry point
+// Unified entry point — background.js calls this, not the individual functions
+// Routes based on CONFIG.LLM_PROVIDER
 // ---------------------------------------------------------------------------
 async function extractArticleAnalysis(articleText, options) {
   const provider = options.provider
@@ -382,7 +356,6 @@ async function extractArticleAnalysis(articleText, options) {
   switch (provider) {
     case "mistral": return extractArticleAnalysisViaMistral(articleText, options);
     case "claude":  return extractArticleAnalysisViaClaude(articleText, options);
-    case "ollama":  return extractArticleAnalysisViaOllama(articleText, options);
     case "dual":
     default:        return extractArticleAnalysisDualVerified(articleText, options);
   }
