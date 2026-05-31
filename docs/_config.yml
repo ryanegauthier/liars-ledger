@@ -3,24 +3,16 @@ description: Technical documentation for the Liar's Ledger browser extension.
 url: "https://docs.liarsledger.com"
 baseurl: ""
 
-remote_theme: just-the-docs/just-the-docs
-
-color_scheme: dark
-
-nav_sort: order
-
-footer_content: "Liar's Ledger · Independent · Non-partisan · Open source"
-
-gh_edit_link: true
-gh_edit_link_text: "Edit this page on GitHub"
-gh_edit_repository: "https://github.com/ryanegauthier/liars-ledger"
-gh_edit_branch: "main"
-gh_edit_source: docs
-gh_edit_view_mode: "edit"
+# No remote theme — using custom layout in _layouts/default.html
 
 plugins:
-  - jekyll-remote-theme
+  - jekyll-relative-links
+
+relative_links:
+  enabled: true
+  collections: false
 
 exclude:
+  - Gemfile
+  - Gemfile.lock
   - node_modules/
-  - "*.gemspec"

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="{{ page.description | default: site.description }}">
+  <title>{% if page.title %}{{ page.title }} · {% endif %}{{ site.title }}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ '/assets/css/docs.css' | relative_url }}">
+</head>
+<body>
+
+  <header class="docs-header">
+    <div class="docs-header-inner">
+      <a class="brand" href="/" aria-label="Liar's Ledger home">
+        <span class="brand-liars">Liar's</span>
+        <span class="brand-ledger">Ledger</span>
+        <span class="brand-dot" aria-hidden="true"></span>
+      </a>
+      <nav class="docs-header-nav" aria-label="Site">
+        <a href="https://liarsledger.com">Home</a>
+        <a href="https://github.com/ryanegauthier/liars-ledger" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/ryanegauthier/liars-ledger/releases" target="_blank" rel="noopener" class="btn-header">Install</a>
+      </nav>
+    </div>
+  </header>
+
+  <div class="docs-layout">
+
+    <nav class="docs-sidebar" aria-label="Documentation">
+      <div class="sidebar-section">
+        <span class="sidebar-label">Documentation</span>
+        <a href="{{ '/' | relative_url }}" {% if page.url == '/' or page.url == '/index.html' %}class="active"{% endif %}>Overview</a>
+        <a href="{{ '/architecture' | relative_url }}" {% if page.url contains 'architecture' %}class="active"{% endif %}>Architecture</a>
+        <a href="{{ '/dual-model-verification' | relative_url }}" {% if page.url contains 'dual-model' %}class="active"{% endif %}>Dual-Model Verification</a>
+        <a href="{{ '/data-sources' | relative_url }}" {% if page.url contains 'data-sources' %}class="active"{% endif %}>Data Sources</a>
+        <a href="{{ '/backend-proxy' | relative_url }}" {% if page.url contains 'backend-proxy' %}class="active"{% endif %}>Backend Proxy</a>
+        <a href="{{ '/installation' | relative_url }}" {% if page.url contains 'installation' %}class="active"{% endif %}>Installation</a>
+        <a href="{{ '/contributing' | relative_url }}" {% if page.url contains 'contributing' %}class="active"{% endif %}>Contributing</a>
+      </div>
+      <div class="sidebar-section">
+        <span class="sidebar-label">Project</span>
+        <a href="https://liarsledger.com" target="_blank" rel="noopener">liarsledger.com ↗</a>
+        <a href="https://github.com/ryanegauthier/liars-ledger" target="_blank" rel="noopener">GitHub ↗</a>
+        <a href="https://liarsledger.com/privacy" target="_blank" rel="noopener">Privacy Policy ↗</a>
+      </div>
+    </nav>
+
+    <main class="docs-content" id="main-content">
+      <div class="docs-prose">
+        {{ content }}
+      </div>
+      <footer class="docs-footer">
+        <span>Liar's Ledger · Independent · Non-partisan · Open source</span>
+        <a href="https://github.com/ryanegauthier/liars-ledger/edit/main/docs/{{ page.path }}" target="_blank" rel="noopener">Edit this page ↗</a>
+      </footer>
+    </main>
+
+  </div>
+
+</body>
+</html>
