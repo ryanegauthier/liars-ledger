@@ -11,8 +11,6 @@
 
   "host_permissions": [
     "https://api.liarsledger.com/*",
-    "https://www.govtrack.us/*",
-    "https://unitedstates.github.io/*",
     "https://fonts.googleapis.com/*",
     "https://fonts.gstatic.com/*"
   ],

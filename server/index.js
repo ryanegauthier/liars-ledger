@@ -6,6 +6,8 @@
 //   POST /api/mistral/extract  — Mistral extraction
 //   GET  /api/congress/*       — Congress.gov proxy
 //   GET  /api/votesmart/*      — VoteSmart proxy (JWT auth + refresh)
+//   GET  /api/govtrack/*       — GovTrack proxy (no key)
+//   GET  /api/legislators      — congress-legislators dataset (cached)
 //   GET  /health               — health check
 
 import "dotenv/config";
@@ -16,6 +18,7 @@ import { claude }    from "./providers/claude.js";
 import { mistral }   from "./providers/mistral.js";
 import { congress }  from "./providers/congress.js";
 import { votesmart } from "./providers/votesmart.js";
+import { govtrack }  from "./providers/govtrack.js";
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
@@ -96,6 +99,30 @@ app.get("/api/votesmart/*", wrap(async (req, res) => {
   try {
     const result = await votesmart.fetch(`/${path}?${query.toString()}`);
     res.json(result);
+  } catch (e) {
+    res.status(502).json({ error: e.message });
+  }
+}));
+
+// ── GovTrack proxy ────────────────────────────────────────────────────────────
+// GET /api/govtrack/* → https://www.govtrack.us/api/v2/* (no key required)
+app.get("/api/govtrack/*", wrap(async (req, res) => {
+  const path  = req.params[0];
+  const query = new URLSearchParams(req.query);
+
+  try {
+    const result = await govtrack.fetch(`/${path}?${query.toString()}`);
+    res.json(result);
+  } catch (e) {
+    res.status(502).json({ error: e.message });
+  }
+}));
+
+// ── Congress legislators dataset (static, cached) ─────────────────────────────
+// GET /api/legislators → unitedstates.github.io congress-legislators-current.json
+app.get("/api/legislators", wrap(async (req, res) => {
+  try {
+    res.json(await govtrack.legislators());
   } catch (e) {
     res.status(502).json({ error: e.message });
   }

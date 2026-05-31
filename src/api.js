@@ -11,6 +11,22 @@ function congressProxyBase() {
   return "https://api.liarsledger.com/api/congress";
 }
 
+// GovTrack roll-call votes and the congress-legislators dataset are also routed
+// through the proxy so the extension never contacts those hosts directly.
+function govtrackProxyBase() {
+  if (typeof CONFIG !== "undefined" && CONFIG.PROXY_URL) {
+    return CONFIG.PROXY_URL + "/api/govtrack";
+  }
+  return "https://api.liarsledger.com/api/govtrack";
+}
+
+function legislatorsProxyUrl() {
+  if (typeof CONFIG !== "undefined" && CONFIG.PROXY_URL) {
+    return CONFIG.PROXY_URL + "/api/legislators";
+  }
+  return "https://api.liarsledger.com/api/legislators";
+}
+
 async function cacheGet(key) {
   try {
     const result = await browser.storage.session.get(key);
@@ -206,8 +222,6 @@ async function lookupPoliticianOnTopics(member, topics) {
   return result;
 }
 
-const GOVTRACK_BASE = "https://www.govtrack.us/api/v2";
-
 async function findMemberRollCallVotesOnTopics(member, topics) {
   if (!topics.length) return [];
 
@@ -221,7 +235,7 @@ async function findMemberRollCallVotesOnTopics(member, topics) {
   let voterData = await cacheGet(cacheKey);
   if (!voterData) {
     try {
-      const url = `${GOVTRACK_BASE}/vote_voter?person=${govtrackId}&limit=50&order_by=-created`;
+      const url = `${govtrackProxyBase()}/vote_voter?person=${govtrackId}&limit=50&order_by=-created`;
       const res = await fetch(url);
       if (!res.ok) throw new Error(`GovTrack HTTP ${res.status}`);
       voterData = await res.json();
@@ -308,8 +322,7 @@ async function resolveGovTrackId(bioguideId) {
   if (cached) return cached;
 
   try {
-    const url =
-      "https://unitedstates.github.io/congress-legislators/legislators-current.json";
+    const url = legislatorsProxyUrl();
     const cacheKeyAll = "govtrack:legislators_map";
     let map = await cacheGet(cacheKeyAll);
 
