@@ -114,3 +114,8 @@ function extractMemberVoteRows(data) {
 function memberVotePosition(row) {
   return row.voteCast || row.memberVote || row.vote || row.position || row.resultVote || "";
 }
+
+function mergeTopicsForMember(fig, mainTopicsGlobal, fallbackTopics) {
+  const figSearchTerms = fig?.search_terms || [];
+  return [...new Set([...figSearchTerms, ...mainTopicsGlobal, ...fallbackTopics])].filter(Boolean);
+}
