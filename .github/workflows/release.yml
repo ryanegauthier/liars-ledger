@@ -21,8 +21,26 @@ jobs:
         with:
           node-version: '24'
 
+      - name: List repo files
+        run: |
+          echo "=== Root files ==="
+          ls -la
+          echo "=== src/ files ==="
+          ls -la src/ || echo "no src/"
+          echo "=== icons/ ==="
+          ls -la icons/ || echo "no icons/"
+
       - name: Build release zip
         run: node build-release.js
+
+      - name: List build output
+        run: |
+          echo "=== build/ ==="
+          ls -la build/ || echo "no build/"
+          echo "=== zip files ==="
+          ls -la *.zip || echo "no zip files"
+          echo "=== build contents ==="
+          find build/ -type f || echo "build empty"
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
