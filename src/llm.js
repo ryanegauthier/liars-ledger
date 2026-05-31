@@ -238,7 +238,7 @@ async function extractArticleAnalysisViaClaude(articleText, options) {
 //   "ambiguous"      — both succeeded but claims diverge
 // ---------------------------------------------------------------------------
 
-const AGREEMENT_THRESHOLD = 0.65; // Jaccard similarity floor for "verified"
+const AGREEMENT_THRESHOLD = 0.55; // Jaccard similarity floor for "verified"
 
 function jaccardSimilarity(a, b) {
   if (!a && !b) return 1.0;
