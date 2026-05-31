@@ -2,102 +2,89 @@
 // Handles all Congress.gov API calls from the background worker.
 // Uses session caching and batching to stay within free tier limits.
 
-const BASE_URL = "https://api.congress.gov/v3";
 const CURRENT_CONGRESS = 119;
 
-// --- Session cache ---
-// Keyed by cache key string, cleared when browser closes
+function congressProxyBase() {
+  if (typeof CONFIG !== "undefined" && CONFIG.PROXY_URL) {
+    return CONFIG.PROXY_URL + "/api/congress";
+  }
+  return "https://api.liarsledger.com/api/congress";
+}
+
 async function cacheGet(key) {
   try {
     const result = await browser.storage.session.get(key);
     return result[key] || null;
   } catch {
-    return null; // session storage not available in all contexts
+    return null;
   }
 }
 
 async function cacheSet(key, value) {
   try {
     await browser.storage.session.set({ [key]: value });
-  } catch {
-    // fail silently
-  }
+  } catch {}
 }
 
-// --- Core fetch wrapper ---
-async function apiFetch(path, apiKey) {
+async function apiFetch(path) {
   const cacheKey = `api:${path}`;
   const cached = await cacheGet(cacheKey);
   if (cached) {
-    console.log("[Liars Ledger] cache hit:", path.slice(0, 60));
+    logger.info("api", `cache hit: ${path.slice(0, 60)}`);
     return cached;
   }
 
-  const url = `${BASE_URL}${path}&api_key=${apiKey}&format=json`;
-  console.log("[Liars Ledger] fetching:", path.slice(0, 80));
+  const url = `${congressProxyBase()}${path}`;
+  logger.info("api", `fetching: ${path.slice(0, 80)}`);
 
   const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error(`Congress.gov API error: ${res.status} on ${path}`);
-  }
+  if (!res.ok) throw new Error(`Congress proxy error: ${res.status} on ${path}`);
 
   const data = await res.json();
   await cacheSet(cacheKey, data);
   return data;
 }
 
-// --- Get sponsored legislation for a member filtered by keyword ---
-async function getMemberSponsoredBills(bioguideId, apiKey, limit = 50) {
+// --- Get sponsored legislation for a member ---
+async function getMemberSponsoredBills(bioguideId, limit = 50) {
   const path = `/member/${bioguideId}/sponsored-legislation?limit=${limit}&congress=${CURRENT_CONGRESS}`;
   try {
-    const data = await apiFetch(path, apiKey);
-    console.log(
-      "[Liars Ledger] sponsored bills raw:",
-      JSON.stringify(data.sponsoredLegislation?.slice(0, 3), null, 2),
-    );
+    const data = await apiFetch(path);
     return data.sponsoredLegislation || [];
   } catch (e) {
-    console.warn("[Liars Ledger] sponsored bills fetch failed:", e.message);
+    logger.warn("api", `sponsored bills fetch failed: ${e.message}`);
     return [];
   }
 }
 
 // --- Get cosponsored legislation for a member ---
-async function getMemberCosponsoredBills(bioguideId, apiKey, limit = 50) {
+async function getMemberCosponsoredBills(bioguideId, limit = 50) {
   const path = `/member/${bioguideId}/cosponsored-legislation?limit=${limit}&congress=${CURRENT_CONGRESS}`;
   try {
-    const data = await apiFetch(path, apiKey);
-    console.log(
-      "[Liars Ledger] cosponsored bills raw:",
-      JSON.stringify(data.cosponsoredLegislation?.slice(0, 3), null, 2),
-    );
+    const data = await apiFetch(path);
     return data.cosponsoredLegislation || [];
   } catch (e) {
-    console.warn("[Liars Ledger] cosponsored bills fetch failed:", e.message);
+    logger.warn("api", `cosponsored bills fetch failed: ${e.message}`);
     return [];
   }
 }
 
 // --- Search bills by keyword ---
-async function searchBillsByKeyword(keyword, apiKey, limit = 10) {
+async function searchBillsByKeyword(keyword, limit = 10) {
   const encoded = encodeURIComponent(keyword);
   const path = `/bill?congress=${CURRENT_CONGRESS}&query=${encoded}&limit=${limit}&sort=updateDate+desc`;
   try {
-    const data = await apiFetch(path, apiKey);
+    const data = await apiFetch(path);
     return data.bills || [];
   } catch (e) {
-    console.warn(
-      "[Liars Ledger] bill search failed for keyword:",
-      keyword,
-      e.message,
-    );
+    logger.warn("api", `bill search failed for keyword: ${keyword} — ${e.message}`);
     return [];
   }
 }
 
 // --- Main: look up a politician's record on given topics ---
 // Returns { politician, topics, sponsored, cosponsored, notFound }
-async function lookupPoliticianOnTopics(member, topics, apiKey) {
+async function lookupPoliticianOnTopics(member, topics) {
   const result = {
     politician: member,
     topics,
@@ -114,8 +101,8 @@ async function lookupPoliticianOnTopics(member, topics, apiKey) {
 
   // Fetch sponsored + cosponsored in parallel
   const [sponsored, cosponsored] = await Promise.all([
-    getMemberSponsoredBills(member.bioguide_id, apiKey),
-    getMemberCosponsoredBills(member.bioguide_id, apiKey),
+    getMemberSponsoredBills(member.bioguide_id),
+    getMemberCosponsoredBills(member.bioguide_id),
   ]);
 
   // --- Bill relevance check ---
@@ -174,13 +161,16 @@ async function lookupPoliticianOnTopics(member, topics, apiKey) {
     ...new Set([...llmSearchTerms.slice(0, 4), ...topics.slice(0, 2)]),
   ].slice(0, 6);
 
-  for (const term of searchTermsToQuery) {
-    const bills = await searchBillsByKeyword(term, apiKey, 10);
-    const relevant = bills.filter((b) =>
-      b.sponsors?.some((s) => s.bioguideId === member.bioguide_id),
+  // Parallel keyword searches — all independent, safe to batch
+  const searchResults = await Promise.all(
+    searchTermsToQuery.map(term => searchBillsByKeyword(term, 10))
+  );
+  searchTermsToQuery.forEach((term, i) => {
+    const relevant = searchResults[i].filter(b =>
+      b.sponsors?.some(s => s.bioguideId === member.bioguide_id)
     );
     for (const b of relevant) addIfNew(b, result.searched, term);
-  }
+  });
 
   // Fetch GovTrack roll-call votes + VoteSmart data in parallel
   const vsEnabled =
@@ -189,7 +179,7 @@ async function lookupPoliticianOnTopics(member, topics, apiKey) {
     CONFIG.PROXY_URL;
 
   const [rollCallVotes, vsData] = await Promise.all([
-    findMemberRollCallVotesOnTopics(member, topics, apiKey),
+    findMemberRollCallVotesOnTopics(member, topics),
     vsEnabled
       ? lookupVoteSmart(member, [
           ...new Set([...(member._main_topics || []), ...topics]),
@@ -208,36 +198,25 @@ async function lookupPoliticianOnTopics(member, topics, apiKey) {
     result.voteSmartVotes = [];
   }
 
-  console.log(
-    `[Liars Ledger] ${member.full_name}: ${result.sponsored.length} sponsored, ` +
-      `${result.cosponsored.length} cosponsored, ${rollCallVotes.length} roll-call hits, ` +
-      `${result.voteSmartRatings.length} VS ratings, ${result.voteSmartVotes.length} VS votes`,
+  logger.info("api",
+    `${member.full_name}: ${result.sponsored.length} sponsored, ` +
+    `${result.cosponsored.length} cosponsored, ${rollCallVotes.length} roll-call hits, ` +
+    `${result.voteSmartRatings.length} VS ratings, ${result.voteSmartVotes.length} VS votes`
   );
   return result;
 }
 
-// --- Roll-call votes via GovTrack ---
-// Congress.gov senate-vote / house-vote endpoints return 404 for the 119th
-// Congress — they are in beta and not yet available. GovTrack is free,
-// requires no API key, and has full vote history for both chambers.
-// GovTrack API: https://www.govtrack.us/developers/api
-
 const GOVTRACK_BASE = "https://www.govtrack.us/api/v2";
 
-async function findMemberRollCallVotesOnTopics(member, topics, apiKey) {
+async function findMemberRollCallVotesOnTopics(member, topics) {
   if (!topics.length) return [];
 
-  // Step 1: resolve bioguide_id → GovTrack person ID (cached)
   const govtrackId = await resolveGovTrackId(member.bioguide_id);
   if (!govtrackId) {
-    console.warn(
-      "[Liars Ledger] GovTrack ID not found for",
-      member.bioguide_id,
-    );
+    logger.warn("api", `GovTrack ID not found for ${member.bioguide_id}`);
     return [];
   }
 
-  // Step 2: fetch recent votes cast by this person
   const cacheKey = `govtrack:voter:${govtrackId}`;
   let voterData = await cacheGet(cacheKey);
   if (!voterData) {
@@ -248,7 +227,7 @@ async function findMemberRollCallVotesOnTopics(member, topics, apiKey) {
       voterData = await res.json();
       await cacheSet(cacheKey, voterData);
     } catch (e) {
-      console.warn("[Liars Ledger] GovTrack voter fetch failed:", e.message);
+      logger.warn("api", `GovTrack voter fetch failed: ${e.message}`);
       return [];
     }
   }
@@ -351,17 +330,16 @@ async function resolveGovTrackId(bioguideId) {
     if (id) await cacheSet(cacheKey, id);
     return id;
   } catch (e) {
-    console.warn("[Liars Ledger] GovTrack ID resolution failed:", e.message);
+    logger.warn("api", `GovTrack ID resolution failed: ${e.message}`);
     return null;
   }
 }
 
 // --- Batch lookup for all resolved politicians ---
-// memberJobs: [{ member, topics }, ...] — topics differ per member when using claim extraction
-async function lookupAll(memberJobs, apiKey) {
+async function lookupAll(memberJobs) {
   const results = [];
   for (const { member, topics } of memberJobs) {
-    const result = await lookupPoliticianOnTopics(member, topics, apiKey);
+    const result = await lookupPoliticianOnTopics(member, topics);
     results.push(result);
     await new Promise((r) => setTimeout(r, 150));
   }

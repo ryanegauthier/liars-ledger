@@ -40,7 +40,7 @@ const NICKNAME_FIRST = {
   "pat":      "patrick",   // Pat Leahy, Pat Toomey
   "rick":     "richard",   // Rick Scott (also richard)
   "rob":      "robert",    // Rob Portman, Rob Wittman
-  "jon":      "jonathan",  // Jon Ossoff
+  "jon":      "jonathan",  // Jon Ossoff (not "john" → "jonathan")
   "chris":    "christopher", // Chris Murphy, Chris Coons, Chris Van Hollen
   "dan":      "daniel",    // Dan Sullivan, Dan Goldman
   "dave":     "david",     // Dave McCormick, Dave Joyce
@@ -48,7 +48,6 @@ const NICKNAME_FIRST = {
   "jack":     "john",      // Jack Reed (official: John)
   "jeff":     "jeffrey",   // Jeff Merkley (official: Jeffrey)
   "jerry":    "gerald",    // Jerry Nadler (official: Jerrold/Gerald)
-  "john":     "jonathan",  // fallback — most Johns stay "john"
   "liz":      "elizabeth", // Liz Warren, Liz Cheney
   "beth":     "elizabeth",
   "alex":     "alexander",
@@ -61,7 +60,6 @@ const NICKNAME_FIRST = {
   "kay":      "kathleen",
   "suzan":    "suzanne",   // Suzan DelBene
   "cheri":    "cheryl",    // Cheri Bustos
-  "mike":     "michael",
   "mitch":    "addison",   // Mitch McConnell (official: Addison)
   "rand":     "randal",    // Rand Paul (official: Randal)
   "marco":    "marco",     // stays marco
@@ -135,6 +133,9 @@ const FULL_NAME_OVERRIDES = {
 };
 
 // --- Load dictionary ---
+// Note: console.log is intentional here — lookup.js runs in the background
+// service worker context where logger is available, but also in content script
+// contexts where it isn't. Keep console.* for portability.
 async function loadDictionary() {
   if (_dictionary) return _dictionary;
   const url = browser.runtime.getURL("src/data/politicians.json");
