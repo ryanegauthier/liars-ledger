@@ -122,3 +122,15 @@
 - Privacy policy at liarsledger.com/privacy
 - Chrome Web Store: Productivity / News category
 - Consider Firefox AMO simultaneous launch
+
+### [Future] — State legislators via OpenStates
+- Goal: empower voters to see what their politicians at *any level* are saying vs. voting
+- Phase 1: add governors + all 50 state legislatures via [OpenStates API](https://openstates.org/)
+  - New `server/providers/openstates.js` proxy (same pattern as `govtrack.js`)
+  - State bill search and roll-call votes via OpenStates
+  - Expand `lookup.js` name resolution to cover state legislators
+  - Loosen LLM extraction prompt — include governors and state legislators by name
+- Phase 2: local officials (mayors, city councils)
+  - No consolidated API exists yet — likely manual curation or crowd-sourced data
+  - Structured voting records at municipal level are largely unavailable
+- No `manifest.json` host permission changes needed — all calls go through the existing proxy

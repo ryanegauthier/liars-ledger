@@ -46,7 +46,7 @@ function buildPrompt(articleText) {
     '"search_terms":["2-6 short phrases for bill title search — never include the person\'s name"]}' +
     "]}\n\n" +
     "Rules:\n" +
-    "- Only include people who are clearly discussed as federal lawmakers (current Congress). Omit the President, Vice President, Cabinet, governors, candidates not in Congress, and vague references.\n" +
+    "- Include every current U.S. Senator or Representative named in the article, even if their role is secondary. Omit the President, Vice President, Cabinet secretaries, governors, and anyone not currently serving in Congress.\n" +
     "- Include at most 10 figures. If none qualify, use an empty figures array.\n" +
     "- Use the most formal version of each person's name consistently. Never return the same person twice with different name formats (e.g. 'Sen. Sanders' and 'Sen. Bernie Sanders' are the same person — pick one).\n" +
     "- main_topics must reflect the dominant legislation/policy threads in the article.\n" +
