@@ -5,6 +5,9 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -16,11 +19,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-
-      - name: Get version from tag
-        id: version
-        run: echo "VERSION=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+          node-version: '24'
 
       - name: Build release zip
         run: node build-release.js
