@@ -1,8 +1,37 @@
 # Changelog
 
+## [0.11.2] - 2026-05-31
+
+### Bugfix — proxy payload + missing function
+
+- **`src/llm.js`** — proxy-aware request/response handling
+  - Proxy mode now sends `{ articleText }` instead of raw API payloads
+  - Skips client-side API key check when custom endpoint is configured
+  - Proxy responses (already parsed) bypass `parseContent`; direct mode unchanged
+- **`src/topic-match.js`** — restored `mergeTopicsForMember()` (dropped in 0.11.0 cleanup)
+  - Prioritizes LLM search terms + global topics; falls back to keyword extraction only when LLM provides nothing
+
+---
+
+## [0.11.0] - 2026-05-31
+
+### Code quality pass + docs site + privacy policy
+
+- **Code quality** — full linting and cleanup across all source files
+- **Docs site** — live at [docs.liarsledger.com](https://docs.liarsledger.com) via GitHub Pages
+- **Privacy policy** — live at [liarsledger.com/privacy.html](https://liarsledger.com/privacy.html)
+  - Covers article text handling, third-party services, data retention, open source audit
+- **Site links** — all `href` values across `index.html` and `privacy.html` corrected
+  - Brand → `liarsledger.com`
+  - GitHub → `github.com/ryanegauthier/liars-ledger`
+  - Added Docs nav link, fixed contact email, Changelog link, privacy policy link
+- **`styles.css`** — added `scroll-margin-top` on anchor targets for sticky header offset
+
+---
+
 ## [0.10.0] - 2026-05-30
 
-### Backend proxy + verified/ambiguous UI
+### Backend proxy + VoteSmart + verified/ambiguous UI
 
 - **`server/`** — Node.js/Express backend proxy, deployed to Render at `api.liarsledger.com`
   - `server/index.js` — Express server with CORS, rate limiting, health check
@@ -13,6 +42,11 @@
   - `server/render.yaml` — Render deployment config
   - All API keys moved to server environment variables — removed from extension
   - `ALLOWED_ORIGINS` env var restricts access to the extension's Chrome ID
+- **`src/votesmart.js`** — VoteSmart client integration
+  - Educational API license, JWT auth through proxy
+  - Interest group ratings (NRA, ACLU, Chamber of Commerce, AFL-CIO, etc.)
+  - Historical key votes
+  - VoteSmart candidate ID resolution from politician dictionary
 - **`src/llm.js`** — proxy-aware request routing
   - Detects proxy vs direct mode based on endpoint URL
   - Proxy mode: sends `{articleText}` — server handles auth and model calls
@@ -90,26 +124,24 @@
 
 ## Planned
 
-### [0.11.0] — Freemium tier management
-- Anonymous free tier: 5 scans/day via session fingerprint
-- Pro tier: unlimited scans, Stripe subscription, JWT auth token
+### [0.12.0] — Chrome Web Store launch
+- Store listing: screenshots, short/long description, category
+- Developer account ($5 one-time)
+- Install Extension links updated across liarsledger.com
+
+### [0.13.0] — Freemium tier management
+- Anonymous free tier: 5 scans/day via per-install token
+- Pro tier: unlimited scans, Square subscription, JWT auth token
 - Popup shows scan count remaining for free users
 - Account creation via liarsledger.com (not in extension)
 - Backend enforces limits; extension degrades gracefully on 429
 
-### [0.12.0] — VoteSmart integration
-- Educational API license obtained — JWT auth, CORS-blocked, must go through proxy
-- Interest group ratings (NRA, ACLU, Chamber of Commerce, AFL-CIO, etc.)
-- Issue positions and candidate questionnaire responses
-- Historical key votes beyond 119th Congress
-- VoteSmart candidate IDs added to politician dictionary
-
-### [0.13.0] — GovTrack extended data
+### [0.14.0] — GovTrack extended data
 - Ideology scores (0.0 = most liberal, 1.0 = most conservative)
 - Missed vote rates and committee assignments
 - Historical roll-call votes back to 1990s
 
-### [0.14.0] — Creator shareable graphics
+### [0.15.0] — Creator shareable graphics
 - One-click image card: politician name, claim, voting record
 - Twitter/X (1200×628) and Instagram (1080×1080) formats
 - Canvas API, no server render, Creator tier feature
@@ -117,11 +149,6 @@
 ### [Future] — Firefox / Safari
 - Firefox: `browser.*` shim in place; publish to AMO
 - Safari: Xcode + Apple Developer account required
-
-### [Future] — Privacy policy + Chrome Web Store listing
-- Privacy policy at liarsledger.com/privacy
-- Chrome Web Store: Productivity / News category
-- Consider Firefox AMO simultaneous launch
 
 ### [Future] — State legislators via OpenStates
 - Goal: empower voters to see what their politicians at *any level* are saying vs. voting
