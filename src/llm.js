@@ -10,12 +10,13 @@
 //   { ok: true,  summary, main_topics, figures, _meta }
 //   { ok: false, error }
 //
-// background.js integration:
-//   const provider = CONFIG.LLM_PROVIDER; // "mistral" | "claude" | "dual"
+// Proxy mode (production):
+//   Set CLAUDE_API_ENDPOINT / MISTRAL_API_ENDPOINT to your backend URLs.
+//   The proxy accepts { articleText } and returns the parsed result directly.
+//   No client-side API keys needed.
 //
-// Dev:  API keys in src/config.js (gitignored)
-// Prod: Keys move to backend proxy. Swap endpoint URLs in CONFIG —
-//       no code changes needed, just config.
+// Direct mode (local dev):
+//   Leave endpoints at defaults, set CLAUDE_API_KEY / MISTRAL_API_KEY in config.js.
 
 // ---------------------------------------------------------------------------
 // Endpoints — override in config.js for proxy in production
@@ -24,7 +25,7 @@ const MISTRAL_API_URL = "https://api.mistral.ai/v1/chat/completions";
 const CLAUDE_API_URL  = "https://api.anthropic.com/v1/messages";
 
 // Models — cheap tiers for dev, upgrade in prod
-const MISTRAL_MODEL = "mistral-small-latest";   // ~$0.10/1M tokens in
+const MISTRAL_MODEL = "mistral-small-latest";      // ~$0.10/1M tokens in
 const CLAUDE_MODEL  = "claude-haiku-4-5-20251001"; // cheapest Claude 4 tier
 
 // ---------------------------------------------------------------------------
@@ -46,7 +47,7 @@ function buildPrompt(articleText) {
     '"search_terms":["2-6 short phrases for bill title search — never include the person\'s name"]}' +
     "]}\n\n" +
     "Rules:\n" +
-    "- Include every current U.S. Senator or Representative named in the article, even if their role is secondary. Omit the President, Vice President, Cabinet secretaries, governors, and anyone not currently serving in Congress.\n" +
+    "- Only include people who are clearly discussed as federal lawmakers (current Congress). Omit the President, Vice President, Cabinet, governors, candidates not in Congress, and vague references.\n" +
     "- Include at most 10 figures. If none qualify, use an empty figures array.\n" +
     "- Use the most formal version of each person's name consistently. Never return the same person twice with different name formats (e.g. 'Sen. Sanders' and 'Sen. Bernie Sanders' are the same person — pick one).\n" +
     "- main_topics must reflect the dominant legislation/policy threads in the article.\n" +
@@ -58,7 +59,8 @@ function buildPrompt(articleText) {
 }
 
 // ---------------------------------------------------------------------------
-// JSON parser — matches server/providers/_shared.js exactly
+// JSON parser — used for direct API calls only.
+// Proxy responses are already parsed — skip this.
 // ---------------------------------------------------------------------------
 function parseContent(content, providerName) {
   let raw = content.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "").trim();
@@ -101,39 +103,44 @@ async function doFetch(url, init, timeoutMs) {
 // Mistral
 // ---------------------------------------------------------------------------
 async function extractArticleAnalysisViaMistral(articleText, options) {
+  const apiKey    = options.mistralApiKey || (typeof CONFIG !== "undefined" && CONFIG.MISTRAL_API_KEY);
   const timeoutMs = options.timeoutMs ?? 30000;
   const endpoint  = options.mistralEndpoint || options.endpoint || MISTRAL_API_URL;
   const isProxy   = endpoint !== MISTRAL_API_URL;
 
+  if (!isProxy && !apiKey) return { ok: false, error: "Mistral API key not configured" };
+
   let res;
   try {
-    if (isProxy) {
-      // Proxy mode — server holds the key and runs the model; just send articleText.
-      res = await doFetch(endpoint, {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ articleText }),
-      }, timeoutMs);
-    } else {
-      // Direct mode — full Mistral API request with key (dev only).
-      const apiKey = options.mistralApiKey || (typeof CONFIG !== "undefined" && CONFIG.MISTRAL_API_KEY);
-      if (!apiKey) return { ok: false, error: "Mistral API key not configured" };
-      res = await doFetch(endpoint, {
-        method:  "POST",
-        headers: {
-          "Content-Type":  "application/json",
-          "Authorization": `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model:       MISTRAL_MODEL,
-          temperature: 0.0,
-          max_tokens:  1024,
-          messages:    [{ role: "user", content: buildPrompt(articleText) }],
-        }),
-      }, timeoutMs);
-    }
+    res = await doFetch(
+      endpoint,
+      isProxy
+        ? {
+            method:  "POST",
+            headers: { "Content-Type": "application/json" },
+            body:    JSON.stringify({ articleText }),
+          }
+        : {
+            method:  "POST",
+            headers: {
+              "Content-Type":  "application/json",
+              "Authorization": `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify({
+              model:       MISTRAL_MODEL,
+              temperature: 0.0,
+              max_tokens:  1024,
+              messages:    [{ role: "user", content: buildPrompt(articleText) }],
+            }),
+          },
+      timeoutMs,
+    );
   } catch (e) {
-    return { ok: false, error: e?.name === "TimeoutError" || e?.name === "AbortError" ? "Mistral request timed out" : e.message };
+    return {
+      ok: false,
+      error: e?.name === "TimeoutError" || e?.name === "AbortError"
+        ? "Mistral request timed out" : e.message,
+    };
   }
 
   if (!res.ok) {
@@ -145,12 +152,13 @@ async function extractArticleAnalysisViaMistral(articleText, options) {
   try { data = await res.json(); }
   catch { return { ok: false, error: "Mistral returned non-JSON response" }; }
 
-  // Proxy returns our standard shape directly.
+  // Proxy returns the parsed result directly
   if (isProxy) {
-    if (!data.ok) return { ok: false, error: data.error || "Proxy returned error" };
-    return { ok: true, summary: data.summary, main_topics: data.main_topics, figures: data.figures, _meta: { provider: "mistral", model: MISTRAL_MODEL } };
+    if (!data?.ok) return { ok: false, error: data?.error || "Mistral proxy returned error" };
+    return { ...data, _meta: { provider: "mistral", model: MISTRAL_MODEL } };
   }
 
+  // Direct API — parse raw completion
   const content = data?.choices?.[0]?.message?.content;
   if (typeof content !== "string" || !content.trim()) {
     return { ok: false, error: "Mistral returned empty content" };
@@ -165,41 +173,46 @@ async function extractArticleAnalysisViaMistral(articleText, options) {
 // Claude
 // ---------------------------------------------------------------------------
 async function extractArticleAnalysisViaClaude(articleText, options) {
+  const apiKey    = options.claudeApiKey || (typeof CONFIG !== "undefined" && CONFIG.CLAUDE_API_KEY);
   const timeoutMs = options.timeoutMs ?? 30000;
   const endpoint  = options.claudeEndpoint || options.endpoint || CLAUDE_API_URL;
   const isProxy   = endpoint !== CLAUDE_API_URL;
 
+  if (!isProxy && !apiKey) return { ok: false, error: "Claude API key not configured" };
+
   let res;
   try {
-    if (isProxy) {
-      // Proxy mode — server holds the key and runs the model; just send articleText.
-      res = await doFetch(endpoint, {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ articleText }),
-      }, timeoutMs);
-    } else {
-      // Direct mode — full Claude API request with key + CORS header (dev only).
-      const apiKey = options.claudeApiKey || (typeof CONFIG !== "undefined" && CONFIG.CLAUDE_API_KEY);
-      if (!apiKey) return { ok: false, error: "Claude API key not configured" };
-      res = await doFetch(endpoint, {
-        method:  "POST",
-        headers: {
-          "Content-Type":      "application/json",
-          "x-api-key":         apiKey,
-          "anthropic-version": "2023-06-01",
-          "anthropic-dangerous-direct-browser-access": "true",
-        },
-        body: JSON.stringify({
-          model:       CLAUDE_MODEL,
-          max_tokens:  1024,
-          temperature: 0.0,
-          messages:    [{ role: "user", content: buildPrompt(articleText) }],
-        }),
-      }, timeoutMs);
-    }
+    res = await doFetch(
+      endpoint,
+      isProxy
+        ? {
+            method:  "POST",
+            headers: { "Content-Type": "application/json" },
+            body:    JSON.stringify({ articleText }),
+          }
+        : {
+            method:  "POST",
+            headers: {
+              "Content-Type":      "application/json",
+              "x-api-key":         apiKey,
+              "anthropic-version": "2023-06-01",
+              "anthropic-dangerous-direct-browser-access": "true",
+            },
+            body: JSON.stringify({
+              model:       CLAUDE_MODEL,
+              max_tokens:  1024,
+              temperature: 0.0,
+              messages:    [{ role: "user", content: buildPrompt(articleText) }],
+            }),
+          },
+      timeoutMs,
+    );
   } catch (e) {
-    return { ok: false, error: e?.name === "TimeoutError" || e?.name === "AbortError" ? "Claude request timed out" : e.message };
+    return {
+      ok: false,
+      error: e?.name === "TimeoutError" || e?.name === "AbortError"
+        ? "Claude request timed out" : e.message,
+    };
   }
 
   if (!res.ok) {
@@ -211,12 +224,13 @@ async function extractArticleAnalysisViaClaude(articleText, options) {
   try { data = await res.json(); }
   catch { return { ok: false, error: "Claude returned non-JSON response" }; }
 
-  // Proxy returns our standard shape directly.
+  // Proxy returns the parsed result directly
   if (isProxy) {
-    if (!data.ok) return { ok: false, error: data.error || "Proxy returned error" };
-    return { ok: true, summary: data.summary, main_topics: data.main_topics, figures: data.figures, _meta: { provider: "claude", model: CLAUDE_MODEL } };
+    if (!data?.ok) return { ok: false, error: data?.error || "Claude proxy returned error" };
+    return { ...data, _meta: { provider: "claude", model: CLAUDE_MODEL } };
   }
 
+  // Direct API — parse raw completion
   const content = data?.content?.[0]?.text;
   if (typeof content !== "string" || !content.trim()) {
     return { ok: false, error: "Claude returned empty content" };
@@ -238,7 +252,7 @@ async function extractArticleAnalysisViaClaude(articleText, options) {
 //   "ambiguous"      — both succeeded but claims diverge
 // ---------------------------------------------------------------------------
 
-const AGREEMENT_THRESHOLD = 0.55; // Jaccard similarity floor for "verified"
+const AGREEMENT_THRESHOLD = 0.65; // Jaccard similarity floor for "verified"
 
 function jaccardSimilarity(a, b) {
   if (!a && !b) return 1.0;
@@ -254,24 +268,12 @@ function jaccardSimilarity(a, b) {
   return union === 0 ? 1.0 : intersection / union;
 }
 
-// Normalize a lookup_name to just the surname for cross-model matching.
-// Claude may return "Sen. Chuck Schumer" while Mistral returns "Sen. Schumer" —
-// both strip to "schumer" so the Jaccard comparison can run.
-function surnameKey(lookupName) {
-  return lookupName
-    .toLowerCase()
-    .replace(/^(sen\.?|rep\.?|senator|representative|congressman|congresswoman)\s+/i, "")
-    .trim()
-    .split(/\s+/)
-    .pop() || lookupName.toLowerCase();
-}
-
 function mergeFigures(claudeFigures, mistralFigures) {
-  const mistralMap = new Map(mistralFigures.map(f => [surnameKey(f.lookup_name), f]));
+  const mistralMap = new Map(mistralFigures.map(f => [f.lookup_name.toLowerCase(), f]));
   const merged = [];
 
   for (const cf of claudeFigures) {
-    const mf = mistralMap.get(surnameKey(cf.lookup_name));
+    const mf = mistralMap.get(cf.lookup_name.toLowerCase());
 
     if (!mf) {
       merged.push({ ...cf, _verification: "single_model", _verified_by: "claude" });
@@ -291,18 +293,19 @@ function mergeFigures(claudeFigures, mistralFigures) {
     } else {
       merged.push({
         ...cf,
-        _verification:  "ambiguous",
+        _verification: "ambiguous",
         _claude_claim:  cf.claim,
         _mistral_claim: mf.claim,
-        _similarity:    Math.round(similarity * 100),
-        claim:          null,
+        _similarity: Math.round(similarity * 100),
+        // Use null claim so sidebar doesn't display an unverified claim
+        claim: null,
       });
     }
   }
 
   // Add any figures Mistral found that Claude missed
   for (const mf of mistralFigures) {
-    const alreadyMerged = merged.some(f => surnameKey(f.lookup_name) === surnameKey(mf.lookup_name));
+    const alreadyMerged = merged.some(f => f.lookup_name.toLowerCase() === mf.lookup_name.toLowerCase());
     if (!alreadyMerged) {
       merged.push({ ...mf, _verification: "single_model", _verified_by: "mistral" });
     }
@@ -320,7 +323,6 @@ async function extractArticleAnalysisDualVerified(articleText, options) {
     extractArticleAnalysisViaMistral(articleText, { ...options, timeoutMs }),
   ]);
 
-  // Add these two lines:
   if (typeof logger !== "undefined") {
     logger.info("background", `Claude: ${claudeResult.status === "fulfilled" ? (claudeResult.value?.ok ? "ok" : claudeResult.value?.error) : claudeResult.reason?.message}`);
     logger.info("background", `Mistral: ${mistralResult.status === "fulfilled" ? (mistralResult.value?.ok ? "ok" : mistralResult.value?.error) : mistralResult.reason?.message}`);
@@ -375,12 +377,12 @@ async function extractArticleAnalysisDualVerified(articleText, options) {
     main_topics,
     figures,
     _meta: {
-      provider:       "dual_verified",
-      claude_model:   CLAUDE_MODEL,
-      mistral_model:  MISTRAL_MODEL,
-      verified:       verifiedCount,
-      ambiguous:      ambiguousCount,
-      single_model:   figures.filter(f => f._verification === "single_model").length,
+      provider:      "dual_verified",
+      claude_model:  CLAUDE_MODEL,
+      mistral_model: MISTRAL_MODEL,
+      verified:      verifiedCount,
+      ambiguous:     ambiguousCount,
+      single_model:  figures.filter(f => f._verification === "single_model").length,
     },
   };
 }

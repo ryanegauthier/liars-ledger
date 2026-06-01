@@ -531,7 +531,8 @@ function renderSidebar(results) {
       const p = record.politician;
       const allBills = []
         .concat((record.sponsored   || []).map(b => Object.assign({}, b, { role: "Sponsored"   })))
-        .concat((record.cosponsored || []).map(b => Object.assign({}, b, { role: "Cosponsored" })));
+        .concat((record.cosponsored || []).map(b => Object.assign({}, b, { role: "Cosponsored" })))
+        .concat((record.searched    || []).map(b => Object.assign({}, b, { role: "Related"     })));
       const rollVotes = record.rollCallVotes || [];
 
       let html = `<div class="ll-detail-title">${escapeHtml(p.full_name || p.matched_as || "")} &mdash; ${(record.topics || []).map(escapeHtml).join(", ")}</div>`;
@@ -592,7 +593,7 @@ function renderSidebar(results) {
       }
 
       if (allBills.length === 0 && rollVotes.length === 0) {
-        html += `<div class="ll-empty">No sponsored or cosponsored bills found on these topics in the 119th Congress.</div>`;
+        html += `<div class="ll-empty">No sponsored or cosponsored bills found on these topics.</div>`;
       }
 
       // VoteSmart vote history

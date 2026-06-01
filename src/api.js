@@ -62,8 +62,8 @@ async function apiFetch(path) {
 }
 
 // --- Get sponsored legislation for a member ---
-async function getMemberSponsoredBills(bioguideId, limit = 50) {
-  const path = `/member/${bioguideId}/sponsored-legislation?limit=${limit}&congress=${CURRENT_CONGRESS}`;
+async function getMemberSponsoredBills(bioguideId, limit = 250) {
+  const path = `/member/${bioguideId}/sponsored-legislation?limit=${limit}`;
   try {
     const data = await apiFetch(path);
     return data.sponsoredLegislation || [];
@@ -74,8 +74,8 @@ async function getMemberSponsoredBills(bioguideId, limit = 50) {
 }
 
 // --- Get cosponsored legislation for a member ---
-async function getMemberCosponsoredBills(bioguideId, limit = 50) {
-  const path = `/member/${bioguideId}/cosponsored-legislation?limit=${limit}&congress=${CURRENT_CONGRESS}`;
+async function getMemberCosponsoredBills(bioguideId, limit = 250) {
+  const path = `/member/${bioguideId}/cosponsored-legislation?limit=${limit}`;
   try {
     const data = await apiFetch(path);
     return data.cosponsoredLegislation || [];
@@ -88,7 +88,7 @@ async function getMemberCosponsoredBills(bioguideId, limit = 50) {
 // --- Search bills by keyword ---
 async function searchBillsByKeyword(keyword, limit = 10) {
   const encoded = encodeURIComponent(keyword);
-  const path = `/bill?congress=${CURRENT_CONGRESS}&query=${encoded}&limit=${limit}&sort=updateDate+desc`;
+  const path = `/bill?query=${encoded}&limit=${limit}&sort=updateDate+desc`;
   try {
     const data = await apiFetch(path);
     return data.bills || [];
@@ -182,10 +182,7 @@ async function lookupPoliticianOnTopics(member, topics) {
     searchTermsToQuery.map(term => searchBillsByKeyword(term, 10))
   );
   searchTermsToQuery.forEach((term, i) => {
-    const relevant = searchResults[i].filter(b =>
-      b.sponsors?.some(s => s.bioguideId === member.bioguide_id)
-    );
-    for (const b of relevant) addIfNew(b, result.searched, term);
+    for (const b of searchResults[i]) addIfNew(b, result.searched, term);
   });
 
   // Fetch GovTrack roll-call votes + VoteSmart data in parallel

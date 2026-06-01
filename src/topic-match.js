@@ -7,7 +7,7 @@ const TOPIC_TITLE_KEYWORDS = {
   "health care":      ["health", "medicare", "medicaid", "drug", "prescription", "hospital", "patient", "insurance", "opioid"],
   "climate change":   ["climate", "emission", "carbon", "clean energy", "renewable", "fossil", "environmental"],
   "immigration":      ["immigration", "immigrant", "border", "asylum", "visa", "daca", "deportat"],
-  "firearms":         ["firearm", "gun", "weapon", "ammunition", "background check"],
+  "firearms":         ["firearm", "gun", "weapon", "ammunition", "background check", "atf", "second amendment", "nra"],
   "taxation":         ["tax", "irs", "revenue", "deduction", "fiscal"],
   "defense":          ["defense", "military", "veteran", "armed forces", "pentagon", "weapon"],
   "education":        ["education", "school", "student", "teacher", "college", "loan", "tuition"],
