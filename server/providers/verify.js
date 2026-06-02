@@ -8,7 +8,7 @@
 //   { ok: true,  verdict, explanation }
 //   { ok: false, error }
 
-const Anthropic = require("@anthropic-ai/sdk");
+import Anthropic from "@anthropic-ai/sdk";
 
 const CLAUDE_MODEL = "claude-haiku-4-5-20251001";
 const MAX_RECORD_CHARS = 8000;
