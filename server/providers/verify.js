@@ -8,9 +8,8 @@
 //   { ok: true,  verdict, explanation }
 //   { ok: false, error }
 
-import Anthropic from "@anthropic-ai/sdk";
-
-const CLAUDE_MODEL = "claude-haiku-4-5-20251001";
+const CLAUDE_API_URL = "https://api.anthropic.com/v1/messages";
+const CLAUDE_MODEL   = "claude-haiku-4-5-20251001";
 const MAX_RECORD_CHARS = 8000;
 
 function buildVerifyPrompt(claim, member, record) {
@@ -105,25 +104,44 @@ async function verifyClaim(claim, member, record) {
   const apiKey = process.env.CLAUDE_API_KEY;
   if (!apiKey) return { ok: false, error: "Claude API key not configured" };
 
-  const client = new Anthropic({ apiKey });
-
+  let res;
   try {
-    const response = await client.messages.create({
-      model: CLAUDE_MODEL,
-      max_tokens: 512,
-      temperature: 0.0,
-      messages: [{ role: "user", content: buildVerifyPrompt(claim, member, record) }],
+    res = await fetch(CLAUDE_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type":      "application/json",
+        "x-api-key":         apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model:       CLAUDE_MODEL,
+        max_tokens:  512,
+        temperature: 0.0,
+        messages: [{ role: "user", content: buildVerifyPrompt(claim, member, record) }],
+      }),
     });
-
-    const content = response?.content?.[0]?.text;
-    if (typeof content !== "string" || !content.trim()) {
-      return { ok: false, error: "Claude returned empty verification response" };
-    }
-
-    return parseVerifyResponse(content);
   } catch (e) {
-    return { ok: false, error: `Verification failed: ${e.message}` };
+    return { ok: false, error: `Verification request failed: ${e.message}` };
   }
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    return { ok: false, error: `Claude HTTP ${res.status}: ${body.slice(0, 120)}` };
+  }
+
+  let data;
+  try {
+    data = await res.json();
+  } catch {
+    return { ok: false, error: "Claude returned non-JSON response" };
+  }
+
+  const content = data?.content?.[0]?.text;
+  if (typeof content !== "string" || !content.trim()) {
+    return { ok: false, error: "Claude returned empty verification response" };
+  }
+
+  return parseVerifyResponse(content);
 }
 
 export { verifyClaim };
