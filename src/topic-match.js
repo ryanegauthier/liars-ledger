@@ -25,8 +25,12 @@ const TOPIC_TITLE_KEYWORDS = {
 function billMatchesTopic(bill, topic) {
   if (!bill.title) return false;
   const title = bill.title.toLowerCase();
-  const keywords = TOPIC_TITLE_KEYWORDS[topic.toLowerCase()] || [topic.toLowerCase()];
-  return keywords.some((kw) => title.includes(kw));
+  const keywords = TOPIC_TITLE_KEYWORDS[topic.toLowerCase()];
+  if (keywords) return keywords.some((kw) => title.includes(kw));
+
+  // LLM search terms — check that all significant words appear in the title
+  const words = topic.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
+  return words.length > 0 && words.every((w) => title.includes(w));
 }
 
 function chamberKey(ch) {

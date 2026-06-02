@@ -54,7 +54,8 @@ async function apiFetch(path) {
   logger.info("api", `fetching: ${path.slice(0, 80)}`);
 
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`Congress proxy error: ${res.status} on ${path}`);
+  if (!res.ok)
+    throw new Error(`Congress proxy error: ${res.status} on ${path}`);
 
   const data = await res.json();
   await cacheSet(cacheKey, data);
@@ -93,7 +94,10 @@ async function searchBillsByKeyword(keyword, limit = 10) {
     const data = await apiFetch(path);
     return data.bills || [];
   } catch (e) {
-    logger.warn("api", `bill search failed for keyword: ${keyword} — ${e.message}`);
+    logger.warn(
+      "api",
+      `bill search failed for keyword: ${keyword} — ${e.message}`,
+    );
     return [];
   }
 }
@@ -145,11 +149,14 @@ async function lookupPoliticianOnTopics(member, topics) {
       if (billMatchesTopic(bill, topic)) return true;
     }
 
-    // Pass 2: direct LLM search term substring match
+    // Pass 2: LLM search terms — word-level matching
     for (const term of llmSearchTerms) {
-      if (term.length > 3 && titleLower.includes(term)) return true;
+      if (term.length <= 3) continue;
+      const words = term.split(/\s+/).filter((w) => w.length > 2);
+      if (words.length > 0 && words.every((w) => titleLower.includes(w)))
+        return true;
     }
-
+    
     return false;
   }
 
@@ -179,7 +186,7 @@ async function lookupPoliticianOnTopics(member, topics) {
 
   // Parallel keyword searches — all independent, safe to batch
   const searchResults = await Promise.all(
-    searchTermsToQuery.map(term => searchBillsByKeyword(term, 10))
+    searchTermsToQuery.map((term) => searchBillsByKeyword(term, 10)),
   );
   searchTermsToQuery.forEach((term, i) => {
     for (const b of searchResults[i]) addIfNew(b, result.searched, term);
@@ -211,10 +218,11 @@ async function lookupPoliticianOnTopics(member, topics) {
     result.voteSmartVotes = [];
   }
 
-  logger.info("api",
+  logger.info(
+    "api",
     `${member.full_name}: ${result.sponsored.length} sponsored, ` +
-    `${result.cosponsored.length} cosponsored, ${rollCallVotes.length} roll-call hits, ` +
-    `${result.voteSmartRatings.length} VS ratings, ${result.voteSmartVotes.length} VS votes`
+      `${result.cosponsored.length} cosponsored, ${rollCallVotes.length} roll-call hits, ` +
+      `${result.voteSmartRatings.length} VS ratings, ${result.voteSmartVotes.length} VS votes`,
   );
   return result;
 }

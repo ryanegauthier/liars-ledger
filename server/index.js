@@ -19,6 +19,7 @@ import { mistral }   from "./providers/mistral.js";
 import { congress }  from "./providers/congress.js";
 import { votesmart } from "./providers/votesmart.js";
 import { govtrack }  from "./providers/govtrack.js";
+import { verifyClaim } from "./providers/verify.js";
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
@@ -73,6 +74,16 @@ app.post("/api/mistral/extract", wrap(async (req, res) => {
   const { articleText } = req.body;
   if (!articleText) return res.status(400).json({ error: "articleText required" });
   const result = await mistral.extract(articleText);
+  res.status(result.ok ? 200 : 502).json(result);
+}));
+
+app.post("/api/verify-claim", wrap(async (req, res) => {  const { claim, member, record } = req.body;
+
+  if (!claim) return res.status(400).json({ error: "claim required" });
+  if (!member) return res.status(400).json({ error: "member required" });
+  if (!record) return res.status(400).json({ error: "record required" });
+
+  const result = await verifyClaim(claim, member, record);
   res.status(result.ok ? 200 : 502).json(result);
 }));
 

@@ -10,6 +10,7 @@ importScripts(
   "src/topic-match.js",
   "src/api.js",
   "src/votesmart.js",
+  "src/verify.js",
 );
 
 const browser = globalThis.browser || globalThis.chrome;
@@ -178,6 +179,14 @@ async function handleAnalyze({ politicians, articleText }) {
         records[i]._mistral_claim = fig._mistral_claim || null;
         records[i]._similarity    = fig._similarity    || null;
       }
+    }
+
+    logger.info("background", `analysis complete — ${records.length} record(s) returned`);
+    // --- Claim-vs-record verification ---
+    logger.info("background", `verifying claims for ${records.length} member(s)`);
+    await verifyAllClaims(records);
+    for (const r of records) {
+      logger.info("background", `${r.full_name}: verdict=${r.verdict}`);
     }
 
     logger.info("background", `analysis complete — ${records.length} record(s) returned`);
