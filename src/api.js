@@ -156,18 +156,34 @@ async function lookupPoliticianOnTopics(member, topics) {
       if (words.length > 0 && words.every((w) => titleLower.includes(w)))
         return true;
     }
-    
+
     return false;
   }
 
   // Filter and dedup by URL/number
+  const CEREMONIAL_PATTERNS = [
+    "honoring the life",
+    "honoring the legacy",
+    "congratulating",
+    "expressing the thanks",
+    "expressing the sense of the",
+    "recognizing the contributions",
+    "commemorating",
+    "designating",
+    "national day of",
+  ];
+  
   const seenBillKeys = new Set();
 
   function addIfNew(bill, arr, tag) {
-    if (!bill.title) return; // skip untitled amendments
+    if (!bill.title) return;
+    const titleLower = bill.title.toLowerCase();
+    if (CEREMONIAL_PATTERNS.some((p) => titleLower.includes(p))) return;
     const key = bill.url || `${bill.type}${bill.number}`;
-    if (seenBillKeys.has(key)) return;
+    const titleKey = titleLower.slice(0, 80);
+    if (seenBillKeys.has(key) || seenBillKeys.has(titleKey)) return;
     seenBillKeys.add(key);
+    seenBillKeys.add(titleKey);
     arr.push({ ...bill, topic: tag });
   }
 

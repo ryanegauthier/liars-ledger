@@ -189,44 +189,61 @@ function initSidebar() {
       background: rgba(0,0,0,0.2);
       font-style: italic;
     }
-    .ll-card-claim.ll-verified {
+
+    .ll-verdict-label {
+      font-size: 0.5rem;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      margin-bottom: 4px;
+      display: block;
+      font-style: normal;
+    }
+    .ll-verdict-explanation {
+      font-size: 0.54rem;
+      color: rgba(196,201,215,0.7);
+      line-height: 1.5;
+      margin-top: 4px;
+      font-style: normal;
+    }
+
+    .ll-card-claim.ll-verdict-supported {
       border-left-color: #1b8a84;
       border-left-width: 3px;
       background: rgba(27,138,132,0.08);
     }
-    .ll-card-claim.ll-ambiguous { border-left-color: #c8a96e; font-style: normal; }
+    .ll-card-claim.ll-verdict-supported .ll-verdict-label { color: #1b8a84; }
 
-    .ll-verified-label {
-      font-size: 0.5rem; color: #1b8a84;
-      text-transform: uppercase; letter-spacing: 0.12em;
-      margin-bottom: 4px; display: block;
-      font-style: normal;
+    .ll-card-claim.ll-verdict-contradicted {
+      border-left-color: #c73a25;
+      border-left-width: 3px;
+      background: rgba(199,58,37,0.08);
     }
-    .ll-ambiguous-label {
-      font-size: 0.5rem; color: #c8a96e;
-      text-transform: uppercase; letter-spacing: 0.1em;
-      margin-bottom: 3px; display: block;
+    .ll-card-claim.ll-verdict-contradicted .ll-verdict-label { color: #c73a25; }
+
+    .ll-card-claim.ll-verdict-mixed {
+      border-left-color: #c8a96e;
+      border-left-width: 3px;
+      background: rgba(200,169,110,0.08);
     }
-    .ll-ambiguous-model {
-      font-size: 0.52rem; color: #5a5f6e;
-      text-transform: uppercase; letter-spacing: 0.08em;
-      margin-bottom: 1px; display: block;
+    .ll-card-claim.ll-verdict-mixed .ll-verdict-label { color: #c8a96e; }
+
+    .ll-card-claim.ll-verdict-insufficient {
+      border-left-color: #5a5f6e;
     }
-    .ll-ambiguous-text {
-      font-size: 0.58rem; color: #c4c9d7;
-      line-height: 1.5; font-style: italic;
-      display: block; margin-bottom: 4px;
-    }
+    .ll-card-claim.ll-verdict-insufficient .ll-verdict-label { color: #5a5f6e; }
     .ll-verified-badge {
       display: inline-block; font-size: 0.48rem;
-      color: #1b8a84; border: 1px solid rgba(27,138,132,0.4);
       padding: 1px 5px; letter-spacing: 0.08em;
       text-transform: uppercase; margin-top: 4px;
     }
 
-    /* Green card border-top for dual-verified politicians */
-    .ll-card.ll-card-verified { border-top-color: #1b8a84; }
-    .ll-card.ll-card-verified:hover { border-top-color: #1b8a84; }
+    /* Card border-top colors by verdict */
+    .ll-card.ll-card-supported { border-top-color: #1b8a84; }
+    .ll-card.ll-card-supported:hover { border-top-color: #1b8a84; }
+    .ll-card.ll-card-contradicted { border-top-color: #c73a25; }
+    .ll-card.ll-card-contradicted:hover { border-top-color: #c73a25; }
+    .ll-card.ll-card-mixed { border-top-color: #c8a96e; }
+    .ll-card.ll-card-mixed:hover { border-top-color: #c8a96e; }
 
     .ll-report-btn {
       font-family: "IBM Plex Mono", monospace;
@@ -458,28 +475,34 @@ function renderSidebar(results) {
       ? `<span class="ll-indicator ll-indicator-green">&#x25CF; ${total} match${total > 1 ? "es" : ""}</span>`
       : `<span class="ll-indicator ll-indicator-gray">&#x25CB; No bills or votes found</span>`;
 
-    // Claim — three states:
-    // Claim — three states:
-    // dual_verified: green border + "✓ Verified Statement" label + green card top border
-    // ambiguous: amber border + both model interpretations
-    // single_model/other: plain italic claim
-    const isVerified = record._verification === "dual_verified";
+    // Claim + verdict
+    const displayClaim = record.claim || record._claude_claim || record._mistral_claim || "";
+    const verdict = record.verdict || "";
+    const verdictLabels = {
+      supported: "✓ Record supports this claim",
+      contradicted: "✗ Record contradicts this claim",
+      mixed: "⚠ Mixed — record partially supports, partially contradicts",
+      insufficient: "— Insufficient record data to verify",
+    };
     let claimLine = "";
-    if (record._verification === "ambiguous" && (record._claude_claim || record._mistral_claim)) {
-      claimLine = `<div class="ll-card-claim ll-ambiguous">
-        <span class="ll-ambiguous-label">⚠ Models disagreed</span>
-        ${record._claude_claim ? `<span class="ll-ambiguous-model">Claude</span><span class="ll-ambiguous-text">${escapeHtml(record._claude_claim)}</span>` : ""}
-        ${record._mistral_claim ? `<span class="ll-ambiguous-model">Mistral</span><span class="ll-ambiguous-text">${escapeHtml(record._mistral_claim)}</span>` : ""}
-      </div>`;
-    } else if (record.claim) {
-      claimLine = `<div class="ll-card-claim${isVerified ? " ll-verified" : ""}">
-        ${isVerified ? `<span class="ll-verified-label">✓ Verified Statement</span>` : ""}
-        ${escapeHtml(record.claim)}
+    if (displayClaim) {
+      const verdictClass = verdict ? ` ll-verdict-${verdict}` : "";
+      const verdictLabel = verdictLabels[verdict] || "";
+      const explanation = record.verdict_explanation || "";
+      claimLine = `<div class="ll-card-claim${verdictClass}">
+        ${verdictLabel ? `<span class="ll-verdict-label">${verdictLabel}</span>` : ""}
+        ${escapeHtml(displayClaim)}
+        ${explanation ? `<span class="ll-verdict-explanation">${escapeHtml(explanation)}</span>` : ""}
       </div>`;
     }
 
+    const cardClass = verdict === "supported" ? " ll-card-supported"
+                    : verdict === "contradicted" ? " ll-card-contradicted"
+                    : verdict === "mixed" ? " ll-card-mixed"
+                    : "";
+
     cardsHTML += `
-      <div class="ll-card${isVerified ? " ll-card-verified" : ""}" data-idx="${idx}">
+      <div class="ll-card${cardClass}" data-idx="${idx}">
         <div class="ll-card-eyebrow">${escapeHtml(eyebrow)}</div>
         <div class="ll-card-name">${escapeHtml(p.full_name || p.matched_as || "")}</div>
         <div class="ll-card-meta">
@@ -533,21 +556,33 @@ function renderSidebar(results) {
         .concat((record.sponsored   || []).map(b => Object.assign({}, b, { role: "Sponsored"   })))
         .concat((record.cosponsored || []).map(b => Object.assign({}, b, { role: "Cosponsored" })))
         .concat((record.searched    || []).map(b => Object.assign({}, b, { role: "Related"     })));
-      const rollVotes = record.rollCallVotes || [];
+        allBills.sort((a, b) => (b.introducedDate || "").localeCompare(a.introducedDate || ""));
+        const rollVotes = record.rollCallVotes || [];
 
       let html = `<div class="ll-detail-title">${escapeHtml(p.full_name || p.matched_as || "")} &mdash; ${(record.topics || []).map(escapeHtml).join(", ")}</div>`;
 
-      if (record._verification === "ambiguous" && (record._claude_claim || record._mistral_claim)) {
-        html += `<div class="ll-detail-claim" style="border-left-color:#c8a96e">
-          <strong style="color:#c8a96e;font-size:0.54rem;text-transform:uppercase;letter-spacing:0.1em">⚠ Models disagreed on this claim</strong><br><br>
-          ${record._claude_claim ? `<span style="color:#5a5f6e;font-size:0.52rem;text-transform:uppercase">Claude:</span><br>${escapeHtml(record._claude_claim)}<br><br>` : ""}
-          ${record._mistral_claim ? `<span style="color:#5a5f6e;font-size:0.52rem;text-transform:uppercase">Mistral:</span><br>${escapeHtml(record._mistral_claim)}` : ""}
-        </div>`;
-      } else if (record.claim) {
-        const isVerified = record._verification === "dual_verified";
-        html += `<div class="ll-detail-claim"${isVerified ? ' style="border-left-color:#1b8a84"' : ""}>
-          ${escapeHtml(record.claim)}
-          ${isVerified ? `<br><span style="color:#1b8a84;font-size:0.52rem;text-transform:uppercase;letter-spacing:0.08em">✓ Dual verified — Claude &amp; Mistral agree</span>` : ""}
+      const detailClaim = record.claim || record._claude_claim || record._mistral_claim || "";
+      const detailVerdict = record.verdict || "";
+      const detailVerdictLabels = {
+        supported: "✓ RECORD SUPPORTS THIS CLAIM",
+        contradicted: "✗ RECORD CONTRADICTS THIS CLAIM",
+        mixed: "⚠ MIXED — PARTIAL SUPPORT, PARTIAL CONTRADICTION",
+        insufficient: "— INSUFFICIENT DATA TO VERIFY",
+      };
+      const detailVerdictColors = {
+        supported: "#1b8a84",
+        contradicted: "#c73a25",
+        mixed: "#c8a96e",
+        insufficient: "#5a5f6e",
+      };
+      if (detailClaim) {
+        const vColor = detailVerdictColors[detailVerdict] || "#9c7f4e";
+        const vLabel = detailVerdictLabels[detailVerdict] || "";
+        const vExplanation = record.verdict_explanation || "";
+        html += `<div class="ll-detail-claim" style="border-left-color:${vColor}">
+          ${escapeHtml(detailClaim)}
+          ${vLabel ? `<br><span style="color:${vColor};font-size:0.52rem;text-transform:uppercase;letter-spacing:0.08em">${vLabel}</span>` : ""}
+          ${vExplanation ? `<br><span style="color:rgba(196,201,215,0.7);font-size:0.54rem;font-style:normal">${escapeHtml(vExplanation)}</span>` : ""}
         </div>`;
       }
 

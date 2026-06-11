@@ -186,7 +186,7 @@ async function handleAnalyze({ politicians, articleText }) {
     logger.info("background", `verifying claims for ${records.length} member(s)`);
     await verifyAllClaims(records);
     for (const r of records) {
-      logger.info("background", `${r.full_name}: verdict=${r.verdict}`);
+      logger.info("background", `${r.politician.full_name}: verdict=${r.verdict}`);
     }
 
     logger.info("background", `analysis complete — ${records.length} record(s) returned`);

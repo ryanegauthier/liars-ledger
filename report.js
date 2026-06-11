@@ -33,21 +33,25 @@ function renderRecord(record) {
   const chamber   = p.chamber ? p.chamber.charAt(0).toUpperCase() + p.chamber.slice(1).toLowerCase() : "";
   const eyebrow   = [chamber, p.state].filter(Boolean).join(" · ");
 
-  // Claim
+  // Claim + verdict
+  const displayClaim = record.claim || record._claude_claim || record._mistral_claim || "";
+  const verdict = record.verdict || "";
+  const verdictLabels = {
+    supported: "✓ Record supports this claim",
+    contradicted: "✗ Record contradicts this claim",
+    mixed: "⚠ Mixed — record partially supports, partially contradicts",
+    insufficient: "— Insufficient record data to verify",
+  };
   let claimHtml = "";
-  if (record._verification === "ambiguous" && (record._claude_claim || record._mistral_claim)) {
+  if (displayClaim) {
+    const verdictClass = verdict ? ` ll-verdict-${verdict}` : "";
+    const verdictLabel = verdictLabels[verdict] || "";
+    const explanation = record.verdict_explanation || "";
     claimHtml = `
-      <div class="ll-claim ll-ambiguous">
-        <span class="ll-claim-label ambiguous">⚠ Models disagreed on this claim</span>
-        ${record._claude_claim ? `<span class="ll-model-label">Claude</span><span style="font-style:italic">${escapeHtml(record._claude_claim)}</span>` : ""}
-        ${record._mistral_claim ? `<span class="ll-model-label">Mistral</span><span style="font-style:italic">${escapeHtml(record._mistral_claim)}</span>` : ""}
-      </div>`;
-  } else if (record.claim) {
-    const isVerified = record._verification === "dual_verified";
-    claimHtml = `
-      <div class="ll-claim${isVerified ? " ll-verified" : ""}">
-        ${isVerified ? `<span class="ll-claim-label verified">✓ Verified Statement</span>` : ""}
-        ${escapeHtml(record.claim)}
+      <div class="ll-claim${verdictClass}">
+        ${verdictLabel ? `<span class="ll-claim-label ${verdict}">${verdictLabel}</span>` : ""}
+        ${escapeHtml(displayClaim)}
+        ${explanation ? `<span class="ll-verdict-explanation">${escapeHtml(explanation)}</span>` : ""}
       </div>`;
   }
 
@@ -60,6 +64,7 @@ function renderRecord(record) {
   const allBills = []
     .concat((record.sponsored   || []).map(b => ({ ...b, role: "Sponsored"   })))
     .concat((record.cosponsored || []).map(b => ({ ...b, role: "Cosponsored" })));
+    allBills.sort((a, b) => (b.introducedDate || "").localeCompare(a.introducedDate || ""));
 
   const billsHtml = allBills.length === 0
     ? `<div class="ll-empty">No sponsored or cosponsored bills found on these topics in the 119th Congress.</div>`
@@ -74,7 +79,7 @@ function renderRecord(record) {
               <span style="font-size:0.58rem">${escapeHtml(bill.type || "")} ${escapeHtml(String(num))}</span>
             </div>
             <div class="ll-row-right">
-              <div>${escapeHtml(truncate(bill.title, 120))}</div>
+              <div>${escapeHtml(bill.title)}</div>
               <div class="ll-row-sub">${escapeHtml(bill.introducedDate || "")} · <a href="${escapeHtml(url)}" target="_blank">View on congress.gov →</a></div>
             </div>
           </div>`;
@@ -136,8 +141,13 @@ function renderRecord(record) {
           </div>`;
       }).join("");
 
+  const headerBorderColor = verdict === "supported" ? "#1b8a84"
+                         : verdict === "contradicted" ? "#c73a25"
+                         : verdict === "mixed" ? "#c8a96e"
+                         : "#c8a96e";
+
   return `
-    <div class="ll-politician-header">
+    <div class="ll-politician-header" style="border-top-color:${headerBorderColor}">
       <div class="ll-eyebrow">${escapeHtml(eyebrow)}</div>
       <div class="ll-name">${escapeHtml(p.full_name || p.matched_as || "")}
         <span class="ll-party-pill ll-party-${partyCode}">${partyLabel}</span>

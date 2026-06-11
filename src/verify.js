@@ -91,15 +91,16 @@ async function verifyClaimViaProxy(claim, memberName, record, options = {}) {
  */
 async function verifyAllClaims(records, options = {}) {
   const jobs = records.map(async (record) => {
-    if (!record.claim) {
+    const claim = record.claim || record._claude_claim || record._mistral_claim;
+    if (!claim) {
       record.verdict = "insufficient";
       record.verdict_explanation = "No claim extracted for this member.";
       return record;
     }
 
     const result = await verifyClaimViaProxy(
-      record.claim,
-      record.full_name,
+      claim,
+      record.politician.full_name,
       record,
       options,
     );

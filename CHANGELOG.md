@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.12.0] - 2026-06-10
+
+### Verdict-driven UI + topic expansion + ceremonial bill filter
+
+- **`content.js`** — claim display now driven by `record.verdict` instead of `record._verification`
+  - New CSS classes: `ll-verdict-{supported,contradicted,mixed,insufficient}` (replaces `ll-verified`, `ll-ambiguous`)
+  - Verdict labels: "✓ Record supports this claim", "✗ Record contradicts this claim", "⚠ Mixed — record partially supports, partially contradicts", "— Insufficient record data to verify"
+  - `verdict_explanation` rendered below the claim text on each card
+  - Card border-top color reflects verdict: teal (supported), red (contradicted), amber (mixed)
+  - Detail panel updated to match — verdict label and explanation in the expanded view
+  - Bill list in detail panel sorted by `introducedDate` descending
+- **`report.js`** — politician header `border-top-color` now set from verdict (supported=teal, contradicted=red, mixed/fallback=amber)
+- **`src/verify.js`** — two bug fixes
+  - Claim now falls back to `_claude_claim` / `_mistral_claim` when `record.claim` is absent
+  - `record.full_name` → `record.politician.full_name` (politician is a nested object)
+- **`background.js`** — same fix: `r.full_name` → `r.politician.full_name` in post-verification log line
+- **`src/api.js`** — ceremonial bills filtered out before results are returned
+  - `CEREMONIAL_PATTERNS` list: "honoring the life", "congratulating", "commemorating", "national day of", etc.
+  - Bill dedup now also hashes by first 80 characters of title (catches URL-distinct but title-duplicate bills)
+- **`src/topic-match.js`** — topic keyword expansion (19 → 25 topics)
+  - Single-word triggers replaced with precise multi-word phrases to reduce false positives
+  - New dedicated topics: `israel`, `china`, `ukraine`, `russia`, `abortion`, `environment`, `agriculture`, `energy`
+  - Existing topics (foreign policy, labor, health care, defense, education, etc.) updated with more specific term sets
+
+---
+
 ## [0.11.2] - 2026-05-31
 
 ### Bugfix — proxy payload + missing function
@@ -124,24 +150,29 @@
 
 ## Planned
 
-### [0.12.0] — Chrome Web Store launch
+### [0.13.0] — Chrome Web Store launch
 - Store listing: screenshots, short/long description, category
 - Developer account ($5 one-time)
 - Install Extension links updated across liarsledger.com
 
-### [0.13.0] — Freemium tier management
+### [0.14.0] — Freemium tier management
 - Anonymous free tier: 5 scans/day via per-install token
 - Pro tier: unlimited scans, Square subscription, JWT auth token
 - Popup shows scan count remaining for free users
 - Account creation via liarsledger.com (not in extension)
 - Backend enforces limits; extension degrades gracefully on 429
 
-### [0.14.0] — GovTrack extended data
+### [0.15.0] — API cost optimization
+- Prompt caching on Claude extraction and verification calls — static instruction prefix cached, only article text varies
+- Usage monitoring via Claude Console — cost per endpoint tracking
+- Evaluate Mistral prompt caching equivalent
+
+### [0.16.0] — GovTrack extended data
 - Ideology scores (0.0 = most liberal, 1.0 = most conservative)
 - Missed vote rates and committee assignments
 - Historical roll-call votes back to 1990s
 
-### [0.15.0] — Creator shareable graphics
+### [0.17.0] — Creator shareable graphics
 - One-click image card: politician name, claim, voting record
 - Twitter/X (1200×628) and Instagram (1080×1080) formats
 - Canvas API, no server render, Creator tier feature

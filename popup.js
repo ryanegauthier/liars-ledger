@@ -4,9 +4,6 @@ const browser = window.browser || window.chrome;
 const toggle         = document.getElementById("enableToggle");
 const scanBtn        = document.getElementById("scanBtn");
 const statusEl       = document.getElementById("status");
-const logPanel       = document.getElementById("logPanel");
-const copyBtn        = document.getElementById("copyBtn");
-const clearBtn       = document.getElementById("clearBtn");
 const cardsContainer = document.getElementById("cardsContainer");
 const tickerText     = document.getElementById("tickerText");
 const versionLabel   = document.getElementById("versionLabel");
@@ -29,39 +26,6 @@ function setStatus(text, type = "") {
   statusEl.textContent = text;
   statusEl.className = "status" + (type ? " " + type : "");
 }
-
-// ── Log panel ─────────────────────────────────────────────────────────────────
-function refreshLog() {
-  browser.storage.session.get("ll_debug_log", (result) => {
-    const entries = result.ll_debug_log || [];
-    if (!entries.length) { logPanel.innerHTML = ""; return; }
-    logPanel.innerHTML = entries.map(entry => {
-      let cls = "";
-      if (entry.includes("WARN") || entry.includes("not found") || entry.includes("not current")) cls = "log-entry-warn";
-      if (entry.includes("ERROR") || entry.includes("failed") || entry.includes("error"))         cls = "log-entry-error";
-      if (entry.includes("analysis complete") || entry.includes("ok —"))                          cls = "log-entry-ok";
-      return `<div class="${cls}">${entry}</div>`;
-    }).join("");
-    logPanel.scrollTop = logPanel.scrollHeight;
-  });
-}
-
-refreshLog();
-const logInterval = setInterval(refreshLog, 1000);
-window.addEventListener("unload", () => clearInterval(logInterval));
-
-copyBtn.addEventListener("click", () => {
-  browser.storage.session.get("ll_debug_log", (result) => {
-    navigator.clipboard.writeText((result.ll_debug_log || []).join("\n")).then(() => {
-      copyBtn.textContent = "Copied!";
-      setTimeout(() => copyBtn.textContent = "Copy", 1500);
-    });
-  });
-});
-
-clearBtn.addEventListener("click", () => {
-  browser.storage.session.set({ ll_debug_log: [] }, refreshLog);
-});
 
 // ── Card rendering ─────────────────────────────────────────────────────────────
 function buildBillId(bill) {
@@ -233,7 +197,8 @@ function handleResult(result) {
   } else if (result.status === "ok") {
     const count = result.records?.length || 0;
     setStatus(`✓ ${count} member${count !== 1 ? "s" : ""} · record retrieved`, "success");
-    renderCards(result);
+    // Close popup after brief delay — results show in sidebar
+    setTimeout(() => window.close(), 800);
   }
 }
 

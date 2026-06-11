@@ -120,8 +120,10 @@
       line-height: 1.6;
       margin-bottom: 6px;
     }
-    .ll-claim.ll-verified  { border-left-color: var(--green); background: rgba(27,138,132,0.08); }
-    .ll-claim.ll-ambiguous { border-left-color: var(--accent); font-style: normal; }
+    .ll-claim.ll-verdict-supported     { border-left-color: var(--green); background: rgba(27,138,132,0.08); }
+    .ll-claim.ll-verdict-contradicted  { border-left-color: var(--alert); background: rgba(199,58,37,0.08); }
+    .ll-claim.ll-verdict-mixed         { border-left-color: var(--accent); background: rgba(200,169,110,0.08); }
+    .ll-claim.ll-verdict-insufficient  { border-left-color: var(--text-faint); }
 
     .ll-claim-label {
       font-size: 0.54rem;
@@ -131,17 +133,17 @@
       display: block;
       font-style: normal;
     }
-    .ll-claim-label.verified  { color: var(--green); }
-    .ll-claim-label.ambiguous { color: var(--accent); }
+    .ll-claim-label.supported     { color: var(--green); }
+    .ll-claim-label.contradicted  { color: var(--alert); }
+    .ll-claim-label.mixed         { color: var(--accent); }
+    .ll-claim-label.insufficient  { color: var(--text-faint); }
 
-    .ll-model-label {
-      font-size: 0.52rem;
-      color: var(--text-faint);
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
+    .ll-verdict-explanation {
       display: block;
+      font-size: 0.68rem;
+      color: rgba(196,201,215,0.7);
+      line-height: 1.5;
       margin-top: 8px;
-      margin-bottom: 2px;
       font-style: normal;
     }
 
@@ -306,7 +308,7 @@
 
   <div class="ll-footer">
     <span>congress.gov · official record · non-partisan</span>
-    <span>Liar's Ledger v0.11.1</span>
+    <span>Liar's Ledger v0.11.2</span>
   </div>
 
   <script src="src/config.js"></script>
