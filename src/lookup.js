@@ -1,5 +1,7 @@
 // Liars Ledger - src/lookup.js
 // Resolves politician names extracted from articles to dictionary entries.
+// Works with the condensed dictionary format:
+//   { members: { bioguide_id: {...} }, aliases: { name: bioguide_id } }
 
 let _dictionary = null;
 
@@ -21,67 +23,61 @@ function isNonMemberTitle(name) {
 }
 
 // --- Nickname → official first name map ---
-// Keys are common nicknames/informal names; values are the official first name
-// as it appears in the Congress.gov API (and therefore the dictionary).
-// All lowercase. Add entries as LLM extraction surfaces new misses.
 const NICKNAME_FIRST = {
-  // Senate
-  "chuck":    "charles",   // Chuck Schumer → Charles Schumer
-  "dick":     "richard",   // Dick Durbin → Richard Durbin
-  "tim":      "timothy",   // Tim Scott, Tim Kaine
-  "tom":      "thomas",    // Tom Cotton, Tom Carper
-  "ted":      "rafael",    // Ted Cruz (official: Rafael)
-  "mike":     "michael",   // Mike Lee, Mike Crapo, Mike Rounds
-  "bob":      "robert",    // Bob Casey, Bob Menendez
-  "bill":     "william",   // Bill Cassidy, Bill Hagerty
-  "jim":      "james",     // Jim Jordan, Jim Risch
-  "joe":      "joseph",    // Joe Manchin, Joe Morelle
-  "ben":      "benjamin",  // Ben Cardin, Ben Ray Luján
-  "pat":      "patrick",   // Pat Leahy, Pat Toomey
-  "rick":     "richard",   // Rick Scott (also richard)
-  "rob":      "robert",    // Rob Portman, Rob Wittman
-  "jon":      "jonathan",  // Jon Ossoff (not "john" → "jonathan")
-  "chris":    "christopher", // Chris Murphy, Chris Coons, Chris Van Hollen
-  "dan":      "daniel",    // Dan Sullivan, Dan Goldman
-  "dave":     "david",     // Dave McCormick, Dave Joyce
-  "ed":       "edward",    // Ed Markey
-  "jack":     "john",      // Jack Reed (official: John)
-  "jeff":     "jeffrey",   // Jeff Merkley (official: Jeffrey)
-  "jerry":    "gerald",    // Jerry Nadler (official: Jerrold/Gerald)
-  "liz":      "elizabeth", // Liz Warren, Liz Cheney
+  "chuck":    "charles",
+  "dick":     "richard",
+  "tim":      "timothy",
+  "tom":      "thomas",
+  "ted":      "rafael",
+  "mike":     "michael",
+  "bob":      "robert",
+  "bill":     "william",
+  "jim":      "james",
+  "joe":      "joseph",
+  "ben":      "benjamin",
+  "pat":      "patrick",
+  "rick":     "richard",
+  "rob":      "robert",
+  "jon":      "jonathan",
+  "chris":    "christopher",
+  "dan":      "daniel",
+  "dave":     "david",
+  "ed":       "edward",
+  "jack":     "john",
+  "jeff":     "jeffrey",
+  "jerry":    "gerald",
+  "liz":      "elizabeth",
   "beth":     "elizabeth",
   "alex":     "alexander",
-  "al":       "alan",      // Al Franken — but he's gone; keep for safety
-  "pete":     "peter",     // Pete Sessions, Pete Stauber
-  "maggie":   "margaret",  // Maggie Hassan
-  "marcy":    "marcia",    // Marcy Kaptur
+  "al":       "alan",
+  "pete":     "peter",
+  "maggie":   "margaret",
+  "marcy":    "marcia",
   "max":      "maximilian",
-  "cathy":    "cathleen",  // Cathy McMorris Rodgers
+  "cathy":    "cathleen",
   "kay":      "kathleen",
-  "suzan":    "suzanne",   // Suzan DelBene
-  "cheri":    "cheryl",    // Cheri Bustos
-  "mitch":    "addison",   // Mitch McConnell (official: Addison)
-  "rand":     "randal",    // Rand Paul (official: Randal)
-  "marco":    "marco",     // stays marco
-  "bernie":   "bernard",   // Bernie Sanders
-  "amy":      "amy",       // stays amy
-  "tammy":    "tamara",    // Tammy Baldwin, Tammy Duckworth
-  "sherrod":  "sherrod",   // stays sherrod
-  "tina":     "christina", // Tina Smith (official: Christina)
-  "gary":     "garland",   // Gary Peters (official: Gary — stays)
-  "ron":      "ronald",    // Ron Wyden, Ron Johnson
-  "roger":    "roger",     // stays roger
-  "thom":     "thomas",    // Thom Tillis
-  "shelley":  "shelley",   // stays shelley
-  "mazie":    "mazie",     // stays mazie
-  "angus":    "angus",     // stays angus
-  "mark":     "mark",      // stays mark
-  "john":     "john",      // stays john (most common)
+  "suzan":    "suzanne",
+  "cheri":    "cheryl",
+  "mitch":    "addison",
+  "rand":     "randal",
+  "marco":    "marco",
+  "bernie":   "bernard",
+  "amy":      "amy",
+  "tammy":    "tamara",
+  "sherrod":  "sherrod",
+  "tina":     "christina",
+  "gary":     "garland",
+  "ron":      "ronald",
+  "roger":    "roger",
+  "thom":     "thomas",
+  "shelley":  "shelley",
+  "mazie":    "mazie",
+  "angus":    "angus",
+  "mark":     "mark",
+  "john":     "john",
 };
 
-// Full name overrides — for cases where first-name substitution isn't enough
-// Key: normalized full name as LLM returns it
-// Value: normalized key to look up in dictionary
+// Full name overrides
 const FULL_NAME_OVERRIDES = {
   "chuck schumer":        "charles schumer",
   "mitch mcconnell":      "addison mcconnell",
@@ -123,7 +119,6 @@ const FULL_NAME_OVERRIDES = {
   "jim jordan":           "james jordan",
   "jim risch":            "james risch",
   "dave mccormick":       "david mccormick",
-  // House members commonly referenced by nickname
   "jerry connolly":       "gerald connolly",
   "jim clyburn":          "james clyburn",
   "jim mcgovern":         "james mcgovern",
@@ -133,16 +128,24 @@ const FULL_NAME_OVERRIDES = {
 };
 
 // --- Load dictionary ---
-// Note: console.log is intentional here — lookup.js runs in the background
-// service worker context where logger is available, but also in content script
-// contexts where it isn't. Keep console.* for portability.
 async function loadDictionary() {
   if (_dictionary) return _dictionary;
   const url = browser.runtime.getURL("src/data/politicians.json");
   const res = await fetch(url);
   _dictionary = await res.json();
-  console.log("[Liars Ledger] dictionary loaded,", Object.keys(_dictionary).length, "keys");
+  const memberCount = Object.keys(_dictionary.members || {}).length;
+  const aliasCount = Object.keys(_dictionary.aliases || {}).length;
+  console.log(`[Liars Ledger] dictionary loaded, ${memberCount} members, ${aliasCount} aliases`);
   return _dictionary;
+}
+
+// --- Lookup helper: alias → member object ---
+function lookupAlias(dict, alias) {
+  const bioguide = dict.aliases[alias];
+  if (!bioguide) return null;
+  const member = dict.members[bioguide];
+  if (!member) return null;
+  return { ...member, bioguide_id: bioguide };
 }
 
 // --- Normalize ---
@@ -158,13 +161,9 @@ function stripTitle(name) {
     .trim();
 }
 
-// Try nickname substitution on a stripped name.
-// "chuck schumer" → try FULL_NAME_OVERRIDES first, then first-name swap.
 function applyNicknames(stripped) {
-  // Full name override first (most precise)
   if (FULL_NAME_OVERRIDES[stripped]) return FULL_NAME_OVERRIDES[stripped];
 
-  // First-name substitution
   const parts = stripped.split(/\s+/);
   if (parts.length >= 2) {
     const first = parts[0];
@@ -183,29 +182,34 @@ async function resolvePolitician(rawName) {
 
   // 1. Exact normalized match
   const key = normalizeKey(rawName);
-  if (dict[key]) return { status: "found", entry: dict[key] };
+  const m1 = lookupAlias(dict, key);
+  if (m1) return { status: m1.is_current ? "found" : "former", entry: m1 };
 
   // 2. Strip title, try again
   const stripped = stripTitle(rawName);
-  if (dict[stripped]) return { status: "found", entry: dict[stripped] };
+  const m2 = lookupAlias(dict, stripped);
+  if (m2) return { status: m2.is_current ? "found" : "former", entry: m2 };
 
   // 3. Nickname substitution on stripped name
   const nicknamedStripped = applyNicknames(stripped);
-  if (nicknamedStripped && dict[nicknamedStripped]) {
-    return { status: "found", entry: dict[nicknamedStripped] };
+  if (nicknamedStripped) {
+    const m3 = lookupAlias(dict, nicknamedStripped);
+    if (m3) return { status: m3.is_current ? "found" : "former", entry: m3 };
   }
 
-  // 4. Nickname substitution on raw key (handles "Chuck Schumer" without title)
+  // 4. Nickname substitution on raw key
   const nicknamedKey = applyNicknames(key);
-  if (nicknamedKey && dict[nicknamedKey]) {
-    return { status: "found", entry: dict[nicknamedKey] };
+  if (nicknamedKey) {
+    const m4 = lookupAlias(dict, nicknamedKey);
+    if (m4) return { status: m4.is_current ? "found" : "former", entry: m4 };
   }
 
-  // 5. Last-name-only fallback (handles "Schumer" with no first name)
+  // 5. Last-name-only fallback
   const parts = stripped.split(/\s+/);
   if (parts.length > 1) {
     const lastNameOnly = parts[parts.length - 1];
-    if (dict[lastNameOnly]) return { status: "found", entry: dict[lastNameOnly] };
+    const m5 = lookupAlias(dict, lastNameOnly);
+    if (m5) return { status: m5.is_current ? "found" : "former", entry: m5 };
   }
 
   // 6. Known non-member title
@@ -219,9 +223,10 @@ async function resolvePolitician(rawName) {
 
 // --- Resolve a list ---
 async function resolveAll(names) {
-  const resolved   = [];
-  const notMembers = [];
-  const notFound   = [];
+  const resolved      = [];
+  const formerMembers = [];
+  const notMembers    = [];
+  const notFound      = [];
 
   for (const name of names) {
     const result = await resolvePolitician(name);
@@ -229,6 +234,10 @@ async function resolveAll(names) {
     if (result.status === "found") {
       if (!resolved.find(r => r.bioguide_id === result.entry.bioguide_id)) {
         resolved.push({ matched_as: name, ...result.entry });
+      }
+    } else if (result.status === "former") {
+      if (!formerMembers.find(r => r.bioguide_id === result.entry.bioguide_id)) {
+        formerMembers.push({ matched_as: name, ...result.entry });
       }
     } else if (result.status === "not_member") {
       notMembers.push(name);
@@ -238,8 +247,9 @@ async function resolveAll(names) {
   }
 
   console.log("[Liars Ledger] resolved:", resolved.map(r => r.full_name));
+  if (formerMembers.length) console.log("[Liars Ledger] former members:", formerMembers.map(r => r.full_name));
   if (notMembers.length) console.log("[Liars Ledger] not current members:", notMembers);
   if (notFound.length)   console.log("[Liars Ledger] not found:", notFound);
 
-  return { resolved, notMembers, notFound };
+  return { resolved, formerMembers, notMembers, notFound };
 }

@@ -302,8 +302,10 @@ async function findMemberRollCallVotesOnTopics(member, topics) {
     const session = vote.session || 1;
     const rollNum = vote.number || null;
 
+    const chamberPrefix = vote.chamber === "s" ? "s" : "h";
+
     const voteUrl = rollNum
-      ? `https://www.govtrack.us/congress/votes/${congress}-${session}/${chamber}${rollNum}`
+      ? `https://www.govtrack.us/congress/votes/${congress}-${session}/${chamberPrefix}${rollNum}`
       : null;
 
     return {
@@ -369,13 +371,10 @@ async function resolveGovTrackId(bioguideId) {
   }
 }
 
-// --- Batch lookup for all resolved politicians ---
+// --- Parallel lookup for all resolved politicians ---
 async function lookupAll(memberJobs) {
-  const results = [];
-  for (const { member, topics } of memberJobs) {
-    const result = await lookupPoliticianOnTopics(member, topics);
-    results.push(result);
-    await new Promise((r) => setTimeout(r, 150));
-  }
+  const results = await Promise.all(
+    memberJobs.map(({ member, topics }) => lookupPoliticianOnTopics(member, topics))
+  );
   return results;
 }

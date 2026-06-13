@@ -1,4 +1,4 @@
-// Liar's Ledger - popup.js v0.12.0
+// Liar's Ledger - popup.js v0.12.1
 
 const browser = window.browser || window.chrome;
 const toggle         = document.getElementById("enableToggle");
@@ -14,6 +14,19 @@ browser.storage.local.get("enabled", (data) => {
 });
 toggle.addEventListener("change", () => {
   browser.storage.local.set({ enabled: toggle.checked });
+});
+
+// ── Check for existing results on popup open ──────────────────────────────────
+browser.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+  if (!tab) return;
+  browser.storage.session.get(["ll_results", "ll_results_url"], (data) => {
+    if (data.ll_results?.status === "ok" && data.ll_results_url === tab.url) {
+      browser.tabs.sendMessage(tab.id, { action: "showResults" }, () => {
+        if (browser.runtime.lastError) return;
+      });
+      setTimeout(() => window.close(), 200);
+    }
+  });
 });
 
 // ── Proxy check ───────────────────────────────────────────────────────────────
@@ -146,7 +159,8 @@ scanBtn.addEventListener("click", async () => {
         ? `Found ${politicians.length} politician${politicians.length !== 1 ? "s" : ""}. Analyzing…`
         : "Analyzing with AI…";
       setStatus(hint, "working");
-
+      // Save URL so results are tab-specific
+      browser.storage.session.set({ ll_results_url: tab.url });
       browser.runtime.sendMessage(
         { action: "analyze", payload: { politicians: politicians || [], articleText } },
         () => {

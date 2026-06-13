@@ -64,10 +64,9 @@ function renderRecord(record) {
   const allBills = []
     .concat((record.sponsored   || []).map(b => ({ ...b, role: "Sponsored"   })))
     .concat((record.cosponsored || []).map(b => ({ ...b, role: "Cosponsored" })));
-    allBills.sort((a, b) => (b.introducedDate || "").localeCompare(a.introducedDate || ""));
 
   const billsHtml = allBills.length === 0
-    ? `<div class="ll-empty">No sponsored or cosponsored bills found on these topics in the 119th Congress.</div>`
+    ? `<div class="ll-empty">No sponsored or cosponsored bills found on these topics.</div>`
     : allBills.map(bill => {
         const type = (bill.type || "").toLowerCase();
         const num  = bill.number || "";
@@ -79,7 +78,7 @@ function renderRecord(record) {
               <span style="font-size:0.58rem">${escapeHtml(bill.type || "")} ${escapeHtml(String(num))}</span>
             </div>
             <div class="ll-row-right">
-              <div>${escapeHtml(bill.title)}</div>
+              <div>${escapeHtml(truncate(bill.title, 120))}</div>
               <div class="ll-row-sub">${escapeHtml(bill.introducedDate || "")} · <a href="${escapeHtml(url)}" target="_blank">View on congress.gov →</a></div>
             </div>
           </div>`;
@@ -141,6 +140,10 @@ function renderRecord(record) {
           </div>`;
       }).join("");
 
+  const congressLabel = p.is_current === false
+    ? `Former Member · ${p.congresses ? p.congresses[0] + "th–" + p.congresses[p.congresses.length - 1] + "th Congress" : "Previously served"}`
+    : "119th Congress";
+
   const headerBorderColor = verdict === "supported" ? "#1b8a84"
                          : verdict === "contradicted" ? "#c73a25"
                          : verdict === "mixed" ? "#c8a96e"
@@ -152,7 +155,7 @@ function renderRecord(record) {
       <div class="ll-name">${escapeHtml(p.full_name || p.matched_as || "")}
         <span class="ll-party-pill ll-party-${partyCode}">${partyLabel}</span>
       </div>
-      <div class="ll-party-meta">119th Congress · ${escapeHtml(p.bioguide_id || "")}</div>
+      <div class="ll-party-meta">${congressLabel} · ${escapeHtml(p.bioguide_id || "")}</div>
       ${claimHtml}
     </div>
 

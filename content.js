@@ -1,4 +1,4 @@
-// Liars Ledger - content.js v0.9.0
+// Liars Ledger - content.js v0.12.1
 const browser = window.browser || window.chrome;
 
 function escapeHtml(s) {
@@ -30,7 +30,13 @@ async function clog(message) {
 // Fonts: Oswald (headings/brand) + IBM Plex Mono (data/mono) — loaded via Google Fonts
 
 function initSidebar() {
-  if (document.getElementById("ll-bar")) return;
+  const existing = document.getElementById("ll-bar");
+  if (existing) {
+    existing.classList.add("ll-visible");
+    _savedMargin = document.body.style.marginBottom;
+    document.body.style.marginBottom = existing.offsetHeight + "px";
+    return;
+  }
 
   // Google Fonts
   if (!document.getElementById("ll-fonts")) {
@@ -419,7 +425,7 @@ function initSidebar() {
       <span id="ll-footer-source">congress.gov · official record · non-partisan</span>
       <div id="ll-footer-right">
         <span class="ll-ticker-dot"></span>
-        <span id="ll-version">v0.9.0</span>
+        <span id="ll-version">v0.12.1</span>
       </div>
     </div>
   `;
@@ -428,7 +434,6 @@ function initSidebar() {
   document.getElementById("ll-close").addEventListener("click", function() {
     bar.classList.remove("ll-visible");
     document.body.style.marginBottom = _savedMargin;
-    setTimeout(function() { bar.remove(); }, 350);
   });
 }
 
@@ -501,13 +506,17 @@ function renderSidebar(results) {
                     : verdict === "mixed" ? " ll-card-mixed"
                     : "";
 
+    const congressLabel = p.is_current === false
+      ? `Former Member · ${p.congresses ? p.congresses[0] + "th–" + p.congresses[p.congresses.length - 1] + "th Congress" : "Previously served"}`
+      : "119th Congress";
+
     cardsHTML += `
       <div class="ll-card${cardClass}" data-idx="${idx}">
         <div class="ll-card-eyebrow">${escapeHtml(eyebrow)}</div>
         <div class="ll-card-name">${escapeHtml(p.full_name || p.matched_as || "")}</div>
         <div class="ll-card-meta">
           <span class="ll-party-${partyCode}">${partyLabel}</span>
-          &nbsp;·&nbsp;119th Congress
+          &nbsp;·&nbsp;${congressLabel}
         </div>
         <div class="ll-indicators">${indicator}</div>
         ${claimLine}
@@ -555,7 +564,6 @@ function renderSidebar(results) {
       const allBills = []
         .concat((record.sponsored   || []).map(b => Object.assign({}, b, { role: "Sponsored"   })))
         .concat((record.cosponsored || []).map(b => Object.assign({}, b, { role: "Cosponsored" })))
-        .concat((record.searched    || []).map(b => Object.assign({}, b, { role: "Related"     })));
         allBills.sort((a, b) => (b.introducedDate || "").localeCompare(a.introducedDate || ""));
         const rollVotes = record.rollCallVotes || [];
 
@@ -605,10 +613,14 @@ function renderSidebar(results) {
 
       if (allBills.length > 0) {
         const typeMap = {
-          s: "senate-bill", hr: "house-bill",
-          sjres: "senate-joint-resolution", hjres: "house-joint-resolution",
-          sres: "senate-resolution", hres: "house-simple-resolution",
-          sconres: "senate-concurrent-resolution", hconres: "house-concurrent-resolution"
+          s:       "senate-bill",
+          hr:      "house-bill",
+          sjres:   "senate-joint-resolution",
+          hjres:   "house-joint-resolution",
+          sres:    "senate-resolution",
+          hres:    "house-resolution",
+          hconres: "house-concurrent-resolution",
+          sconres: "senate-concurrent-resolution",
         };
         allBills.forEach(function(bill) {
           const congress  = bill.congress || 119;
@@ -759,6 +771,15 @@ browser.runtime.onMessage.addListener(function(message, sender, sendResponse) {
   }
   if (message.action === "startResultsPoll") {
     startPolling();
+    sendResponse({ ok: true });
+    return true;
+  }
+  if (message.action === "showResults") {
+    browser.storage.session.get("ll_results", function(data) {
+      if (data.ll_results?.status === "ok") {
+        renderSidebar(data.ll_results);
+      }
+    });
     sendResponse({ ok: true });
     return true;
   }
