@@ -2,8 +2,11 @@
 // Backend proxy server.
 //
 // Routes:
-//   POST /api/claude/extract   — Claude extraction
-//   POST /api/mistral/extract  — Mistral extraction
+//   POST /register             — anonymous token registration
+//   GET  /api/scan-status      — remaining scans for token
+//   POST /api/claude/extract   — Claude extraction (counted)
+//   POST /api/mistral/extract  — Mistral extraction (counted)
+//   POST /api/verify-claim     — claim verification
 //   GET  /api/congress/*       — Congress.gov proxy
 //   GET  /api/votesmart/*      — VoteSmart proxy (JWT auth + refresh)
 //   GET  /api/govtrack/*       — GovTrack proxy (no key)
@@ -20,6 +23,8 @@ import { congress }  from "./providers/congress.js";
 import { votesmart } from "./providers/votesmart.js";
 import { govtrack }  from "./providers/govtrack.js";
 import { verifyClaim } from "./providers/verify.js";
+import { createToken, getToken, getScans } from "./providers/store.js";
+import { requireToken, countScan } from "./middleware/auth.js";
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
@@ -56,13 +61,53 @@ app.use("/api", limiter);
 
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => {
-  res.json({ status: "ok", version: process.env.npm_package_version || "0.12.1", ts: new Date().toISOString() });
+  res.json({ status: "ok", version: process.env.npm_package_version || "0.13.0", ts: new Date().toISOString() });
 });
 
-// ── LLM routes ────────────────────────────────────────────────────────────────
+// ── Registration ──────────────────────────────────────────────────────────────
+// POST /register — create an anonymous token for a new extension install
+app.post("/register", wrap(async (req, res) => {
+  const { tokenId } = req.body;
+
+  if (!tokenId || typeof tokenId !== "string" || tokenId.length < 16) {
+    return res.status(400).json({ error: "Valid tokenId required (min 16 chars)." });
+  }
+
+  const existing = await getToken(tokenId);
+  if (existing) {
+    const scans = await getScans(tokenId);
+    return res.json({
+      status: "existing",
+      tier: existing.tier,
+      scansToday: scans,
+      limit: existing.tier === "pro" ? "unlimited" : 5,
+    });
+  }
+
+  const tokenData = await createToken(tokenId, "free");
+  console.log(`[register] new token: ${tokenId.slice(0, 8)}...`);
+
+  res.json({
+    status: "created",
+    tier: tokenData.tier,
+    scansToday: 0,
+    limit: 5,
+  });
+}));
+
+// ── Scan status ───────────────────────────────────────────────────────────────
+app.get("/api/scan-status", requireToken, wrap(async (req, res) => {
+  const scans = await getScans(req.tokenId);
+  const limit = req.tier === "pro" ? "unlimited" : 5;
+  const remaining = req.tier === "pro" ? "unlimited" : Math.max(0, 5 - scans);
+
+  res.json({ tier: req.tier, scansToday: scans, limit, remaining });
+}));
+
+// ── LLM routes (counted against daily scan limit) ─────────────────────────────
 
 // POST /api/claude/extract
-app.post("/api/claude/extract", wrap(async (req, res) => {
+app.post("/api/claude/extract", requireToken, countScan, wrap(async (req, res) => {
   const { articleText } = req.body;
   if (!articleText) return res.status(400).json({ error: "articleText required" });
   const result = await claude.extract(articleText);
@@ -70,14 +115,15 @@ app.post("/api/claude/extract", wrap(async (req, res) => {
 }));
 
 // POST /api/mistral/extract
-app.post("/api/mistral/extract", wrap(async (req, res) => {
+app.post("/api/mistral/extract", requireToken, countScan, wrap(async (req, res) => {
   const { articleText } = req.body;
   if (!articleText) return res.status(400).json({ error: "articleText required" });
   const result = await mistral.extract(articleText);
   res.status(result.ok ? 200 : 502).json(result);
 }));
 
-app.post("/api/verify-claim", wrap(async (req, res) => {  const { claim, member, record } = req.body;
+app.post("/api/verify-claim", requireToken, wrap(async (req, res) => {
+  const { claim, member, record } = req.body;
 
   if (!claim) return res.status(400).json({ error: "claim required" });
   if (!member) return res.status(400).json({ error: "member required" });
@@ -88,7 +134,7 @@ app.post("/api/verify-claim", wrap(async (req, res) => {  const { claim, member,
 }));
 
 // ── Congress.gov proxy ────────────────────────────────────────────────────────
-app.get("/api/congress/*", wrap(async (req, res) => {
+app.get("/api/congress/*", requireToken, wrap(async (req, res) => {
   const path  = req.params[0];
   const query = new URLSearchParams(req.query);
   query.set("api_key", process.env.CONGRESS_API_KEY);
@@ -103,7 +149,7 @@ app.get("/api/congress/*", wrap(async (req, res) => {
 }));
 
 // ── VoteSmart proxy ───────────────────────────────────────────────────────────
-app.get("/api/votesmart/*", wrap(async (req, res) => {
+app.get("/api/votesmart/*", requireToken, wrap(async (req, res) => {
   const path  = req.params[0];
   const query = new URLSearchParams(req.query);
 
@@ -117,7 +163,7 @@ app.get("/api/votesmart/*", wrap(async (req, res) => {
 
 // ── GovTrack proxy ────────────────────────────────────────────────────────────
 // GET /api/govtrack/* → https://www.govtrack.us/api/v2/* (no key required)
-app.get("/api/govtrack/*", wrap(async (req, res) => {
+app.get("/api/govtrack/*", requireToken, wrap(async (req, res) => {
   const path  = req.params[0];
   const query = new URLSearchParams(req.query);
 
@@ -131,7 +177,7 @@ app.get("/api/govtrack/*", wrap(async (req, res) => {
 
 // ── Congress legislators dataset (static, cached) ─────────────────────────────
 // GET /api/legislators → unitedstates.github.io congress-legislators-current.json
-app.get("/api/legislators", wrap(async (req, res) => {
+app.get("/api/legislators", requireToken, wrap(async (req, res) => {
   try {
     res.json(await govtrack.legislators());
   } catch (e) {
@@ -156,4 +202,5 @@ app.listen(PORT, () => {
   console.log(`[Liar's Ledger API] Mistral:   ${process.env.MISTRAL_API_KEY  ? "✓" : "✗ missing"}`);
   console.log(`[Liar's Ledger API] Congress:  ${process.env.CONGRESS_API_KEY ? "✓" : "✗ missing"}`);
   console.log(`[Liar's Ledger API] VoteSmart: ${process.env.VOTESMART_EMAIL  ? "✓" : "✗ missing"}`);
+  console.log(`[Liar's Ledger API] Redis:     ${process.env.UPSTASH_REDIS_REST_URL ? "✓" : "✗ missing"}`);
 });
