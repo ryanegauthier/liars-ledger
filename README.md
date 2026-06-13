@@ -1,185 +1,112 @@
 # Liar's Ledger
 
-A browser extension that surfaces the voting records of politicians mentioned
-in news articles — in real time, as you read.
+**The record doesn't lie. Politicians do.**
 
-> *The record doesn't lie. Politicians do.*
+> *See if politicians' voting records match what they say in the news.*
 
-## How It Works
+---
 
-1. Detects politician names in the article you're reading
-2. Uses AI to extract the specific claim being made about each politician
-3. Matches that claim against their official voting record
-4. Surfaces the result in a bottom bar — no searching, no tab switching
+## The Problem
 
-## Design Philosophy
+A politician says they support clean energy. But did they vote for it? A senator claims they've always fought for border security. Have they?
 
-### Neutral by Architecture
+You'd have to search Congress.gov, cross-reference bill numbers, look up roll-call votes, and check interest group ratings for every politician, on every article. Aint nobody got time for that.
 
-Liar's Ledger is designed to be politically neutral at every layer:
+## The Solution
 
-**The AI doesn't interpret voting records.**
-Two independent AI models (Claude by Anthropic and Mistral by a French AI
-company) extract only what the article says about each politician. They never
-see voting data, never make political judgments, and never decide if a
-politician is being truthful. They convert natural language to structured data.
-That's it.
+Liar's Ledger does it in seconds.
 
-**The voting record is government data.**
-All voting records, sponsored bills, and legislative history come directly from
-official U.S. government sources — Congress.gov and GovTrack. We don't
-editorialize, summarize, or interpret the record. We display it as-is.
+Click **Scan This Page** on any political news article. Liar's Ledger reads the article, identifies every member of Congress mentioned, extracts the policy claims being made about them, and checks those claims against their actual voting record.
 
-**Your code does the matching.**
-The comparison between what a politician says and what they've done happens in
-deterministic code — not AI. If their record aligns with their stated position,
-we show that. If it contradicts it, we show that too.
+The result appears right on the page - no searching, no tab switching, no guessing.
 
-**Two models, independently verified.**
-Using two AI models from different companies with different training data
-reduces the risk of systematic bias. If both models extract the same claim,
-the result is marked **dual-verified**. If they disagree, we show both
-interpretations and flag it as **ambiguous** — that nuance is worth knowing.
+## What You Get
 
-### Claim Verification States
+**A verdict on every claim.** Does the politician's record support what the article says about them, contradict it, or give mixed signals? Every verdict cites specific bills, vote positions, and interest group ratings.
 
-Every extracted claim gets one of three states:
+- ✓ **Supported** - their record backs the claim
+- ✗ **Contradicted** - their record says otherwise
+- ⚠ **Mixed** - some evidence each way
+- - **Insufficient** - not enough data to judge
 
-| State | Meaning | Display |
-|---|---|---|
-| ✓ Verified Statement | Claude and Mistral independently extracted the same claim (Jaccard ≥ 0.55) | Green border, verified label |
-| ⚠ Models Disagreed | Both models ran but extracted different claims | Amber border, both interpretations shown |
-| Single model | Only one model returned a result | Plain italic claim |
+**Real legislation, not opinions.** Bills they sponsored. Bills they cosponsored. How they voted. What the NRA, ACLU, AFL-CIO, and Chamber of Commerce think of them. All sourced from official government data.
 
-### Confirm and Contradict Equally
+**20 years of Congress.** 1,340 members covering the 110th through 119th Congress (2007–2026). Current members and former members alike - because politicians who left office still made promises while they were in it.
 
-Liar's Ledger surfaces voting records whether they confirm or contradict what
-a politician is saying. The sidebar never editorializes — it shows the record
-and lets you draw your own conclusions.
+**Works on any news site.** BBC, CNN, Fox News, NYT, your local paper, political blogs - if it mentions a member of Congress, Liar's Ledger will check the record.
 
 ## Data Sources
 
-- [Congress.gov API](https://api.congress.gov) — official U.S. government
-  source, member data, sponsored/cosponsored legislation (free, 5000 req/hour)
-- [GovTrack](https://www.govtrack.us/developers/api) — roll-call vote history
-  for both chambers, free, no key required
-- [VoteSmart](https://votesmart.org/share/api) — interest group ratings,
-  issue positions, historical key votes (educational license pending)
+All data comes from official, non-partisan public sources:
 
-## AI Models Used
+- **[Congress.gov](https://www.congress.gov)** - Sponsored and cosponsored legislation, provided by the Library of Congress
+- **[GovTrack](https://www.govtrack.us)** - Roll-call vote history for both chambers
+- **[VoteSmart](https://justfacts.votesmart.org)** - Interest group ratings from organizations across the political spectrum
 
-Claim extraction uses two independent models to reduce bias:
+## How It Works Under the Hood
 
-- **Claude** (Anthropic) — US-based AI safety company, Constitutional AI
-  research, structured extraction via backend proxy
-- **Mistral** (Mistral AI) — French AI company, European training data,
-  open-weights model, strong neutrality reputation
+Two independent AI models (Claude by Anthropic and Mistral AI) read the article and extract the policy claims. They never see voting data and never make political judgments. They only convert natural language to structured data.
 
-Both models receive the same article text via the backend proxy. API keys
-never leave the server. All political ground truth comes from government sources.
+The voting record comes from government APIs. The comparison between claim and record happens in a separate verification step that cites specific evidence. At no point does the extension editorialize or take a political position.
 
-## Backend Proxy
+## Install
 
-Production API keys are held server-side at `api.liarsledger.com` (Node.js/Express
-on Render). The extension calls the proxy, never external APIs directly. This
-eliminates key exposure and enables freemium tier management.
+**Chrome Web Store:** [Install Liar's Ledger](#) *(link coming)*
+This is the recommended way to install. No configuration needed.
 
-```
-Extension → api.liarsledger.com/api/analyze → Claude + Mistral (parallel)
-                                             → Congress.gov
-                                             → VoteSmart (coming)
-```
+**Manual install (developers/testers):**
+1. Download the latest release from [Releases](https://github.com/ryanegauthier/liars-ledger/releases)
+2. Unzip the folder
+3. Open `chrome://extensions` → enable Developer mode → Load unpacked → select the folder
+4. Your extension ID (shown on the extensions page) must be authorized by the backend to function. Open an issue or contact the maintainer with your extension ID to request access.
 
-## Installation (Developer Mode)
+## Developer Setup
+
+If you want to fork, contribute, or run your own instance, you'll need your own API keys and backend. The production proxy at `api.liarsledger.com` does not accept requests from unauthorized extension IDs.
 
 1. Clone this repo
-2. Copy `src/config.example.js` to `src/config.js` and add your API keys
-3. Copy `server/.env.example` to `server/.env` and add your API keys
-4. Run `node build-dictionary.js YOUR_CONGRESS_API_KEY` to generate the
-   politician dictionary
-5. Open Chrome and go to `chrome://extensions`
-6. Enable **Developer mode** (top right)
-7. Click **Load unpacked** → select the project folder
-8. Navigate to any news article, click the Liar's Ledger icon,
-   and hit **Scan This Page**
+2. Copy `src/config.example.js` to `src/config.js` — update with your own proxy URL
+3. Copy `server/.env.example` to `server/.env` — add your own API keys:
+   - `CONGRESS_API_KEY` — free at [api.congress.gov/sign-up](https://api.congress.gov/sign-up/)
+   - `CLAUDE_API_KEY` — [console.anthropic.com](https://console.anthropic.com)
+   - `MISTRAL_API_KEY` — [console.mistral.ai](https://console.mistral.ai)
+   - `VOTESMART_EMAIL` / `VOTESMART_PASSWORD` — requires [VoteSmart educational API license](https://votesmart.org/share/api)
+4. `cd server && npm install && npm run dev`
+5. To rebuild the politician dictionary: `node scripts/build-dictionary.cjs YOUR_CONGRESS_API_KEY`
 
-## Configuration
-
-Copy `src/config.example.js` to `src/config.js` (gitignored):
-
-```js
-const CONFIG = {
-  CONGRESS_API_KEY:     "...",   // congress.gov — free
-  LLM_PROVIDER:         "dual",  // "mistral" | "claude" | "dual" | "ollama"
-  CLAUDE_API_KEY:       "...",   // console.anthropic.com (direct dev mode only)
-  MISTRAL_API_KEY:      "...",   // console.mistral.ai (direct dev mode only)
-  CLAUDE_API_ENDPOINT:  "https://api.liarsledger.com/api/claude/extract",  // proxy
-  MISTRAL_API_ENDPOINT: "https://api.liarsledger.com/api/mistral/extract", // proxy
-  LLM_TIMEOUT_MS:       30000,
-};
-```
-
-**Cost reference (per scan, proxy mode):**
-| Mode | Cost |
-|------|------|
-| Mistral only | ~$0.00024 |
-| Claude only | ~$0.00075 |
-| Dual (production) | ~$0.001 |
-
-1000 scans ≈ $1.00.
-
-## Project Status
-
-| Step | Status | Description |
-|------|--------|-------------|
-| 1 | ✅ Done | Manifest, skeleton, message passing |
-| 2 | ✅ Done | Article detection + politician name extraction |
-| 3 | ✅ Done | Politician dictionary — 536 members, 3606 keys |
-| 4 | ✅ Done | Congress.gov API integration, session caching |
-| 5 | ✅ Done | Debug log panel with copy/clear |
-| 6 | ✅ Done | Bottom bar sidebar UI |
-| 7 | ✅ Done | LLM claim extraction — dual-model live |
-| 7a | ✅ Done | GovTrack roll-call votes |
-| 7b | ✅ Done | Nickname resolution (Chuck Schumer, Mitch McConnell, etc.) |
-| 8 | ✅ Done | Two-pass bill matching, amendment filter, dedup |
-| 9 | ✅ Done | Backend proxy — api.liarsledger.com live on Render |
-| 9a | ✅ Done | Verified/ambiguous UI — green badge, both interpretations |
-| 10 | — | VoteSmart integration (educational license pending) |
-| 11 | — | Freemium tier management |
-| 12 | — | Creator shareable graphics cards |
-
-## Firefox
-
-Mostly compatible. The `browser.*` / `chrome.*` shim is already in place.
-Full Firefox instructions coming once Chrome version is stable.
-
-## Security
-
-See [SECURITY.md](SECURITY.md) for known risks and pre-release checklist.
-
-## API Keys
-
-Never commit `config.js` or `server/.env`. Both are gitignored.
-Use `config.example.js` and `server/.env.example` as templates.
+See [docs.liarsledger.com](https://docs.liarsledger.com) for full architecture documentation.
 
 ## Privacy
 
-Liar's Ledger does not collect, store, or transmit:
-- Browsing history
-- Article content beyond what's sent to Claude/Mistral for claim extraction
-- User identity or location data
+Liar's Ledger does not collect browsing history, store articles you scan, or track you in any way. The extension only activates when you click Scan. Full privacy policy at [liarsledger.com/privacy.html](https://liarsledger.com/privacy.html).
 
-Article text is sent to the backend proxy which forwards to Claude and Mistral
-for claim extraction only. The proxy does not log article content.
-A full privacy policy will be published before any public release.
+## Security
+
+See [SECURITY.md](SECURITY.md) for architecture details and the completed pre-release checklist.
 
 ## Contributing
 
-Open to PRs, especially for:
-- Keeping the politician dictionary current
-- Additional news site compatibility
-- Firefox / Safari testing
+Pull requests are welcome for:
+- **Politician dictionary** — adding missing members or aliases
+- **Topic keywords** — expanding `TOPIC_TITLE_KEYWORDS` coverage in `topic-match.js`
+- **Frontend fixes** — sidebar styling, report layout, accessibility
+- **Browser compatibility** — Firefox / Safari testing
+
+The backend proxy and API integrations (VoteSmart, Congress.gov, LLM providers) are maintained by the core team only. If you have ideas for backend changes, open an issue first.
+
+**Note:** The extension runs against a live backend with metered API costs. Please don't submit PRs that significantly increase the number of API calls per scan without discussion.
+
+## Links
+
+- **Website:** [liarsledger.com](https://liarsledger.com)
+- **Documentation:** [docs.liarsledger.com](https://docs.liarsledger.com)
+- **Privacy Policy:** [liarsledger.com/privacy.html](https://liarsledger.com/privacy.html)
+- **Changelog:** [CHANGELOG.md](CHANGELOG.md)
 
 ## License
 
-MIT — extension code only. Backend and creator tools are proprietary.
+MIT - extension code. Backend proxy and creator tools are proprietary.
+
+---
+
+Built by [Gauthier Development](https://liarsledger.com). Independent. Non-partisan. Open source. No ads.

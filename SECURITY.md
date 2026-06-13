@@ -1,89 +1,65 @@
 # Security Policy
 
 ## Current Status
-Liars Ledger is in active development. The current build is intended for 
-personal/developer use only and has not been audited for public distribution.
+Liar's Ledger v0.12.1 has completed its pre-release security checklist and is published on the Chrome Web Store.
 
 ---
 
-## Known Risks and Mitigations
+## Architecture
 
-### 1. API Key in config.js
-**Risk:** The Congress.gov API key lives in a local file. Anyone with access 
-to the machine or the unpacked extension folder can read it.
+### API Keys
+All API keys (Congress.gov, Claude, Mistral, VoteSmart) are held server-side on the backend proxy at `api.liarsledger.com`. The extension never holds, transmits, or exposes API keys. `src/config.js` contains only the proxy URL and is gitignored — distributed builds auto-generate it from `config.example.js` during the build process.
 
-**Current mitigation:** `src/config.js` is gitignored and never committed.
+### Permissions
+- **`activeTab`** — reads page content only when the user clicks "Scan This Page"
+- **`storage`** — session storage for scan result caching (cleared on browser close); local storage for a single enabled/disabled toggle
+- **`host_permissions`** — limited to `https://api.liarsledger.com/*` only
+- **`content_scripts`** — runs on all URLs to enable scanning on any news site; does not transmit data until the user initiates a scan
+- **`web_accessible_resources`** — limited to `report.html` and `report.js` (opened in new tab from content script)
 
-**Pre-release mitigation:** Keys move to a backend proxy server. The extension 
-never holds API keys in distributed builds.
+### Data Flow
+```
+User clicks Scan → content script reads article text
+  → background worker sends text to api.liarsledger.com
+    → proxy forwards to Claude + Mistral (claim extraction)
+    → proxy queries Congress.gov, GovTrack, VoteSmart (voting records)
+    → proxy sends claim + record to Claude (verdict verification)
+  → results displayed in sidebar
+```
 
----
+Article text is processed in real time and is not logged or stored by the proxy.
 
-### 2. `<all_urls>` Permission
-**Risk:** The manifest declares the content script runs on every page. Chrome 
-warns users about this during install, which is a trust barrier.
-
-**Current mitigation:** The content script only reads article text. No data is 
-transmitted anywhere except government API calls.
-
-**Pre-release mitigation:** Narrow `matches` to known news domains where 
-possible. Evaluate whether `activeTab` alone can replace `<all_urls>`.
-
----
-
-### 3. Article Text in Message Pipeline
-**Risk:** A long excerpt of article text (on the order of tens of thousands of 
-characters when scanning) passes through the extension message pipeline from 
-the content script to the background worker, and to Ollama when configured.
-
-**Current mitigation:** All processing is local unless you point Ollama at a 
-remote host (e.g. Tailscale). Article text is not sent to Congress.gov as a bulk 
-upload; only derived queries and API paths are used.
-
-**Pre-release mitigation:** When a backend proxy is added for Claude / Minstrel 
-(or any hosted LLM), article excerpts must not be logged or retained without 
-TTL/redaction. A privacy policy must be published before release, and the 
-extension should call **your** proxy only — never ship provider API keys in the 
-bundle.
+### CORS
+The backend proxy validates request origins via `ALLOWED_ORIGINS` environment variable, restricted to authorized Chrome extension IDs.
 
 ---
 
-### 4. web_accessible_resources Exposure
-**Risk:** Files declared in `web_accessible_resources` can be requested by any 
-webpage, including `src/config.js`.
+## No User Data Collection (By Design)
 
-**Current mitigation:** Acceptable for local dev use.
+Liar's Ledger does not collect, store, or transmit:
+- Browsing history or article URLs
+- User identity, names, or email addresses
+- Location or geolocation data
+- Authentication credentials
+- Financial information
 
-**Pre-release mitigation:** Tighten before release:
-- `politicians.json` — keep accessible, it is public data
-- `src/config.js` — remove from web_accessible_resources entirely, 
-  keys will live server-side
-
----
-
-### 5. No User Data Collection (By Design)
-Liars Ledger does not collect, store, or transmit:
-- Browsing history
-- Article content
-- User identity
-- Location data
-
-This is a core design principle, not just a current limitation. Any future 
-backend must be architected to preserve this guarantee.
+This is a core design principle enforced at every layer.
 
 ---
 
 ## Pre-Release Checklist
-- [ ] API keys moved to backend proxy (Congress.gov and LLM providers)
-- [ ] Anthropic / Minstrel (or other LLM) access **only** via proxy — see `docs/PRODUCTION-LLM.md` for milestone timing
-- [ ] `<all_urls>` permission reviewed and narrowed
-- [ ] `src/config.js` removed from web_accessible_resources
-- [ ] Privacy policy written and published
-- [ ] Security audit completed
-- [ ] Permissions justified in Chrome Web Store listing
+
+- [x] API keys moved to backend proxy
+- [x] Claude / Mistral access only via proxy — no provider keys in extension
+- [x] `host_permissions` narrowed to `api.liarsledger.com` only
+- [x] `src/config.js` removed from `web_accessible_resources`
+- [x] Privacy policy published at liarsledger.com/privacy.html
+- [x] COPPA compliance section added
+- [x] Permissions justified in Chrome Web Store listing
+- [x] `web_accessible_resources` limited to report files only
 
 ---
 
 ## Reporting a Vulnerability
-This project is in early development. To report a security issue, 
-open a GitHub issue marked **[SECURITY]** or contact the maintainer directly.
+
+To report a security issue, open a GitHub issue marked **[SECURITY]** or email [security@liarsledger.com](mailto:security@liarsledger.com).

@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.12.1] - 2026-06-12
+
+### Dictionary rebuild + former members + UX polish
+
+- **`scripts/build-dictionary.cjs`** — new dictionary generator
+  - Pulls members from congresses 110–119 (2007–2026) via Congress.gov API
+  - Condensed format: `{ members: {}, aliases: {} }` — 1340 members, 8968 aliases, 825KB (was 536 members, 2MB flat)
+  - 552 current + 788 former members, with `is_current` flag and `congresses` array
+  - Collision resolution: current members preferred, then most recent congress
+  - Nickname overrides: MTG, AOC, Bernie, Mitch, Nancy, Al Franken
+- **`src/lookup.js`** — rewritten for condensed dictionary format
+  - Two-step lookup: `aliases[name]` → `members[bioguide_id]`
+  - `lookupAlias()` injects `bioguide_id` from key onto returned member
+  - New `"former"` status — resolved but not in 119th Congress
+  - `resolveAll()` returns `formerMembers` array alongside `resolved`
+- **`background.js`** — former members processed through full pipeline
+  - `allMembers = [...resolved, ...formerMembers]` — both go through topic matching, bill lookup, and verification
+- **`content.js`** / **`report.js`** — "Former Member · Nth–Nth Congress" badge for non-current members
+- **`content.js`** — sidebar persistence
+  - Close button hides sidebar instead of removing from DOM
+  - `showResults` message handler restores sidebar from session storage via `getResults`
+  - `initSidebar()` reshows existing sidebar if already in DOM
+- **`popup.js`** — auto-restore on reopen
+  - Checks session storage for existing results on popup open
+  - URL-matched: only reshows results for the same page
+  - Stores `ll_results_url` when scan starts
+- **`src/api.js`** — parallel member lookups (`Promise.all` instead of serial loop)
+- **`src/api.js`** — GovTrack vote URL fix (`h`/`s` prefix instead of `house`/`senate`)
+- **`report.js`** — congress.gov bill URL type map fix (`hres` → `house-resolution`)
+- **`scripts/build-release.js`** — auto-copies `config.example.js` → `config.js`, includes `src/verify.js`
+- **`privacy.html`** — COPPA section expanded, explicit no-geolocation statement
+- **Known limitation:** Congress.gov, GovTrack, and VoteSmart APIs may not serve data for former members who left before the 119th Congress
+
+---
+
 ## [0.12.0] - 2026-06-10
 
 ### Verdict-driven UI + topic expansion + ceremonial bill filter
@@ -176,6 +211,20 @@
 - One-click image card: politician name, claim, voting record
 - Twitter/X (1200×628) and Instagram (1080×1080) formats
 - Canvas API, no server render, Creator tier feature
+
+### [Future] — Performance + bundling
+- esbuild or Rollup bundler — combine all `importScripts` files into single bundle
+- Minification and tree-shaking for smaller extension size
+- Service worker startup time optimization
+- Evaluate dictionary compression (gzip or binary format)
+
+### [Future] — TypeScript migration
+- Convert extension source (`src/*.js`, `background.js`, `content.js`) to TypeScript
+- Add interfaces for dictionary, record, verdict, and LLM response shapes
+- Type-safe message passing between popup, content script, and service worker
+- Convert server (`server/`) to TypeScript with strict mode
+- Build step via `tsc` or `esbuild` with type checking
+- Goal: learning experience + catch bugs at compile time (e.g., missing `bioguide_id`)
 
 ### [Future] — Firefox / Safari
 - Firefox: `browser.*` shim in place; publish to AMO
