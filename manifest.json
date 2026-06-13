@@ -10,9 +10,7 @@
   ],
 
   "host_permissions": [
-    "https://api.liarsledger.com/*",
-    "https://fonts.googleapis.com/*",
-    "https://fonts.gstatic.com/*"
+    "https://api.liarsledger.com/*"
   ],
 
   "background": {
