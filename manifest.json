@@ -38,8 +38,6 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "src/data/politicians.json",
-        "src/config.js",
         "report.html",
         "report.js"
       ],
