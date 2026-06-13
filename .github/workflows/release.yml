@@ -31,7 +31,7 @@ jobs:
           ls -la icons/ || echo "no icons/"
 
       - name: Build release zip
-        run: node build-release.js
+        run: node scripts/build-release.js
 
       - name: List build output
         run: |
