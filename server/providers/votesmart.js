@@ -1,7 +1,7 @@
 // server/providers/votesmart.js
 // VoteSmart v2 API proxy provider.
 // Handles JWT auth + automatic token refresh.
-// CORS blocked from browser — must go through this proxy.
+// CORS blocked from browser - must go through this proxy.
 
 const VS_BASE     = "https://app.votesmart-api.org";
 const VS_LOGIN    = `${VS_BASE}/auth/login`;
@@ -9,7 +9,7 @@ const REFRESH_BUFFER_MS = 5 * 60 * 1000; // refresh 5 min before expiry
 
 let _token        = null;
 let _expiresAt    = 0;
-let _tokenPromise = null; // in-flight promise — prevents concurrent refresh stampede
+let _tokenPromise = null; // in-flight promise - prevents concurrent refresh stampede
 
 async function getToken() {
   const now = Date.now();

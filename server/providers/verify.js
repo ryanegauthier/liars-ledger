@@ -50,20 +50,20 @@ function buildVerifyPrompt(claim, member, record) {
   return (
     "You are a nonpartisan congressional fact-checker for a browser extension called Liar's Ledger.\n\n" +
     "A news article made the following claim about a member of Congress. " +
-    "Below the claim is that member's actual legislative record — bills they sponsored or cosponsored, " +
+    "Below the claim is that member's actual legislative record - bills they sponsored or cosponsored, " +
     "roll-call votes, and interest group ratings.\n\n" +
     "Your job: determine whether the RECORD supports, contradicts, or is mixed on the CLAIM.\n\n" +
     "Output ONLY valid JSON (no markdown) with this exact shape:\n" +
     '{"verdict":"supported|contradicted|mixed|insufficient",' +
     '"explanation":"1-3 sentences citing specific bills, votes, or ratings that justify the verdict"}\n\n' +
     "Verdict definitions:\n" +
-    '- "supported" — the record clearly backs the claim (relevant bills sponsored, votes cast, ratings align)\n' +
-    '- "contradicted" — the record clearly opposes the claim (voted against, low ratings from aligned groups, no relevant action)\n' +
-    '- "mixed" — some evidence supports and some contradicts\n' +
-    '- "insufficient" — not enough relevant data in the record to judge\n\n' +
+    '- "supported" - the record clearly backs the claim (relevant bills sponsored, votes cast, ratings align)\n' +
+    '- "contradicted" - the record clearly opposes the claim (voted against, low ratings from aligned groups, no relevant action)\n' +
+    '- "mixed" - some evidence supports and some contradicts\n' +
+    '- "insufficient" - not enough relevant data in the record to judge\n\n' +
     "Rules:\n" +
     "- Base your verdict ONLY on the record provided. Do not use outside knowledge.\n" +
-    "- Be specific — cite bill names, vote positions, or rating scores.\n" +
+    "- Be specific - cite bill names, vote positions, or rating scores.\n" +
     "- If the claim is vague or not policy-related, return insufficient.\n" +
     "- Do not editorialize. State facts from the record.\n\n" +
     `MEMBER: ${member}\n\n` +

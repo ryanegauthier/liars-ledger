@@ -16,8 +16,8 @@ All political ground truth in Liar's Ledger comes from official government sourc
 
 Congress.gov is the official U.S. government source for congressional records. We fetch up to 50 sponsored and 50 cosponsored bills per member per scan, then filter by topic relevance using a two-pass matching algorithm:
 
-1. **Pass 1** — keyword category matching against 19 predefined topic buckets
-2. **Pass 2** — direct title substring match against the LLM's per-figure `search_terms`
+1. **Pass 1** - keyword category matching against 19 predefined topic buckets
+2. **Pass 2** - direct title substring match against the LLM's per-figure `search_terms`
 
 Results are deduplicated by bill URL and untitled amendments are filtered out.
 
@@ -37,7 +37,7 @@ Vote matching uses both direct topic string matching and a category expansion ma
 **URL:** [app.votesmart-api.org](https://app.votesmart-api.org)  
 **What we use:** Interest group ratings + vote history  
 **Key required:** Yes (educational license, server-side)  
-**Note:** CORS-blocked from browsers — all calls go through the backend proxy
+**Note:** CORS-blocked from browsers - all calls go through the backend proxy
 
 VoteSmart provides ratings from major interest groups including:
 
@@ -57,7 +57,7 @@ VoteSmart provides ratings from major interest groups including:
 
 Ratings are scored 0–100. The most recent year's rating per group is shown.
 
-VoteSmart uses JWT authentication. The backend proxy handles token refresh automatically — a single `_tokenPromise` guard prevents concurrent requests from triggering multiple simultaneous re-authentication calls.
+VoteSmart uses JWT authentication. The backend proxy handles token refresh automatically - a single `_tokenPromise` guard prevents concurrent requests from triggering multiple simultaneous re-authentication calls.
 
 ## Politician dictionary
 

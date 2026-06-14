@@ -49,18 +49,19 @@ async function apiFetch(path) {
     logger.info("api", `cache hit: ${path.slice(0, 60)}`);
     return cached;
   }
-
+ 
   const url = `${congressProxyBase()}${path}`;
   logger.info("api", `fetching: ${path.slice(0, 80)}`);
-
-  const res = await fetch(url);
-  if (!res.ok)
-    throw new Error(`Congress proxy error: ${res.status} on ${path}`);
-
+ 
+  const auth = await authHeaders();
+  const res = await fetch(url, { headers: auth });
+  if (!res.ok) throw new Error(`Congress proxy error: ${res.status} on ${path}`);
+ 
   const data = await res.json();
   await cacheSet(cacheKey, data);
   return data;
 }
+
 
 // --- Get sponsored legislation for a member ---
 async function getMemberSponsoredBills(bioguideId, limit = 250) {
@@ -96,7 +97,7 @@ async function searchBillsByKeyword(keyword, limit = 10) {
   } catch (e) {
     logger.warn(
       "api",
-      `bill search failed for keyword: ${keyword} — ${e.message}`,
+      `bill search failed for keyword: ${keyword} - ${e.message}`,
     );
     return [];
   }
@@ -127,7 +128,7 @@ async function lookupPoliticianOnTopics(member, topics) {
 
   // --- Bill relevance check ---
   // Two-pass matching:
-  // Pass 1: billMatchesTopic() — existing keyword category matching (19 topics)
+  // Pass 1: billMatchesTopic() - existing keyword category matching (19 topics)
   // Pass 2: direct title substring match against LLM search_terms
   // This fixes the core 0.9.0 issue: LLM returns specific search terms like
   // "voting rights" or "budget reconciliation" but billMatchesTopic() only
@@ -149,7 +150,7 @@ async function lookupPoliticianOnTopics(member, topics) {
       if (billMatchesTopic(bill, topic)) return true;
     }
 
-    // Pass 2: LLM search terms — word-level matching
+    // Pass 2: LLM search terms - word-level matching
     for (const term of llmSearchTerms) {
       if (term.length <= 3) continue;
       const words = term.split(/\s+/).filter((w) => w.length > 2);
@@ -194,13 +195,13 @@ async function lookupPoliticianOnTopics(member, topics) {
     if (billMatchesAny(bill)) addIfNew(bill, result.cosponsored, "cosponsored");
   }
 
-  // Direct keyword search — use a subset of most specific LLM terms
+  // Direct keyword search - use a subset of most specific LLM terms
   // to avoid too many API calls; cap at 6 most distinctive terms
   const searchTermsToQuery = [
     ...new Set([...llmSearchTerms.slice(0, 4), ...topics.slice(0, 2)]),
   ].slice(0, 6);
 
-  // Parallel keyword searches — all independent, safe to batch
+  // Parallel keyword searches - all independent, safe to batch
   const searchResults = await Promise.all(
     searchTermsToQuery.map((term) => searchBillsByKeyword(term, 10)),
   );
@@ -257,8 +258,9 @@ async function findMemberRollCallVotesOnTopics(member, topics) {
   if (!voterData) {
     try {
       const url = `${govtrackProxyBase()}/vote_voter?person=${govtrackId}&limit=50&order_by=-created`;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`GovTrack HTTP ${res.status}`);
+      const auth = await authHeaders();
+      const res = await fetch(url, { headers: auth });
+    if (!res.ok) throw new Error(`GovTrack HTTP ${res.status}`);
       voterData = await res.json();
       await cacheSet(cacheKey, voterData);
     } catch (e) {
@@ -296,7 +298,7 @@ async function findMemberRollCallVotesOnTopics(member, topics) {
   // Step 4: shape to match existing rollCallVotes format used by content.js
   return matched.slice(0, 8).map((entry) => {
     const vote = entry.vote || {};
-    const pos = entry.option?.value || entry.vote_type || "—";
+    const pos = entry.option?.value || entry.vote_type || "-";
     const chamber = vote.chamber === "s" ? "senate" : "house";
     const congress = vote.congress || CURRENT_CONGRESS;
     const session = vote.session || 1;
@@ -334,7 +336,7 @@ function normalizeVotePosition(raw) {
     "Not Voting": "Not Voting",
     Abstain: "Not Voting",
   };
-  return map[raw] || raw || "—";
+  return map[raw] || raw || "-";
 }
 
 async function resolveGovTrackId(bioguideId) {

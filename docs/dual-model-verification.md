@@ -9,8 +9,8 @@ nav_order: 3
 
 Liar's Ledger uses two independent AI models to extract claims from articles:
 
-- **Claude** (Anthropic) — US-based AI safety company, Constitutional AI research
-- **Mistral** (Mistral AI) — French AI company, European training data, open-weights model
+- **Claude** (Anthropic) - US-based AI safety company, Constitutional AI research
+- **Mistral** (Mistral AI) - French AI company, European training data, open-weights model
 
 Using models from different companies with different training data reduces the risk of systematic bias. If both models independently extract the same claim about a politician, that claim is more defensible than if only one model saw it.
 
@@ -32,7 +32,7 @@ Both models receive the same article text via the backend proxy. They each indep
 }
 ```
 
-Claims are then compared per politician using **Jaccard similarity** — the percentage of meaningful words the two claims share out of their combined unique word count.
+Claims are then compared per politician using **Jaccard similarity** - the percentage of meaningful words the two claims share out of their combined unique word count.
 
 ## Verification states
 
@@ -48,9 +48,9 @@ Claims are then compared per politician using **Jaccard similarity** — the per
 score = shared_words / total_unique_words
 ```
 
-Threshold: **0.55** — claims that agree on the core assertion but differ in supporting detail typically score above this. Claims that are substantively different score well below.
+Threshold: **0.55** - claims that agree on the core assertion but differ in supporting detail typically score above this. Claims that are substantively different score well below.
 
-**Pronoun normalization** is applied before comparison — "He has called for a moratorium" and "Sanders has called for a moratorium" are treated as equivalent for scoring purposes.
+**Pronoun normalization** is applied before comparison - "He has called for a moratorium" and "Sanders has called for a moratorium" are treated as equivalent for scoring purposes.
 
 ## Prompt consistency
 
@@ -58,4 +58,4 @@ The prompt sent to both models is defined in a single source of truth: `server/p
 
 ## When ambiguous is correct
 
-The `⚠ Models Disagreed` state is not a failure — it's honest signal. When Claude says "Schumer pledged to restore green tax credits and push for data center reforms requiring fair cost-sharing" and Mistral says "If Democrats retake the majority, he will reinstate green tax credits and impose stricter data center regulations", those are genuinely different characterizations worth surfacing to the reader.
+The `⚠ Models Disagreed` state is not a failure - it's honest signal. When Claude says "Schumer pledged to restore green tax credits and push for data center reforms requiring fair cost-sharing" and Mistral says "If Democrats retake the majority, he will reinstate green tax credits and impose stricter data center regulations", those are genuinely different characterizations worth surfacing to the reader.

@@ -4,6 +4,7 @@
 importScripts(
   "src/config.js",
   "src/logger.js",
+  "src/token.js",
   "src/lookup.js",
   "src/keywords.js",
   "src/llm.js",
@@ -34,7 +35,7 @@ function figureForMember(figures, member) {
 // --- Message listener ---
 browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "ping") {
-    sendResponse({ status: "ok", version: "0.12.1" });
+    sendResponse({ status: "ok", version: "0.13.0" });
     return true;
   }
 
@@ -86,12 +87,20 @@ async function handleAnalyze({ politicians, articleText }) {
         if (ann._meta) {
           const loserError = figures?.[0]?._loser_error || "unknown";
           const logMsg = ann._meta.provider === "single_model"
-            ? `LLM ok — provider=single_model, winner=${ann._meta.winner}, loser=${ann._meta.loser}, loser_error=${loserError}, figures=${figures.length}, topics=${mainTopicsGlobal.length}`
-            : `LLM ok — provider=${ann._meta.provider}, figures=${figures.length}, topics=${mainTopicsGlobal.length}, verified=${ann._meta.verified ?? "n/a"}, ambiguous=${ann._meta.ambiguous ?? "n/a"}`;
+            ? `LLM ok - provider=single_model, winner=${ann._meta.winner}, loser=${ann._meta.loser}, loser_error=${loserError}, figures=${figures.length}, topics=${mainTopicsGlobal.length}`
+            : `LLM ok - provider=${ann._meta.provider}, figures=${figures.length}, topics=${mainTopicsGlobal.length}, verified=${ann._meta.verified ?? "n/a"}, ambiguous=${ann._meta.ambiguous ?? "n/a"}`;
           logger.info("background", logMsg);
         } else {
-          logger.info("background", `LLM ok — ${figures.length} figure(s), ${mainTopicsGlobal.length} topic(s)`);
+          logger.info("background", `LLM ok - ${figures.length} figure(s), ${mainTopicsGlobal.length} topic(s)`);
         }
+      } else if (ann?.error?.includes("429")) {
+        return {
+          status: "rate_limited",
+          message: "Daily scan limit reached. Upgrade to Pro for unlimited scans.",
+          upgrade_url: "https://liarsledger.com/pricing",
+        };
+      } else {
+        logger.warn("background", `LLM failed: ${ann.error} - continuing with keyword fallback`);
       }
     }
 
@@ -185,7 +194,7 @@ async function handleAnalyze({ politicians, articleText }) {
       }
     }
 
-    logger.info("background", `analysis complete — ${records.length} record(s) returned`);
+    logger.info("background", `analysis complete - ${records.length} record(s) returned`);
     // --- Claim-vs-record verification ---
     logger.info("background", `verifying claims for ${records.length} member(s)`);
     await verifyAllClaims(records);
@@ -193,7 +202,7 @@ async function handleAnalyze({ politicians, articleText }) {
       logger.info("background", `${r.politician.full_name}: verdict=${r.verdict}`);
     }
 
-    logger.info("background", `analysis complete — ${records.length} record(s) returned`);
+    logger.info("background", `analysis complete - ${records.length} record(s) returned`);
     return {
       status: "ok",
       topics: topicsUnion,
@@ -208,4 +217,10 @@ async function handleAnalyze({ politicians, articleText }) {
   }
 }
 
-logger.info("background", "service worker loaded v0.12.1");
+logger.info("background", "service worker loaded v0.13.0");
+
+// Initialize token and sync tier
+getOrCreateToken().then((t) => {
+  logger.info("background", `token: ${t.tokenId.slice(0, 8)}... tier=${t.tier}`);
+  syncTier();
+}).catch(() => {});

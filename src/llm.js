@@ -19,17 +19,17 @@
 //   Leave endpoints at defaults, set CLAUDE_API_KEY / MISTRAL_API_KEY in config.js.
 
 // ---------------------------------------------------------------------------
-// Endpoints — override in config.js for proxy in production
+// Endpoints - override in config.js for proxy in production
 // ---------------------------------------------------------------------------
 const MISTRAL_API_URL = "https://api.mistral.ai/v1/chat/completions";
 const CLAUDE_API_URL  = "https://api.anthropic.com/v1/messages";
 
-// Models — cheap tiers for dev, upgrade in prod
+// Models - cheap tiers for dev, upgrade in prod
 const MISTRAL_MODEL = "mistral-small-latest";      // ~$0.10/1M tokens in
 const CLAUDE_MODEL  = "claude-haiku-4-5-20251001"; // cheapest Claude 4 tier
 
 // ---------------------------------------------------------------------------
-// Prompt — canonical version. Must match server/providers/_shared.js exactly.
+// Prompt - canonical version. Must match server/providers/_shared.js exactly.
 // When changing this, update _shared.js too (and vice versa).
 // ---------------------------------------------------------------------------
 const MAX_ARTICLE_CHARS = 12000;
@@ -40,16 +40,16 @@ function buildPrompt(articleText) {
     "You analyze U.S. political news for a browser extension that queries Congress.gov.\n\n" +
     "Read the article excerpt. Then output ONLY valid JSON (no markdown) with this exact shape:\n" +
     '{"article_summary":"2-5 sentences in plain English what the piece is about politically",' +
-    '"main_topics":["2-8 short noun phrases for Congress.gov bill search — policy areas only, no names"],' +
+    '"main_topics":["2-8 short noun phrases for Congress.gov bill search - policy areas only, no names"],' +
     '"figures":[' +
-    '{"lookup_name":"string that can identify a current U.S. Senator or Representative — prefer \\"Sen. Lastname\\", \\"Rep. Lastname\\", \\"Senator Lastname\\", or \\"Representative Lastname\\"; use the surname as it is usually written in Congress",' +
+    '{"lookup_name":"string that can identify a current U.S. Senator or Representative - prefer \\"Sen. Lastname\\", \\"Rep. Lastname\\", \\"Senator Lastname\\", or \\"Representative Lastname\\"; use the surname as it is usually written in Congress",' +
     '"claim":"one sentence: the article\'s main policy-related assertion about this person, or null",' +
-    '"search_terms":["2-6 short phrases for bill title search — never include the person\'s name"]}' +
+    '"search_terms":["2-6 short phrases for bill title search - never include the person\'s name"]}' +
     "]}\n\n" +
     "Rules:\n" +
     "- Only include people who are clearly discussed as federal lawmakers (current Congress). Omit the President, Vice President, Cabinet, governors, candidates not in Congress, and vague references.\n" +
     "- Include at most 10 figures. If none qualify, use an empty figures array.\n" +
-    "- Use the most formal version of each person's name consistently. Never return the same person twice with different name formats (e.g. 'Sen. Sanders' and 'Sen. Bernie Sanders' are the same person — pick one).\n" +
+    "- Use the most formal version of each person's name consistently. Never return the same person twice with different name formats (e.g. 'Sen. Sanders' and 'Sen. Bernie Sanders' are the same person - pick one).\n" +
     "- main_topics must reflect the dominant legislation/policy threads in the article.\n" +
     "- search_terms must be useful for matching bill titles (e.g. \"border security\", \"child tax credit\").\n\n" +
     "Article excerpt:\n\"\"\"\n" +
@@ -59,8 +59,8 @@ function buildPrompt(articleText) {
 }
 
 // ---------------------------------------------------------------------------
-// JSON parser — used for direct API calls only.
-// Proxy responses are already parsed — skip this.
+// JSON parser - used for direct API calls only.
+// Proxy responses are already parsed - skip this.
 // ---------------------------------------------------------------------------
 function parseContent(content, providerName) {
   let raw = content.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "").trim();
@@ -93,7 +93,7 @@ function parseContent(content, providerName) {
 }
 
 // ---------------------------------------------------------------------------
-// Fetch wrapper — uses AbortSignal.timeout (Node 18+ / modern browsers)
+// Fetch wrapper - uses AbortSignal.timeout (Node 18+ / modern browsers)
 // ---------------------------------------------------------------------------
 async function doFetch(url, init, timeoutMs) {
   return fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
@@ -117,7 +117,7 @@ async function extractArticleAnalysisViaMistral(articleText, options) {
       isProxy
         ? {
             method:  "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", ...(await authHeaders()) },
             body:    JSON.stringify({ articleText }),
           }
         : {
@@ -158,7 +158,7 @@ async function extractArticleAnalysisViaMistral(articleText, options) {
     return { ...data, _meta: { provider: "mistral", model: MISTRAL_MODEL } };
   }
 
-  // Direct API — parse raw completion
+  // Direct API - parse raw completion
   const content = data?.choices?.[0]?.message?.content;
   if (typeof content !== "string" || !content.trim()) {
     return { ok: false, error: "Mistral returned empty content" };
@@ -187,7 +187,7 @@ async function extractArticleAnalysisViaClaude(articleText, options) {
       isProxy
         ? {
             method:  "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", ...(await authHeaders()) },
             body:    JSON.stringify({ articleText }),
           }
         : {
@@ -230,7 +230,7 @@ async function extractArticleAnalysisViaClaude(articleText, options) {
     return { ...data, _meta: { provider: "claude", model: CLAUDE_MODEL } };
   }
 
-  // Direct API — parse raw completion
+  // Direct API - parse raw completion
   const content = data?.content?.[0]?.text;
   if (typeof content !== "string" || !content.trim()) {
     return { ok: false, error: "Claude returned empty content" };
@@ -242,14 +242,14 @@ async function extractArticleAnalysisViaClaude(articleText, options) {
 }
 
 // ---------------------------------------------------------------------------
-// Dual-model verification — the production architecture
+// Dual-model verification - the production architecture
 //
 // Both models run in parallel on the same article.
 // Claims are compared per politician using Jaccard word overlap.
 // Result gets a verification badge:
-//   "dual_verified"  — both models agree (similarity >= threshold)
-//   "single_model"   — one model failed, showing the other's result
-//   "ambiguous"      — both succeeded but claims diverge
+//   "dual_verified"  - both models agree (similarity >= threshold)
+//   "single_model"   - one model failed, showing the other's result
+//   "ambiguous"      - both succeeded but claims diverge
 // ---------------------------------------------------------------------------
 
 const AGREEMENT_THRESHOLD = 0.65; // Jaccard similarity floor for "verified"
@@ -285,7 +285,7 @@ function mergeFigures(claudeFigures, mistralFigures) {
     if (similarity >= AGREEMENT_THRESHOLD) {
       merged.push({
         ...cf,
-        // Merge search_terms from both models — more signal for Congress.gov matching
+        // Merge search_terms from both models - more signal for Congress.gov matching
         search_terms: [...new Set([...cf.search_terms, ...mf.search_terms])].slice(0, 10),
         _verification: "dual_verified",
         _similarity: Math.round(similarity * 100),
@@ -338,7 +338,7 @@ async function extractArticleAnalysisDualVerified(articleText, options) {
     return { ok: false, error: `Both models failed. Claude: ${ce}. Mistral: ${me}` };
   }
 
-  // Only one succeeded — return it with single_model badge
+  // Only one succeeded - return it with single_model badge
   if (!claudeOk || !mistralOk) {
     const winner = claudeOk ? claudeResult.value : mistralResult.value;
     const loser  = claudeOk ? "mistral" : "claude";
@@ -356,7 +356,7 @@ async function extractArticleAnalysisDualVerified(articleText, options) {
     };
   }
 
-  // Both succeeded — merge and compare
+  // Both succeeded - merge and compare
   const cv = claudeResult.value;
   const mv = mistralResult.value;
 
@@ -388,7 +388,7 @@ async function extractArticleAnalysisDualVerified(articleText, options) {
 }
 
 // ---------------------------------------------------------------------------
-// Unified entry point — background.js calls this, not the individual functions
+// Unified entry point - background.js calls this, not the individual functions
 // Routes based on CONFIG.LLM_PROVIDER
 // ---------------------------------------------------------------------------
 async function extractArticleAnalysis(articleText, options) {

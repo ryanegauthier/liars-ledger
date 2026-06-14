@@ -21,7 +21,7 @@ const STOP_WORDS = new Set([
   "states","washington","dc","white","house","administration"
 ]);
 
-// Policy topic patterns — maps article keywords to Congress.gov search terms
+// Policy topic patterns - maps article keywords to Congress.gov search terms
 const TOPIC_MAP = [
   { pattern: /\b(climate|emissions?|carbon|greenhouse|fossil\s+fuel|clean\s+energy|renewable|solar|wind\s+power|net\s+zero)\b/gi, term: "climate change" },
   { pattern: /\b(healthcare?|health\s+care|medicaid|medicare|affordable\s+care|obamacare|insurance|prescription|drug\s+price)\b/gi, term: "health care" },

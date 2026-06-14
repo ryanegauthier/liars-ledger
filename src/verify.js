@@ -1,5 +1,5 @@
 // Liar's Ledger - src/verify.js
-// Client-side claim verification — calls the backend /api/verify-claim endpoint.
+// Client-side claim verification - calls the backend /api/verify-claim endpoint.
 // Loaded via importScripts in background.js.
 
 /**
@@ -23,7 +23,7 @@ async function verifyClaimViaProxy(claim, memberName, record, options = {}) {
     || "https://api.liarsledger.com";
   const timeoutMs = options.timeoutMs ?? 15000;
 
-  // Build a compact record payload — only the fields the prompt needs
+  // Build a compact record payload - only the fields the prompt needs
   const payload = {
     claim,
     member: memberName,
@@ -55,13 +55,14 @@ async function verifyClaimViaProxy(claim, memberName, record, options = {}) {
   };
 
   try {
+    const auth = await authHeaders();
     const res = await fetch(`${proxyUrl}/api/verify-claim`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...auth },
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(timeoutMs),
     });
-
+    
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       logger.warn("verify", `HTTP ${res.status}: ${body.slice(0, 120)}`);

@@ -39,8 +39,8 @@ function renderRecord(record) {
   const verdictLabels = {
     supported: "✓ Record supports this claim",
     contradicted: "✗ Record contradicts this claim",
-    mixed: "⚠ Mixed — record partially supports, partially contradicts",
-    insufficient: "— Insufficient record data to verify",
+    mixed: "⚠ Mixed - record partially supports, partially contradicts",
+    insufficient: "- Insufficient record data to verify",
   };
   let claimHtml = "";
   if (displayClaim) {
@@ -92,7 +92,7 @@ function renderRecord(record) {
         const vurl = v.voteUrl ? `<a href="${escapeHtml(v.voteUrl)}" target="_blank">↗ Vote page</a>` : "";
         return `
           <div class="ll-row">
-            <div class="ll-row-left ${voteClass(v.position)}">${escapeHtml(v.position || "—")}<br>
+            <div class="ll-row-left ${voteClass(v.position)}">${escapeHtml(v.position || "-")}<br>
               <span style="font-size:0.56rem;color:#5a5f6e">${escapeHtml(v.date || "")}</span>
             </div>
             <div class="ll-row-right">
@@ -207,7 +207,7 @@ async function loadReport() {
     : results.records;
 
   if (records.length === 1) {
-    document.title = `Liar's Ledger — ${records[0].politician?.full_name || "Report"}`;
+    document.title = `Liar's Ledger - ${records[0].politician?.full_name || "Report"}`;
   }
 
   document.getElementById("reportContent").innerHTML = records.map(renderRecord).join("");

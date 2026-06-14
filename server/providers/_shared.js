@@ -1,10 +1,10 @@
 // server/providers/_shared.js
 // Single source of truth for buildPrompt() and parseContent().
-// Imported by claude.js and mistral.js — never duplicated.
+// Imported by claude.js and mistral.js - never duplicated.
 //
 // IMPORTANT: When changing the prompt or parser, change it HERE only.
 // The extension-side copy in src/llm.js must be kept manually in sync
-// (the two ecosystems can't share a file directly — ESM server vs importScripts).
+// (the two ecosystems can't share a file directly - ESM server vs importScripts).
 // To verify sync: diff the buildPrompt() body here against src/llm.js.
 
 export const MAX_ARTICLE_CHARS = 12000;
@@ -16,16 +16,16 @@ export function buildPrompt(articleText) {
     "You analyze U.S. political news for a browser extension that queries Congress.gov.\n\n" +
     "Read the article excerpt. Then output ONLY valid JSON (no markdown) with this exact shape:\n" +
     '{"article_summary":"2-5 sentences in plain English what the piece is about politically",' +
-    '"main_topics":["2-8 short noun phrases for Congress.gov bill search — policy areas only, no names"],' +
+    '"main_topics":["2-8 short noun phrases for Congress.gov bill search - policy areas only, no names"],' +
     '"figures":[' +
-    '{"lookup_name":"string that can identify a current U.S. Senator or Representative — prefer \\"Sen. Lastname\\", \\"Rep. Lastname\\", \\"Senator Lastname\\", or \\"Representative Lastname\\"; use the surname as it is usually written in Congress",' +
+    '{"lookup_name":"string that can identify a current U.S. Senator or Representative - prefer \\"Sen. Lastname\\", \\"Rep. Lastname\\", \\"Senator Lastname\\", or \\"Representative Lastname\\"; use the surname as it is usually written in Congress",' +
     '"claim":"one sentence: the article\'s main policy-related assertion about this person, or null",' +
-    '"search_terms":["2-6 short phrases for bill title search — never include the person\'s name"]}' +
+    '"search_terms":["2-6 short phrases for bill title search - never include the person\'s name"]}' +
     "]}\n\n" +
     "Rules:\n" +
     "- Include every current U.S. Senator or Representative named in the article, even if their role is secondary. Omit the President, Vice President, Cabinet secretaries, governors, and anyone not currently serving in Congress.\n" +
     "- Include at most 10 figures. If none qualify, use an empty figures array.\n" +
-    "- Use the most formal version of each person's name consistently. Never return the same person twice with different name formats (e.g. 'Sen. Sanders' and 'Sen. Bernie Sanders' are the same person — pick one).\n" +
+    "- Use the most formal version of each person's name consistently. Never return the same person twice with different name formats (e.g. 'Sen. Sanders' and 'Sen. Bernie Sanders' are the same person - pick one).\n" +
     "- main_topics must reflect the dominant legislation/policy threads in the article.\n" +
     "- search_terms must be useful for matching bill titles (e.g. \"border security\", \"child tax credit\").\n\n" +
     "Article excerpt:\n\"\"\"\n" + excerpt + '\n"""'

@@ -46,6 +46,7 @@ const srcFiles = [
   "src/api.js",
   "src/votesmart.js",
   "src/verify.js",
+  "src/token.js",
   "src/data/politicians.json",
 ];
 
@@ -87,9 +88,9 @@ if (existsSync("src/config.example.js")) {
 }
 
 // Write a setup README into the zip
-const setupReadme = `# Liar's Ledger — Setup
+const setupReadme = `# Liar's Ledger - Setup
 
-## Step 1 — Load the extension
+## Step 1 - Load the extension
 
 1. Open Chrome and go to \`chrome://extensions\`
 2. Turn on **Developer mode** (toggle in the top right)
@@ -97,9 +98,9 @@ const setupReadme = `# Liar's Ledger — Setup
 4. Select this folder
 5. The Liar's Ledger icon will appear in your toolbar
 
-No API keys needed — everything runs through api.liarsledger.com.
+No API keys needed - everything runs through api.liarsledger.com.
 
-## Step 2 — Use it
+## Step 2 - Use it
 
 Navigate to any political news article, click the Liar's Ledger icon, and hit **Scan This Page**.
 

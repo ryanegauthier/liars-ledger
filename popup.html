@@ -113,7 +113,7 @@
     /* ── Body ── */
     .body { padding: 10px 12px; }
 
-    /* Scan — mirrors site .btn style (no border-radius, mono font, alert red) */
+    /* Scan - mirrors site .btn style (no border-radius, mono font, alert red) */
     .scan-btn {
       width: 100%;
       padding: 0.65rem 1rem;
@@ -156,7 +156,7 @@
       50% { opacity: 0.4; }
     }
 
-    /* ── Ledger cards — mirrors .mockup-bar from site ── */
+    /* ── Ledger cards - mirrors .mockup-bar from site ── */
     .cards { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
 
     .ledger-card {
@@ -263,6 +263,56 @@
       border-top: 1px solid var(--border);
     }
 
+    /* ── Scan info bar ── */
+    .scan-info {
+      font-size: 0.52rem;
+      color: var(--text-faint);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+      min-height: 14px;
+    }
+    .scan-info.pro     { color: var(--green); }
+    .scan-info.low     { color: var(--accent); }
+    .scan-info.exhausted { color: var(--alert); }
+
+    /* ── Upgrade prompt ── */
+    .upgrade-prompt {
+      background: rgba(199,58,37,0.08);
+      border-left: 3px solid var(--alert);
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .upgrade-heading {
+      font-family: Oswald, sans-serif;
+      font-size: 0.88rem;
+      color: var(--text);
+      text-transform: uppercase;
+      letter-spacing: -0.01em;
+    }
+    .upgrade-body {
+      font-size: 0.56rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+    .upgrade-btn {
+      display: inline-block;
+      padding: 4px 10px;
+      background: var(--alert);
+      color: #fff6ef;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.52rem;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      text-decoration: none;
+      width: fit-content;
+      margin-top: 2px;
+    }
+    .upgrade-btn:hover { background: #d3482f; }
+
     /* ── Footer ── */
     .popup-footer {
       display: flex;
@@ -307,13 +357,14 @@
 
   <div class="body">
     <button class="scan-btn" id="scanBtn">Scan This Page</button>
+    <div class="scan-info" id="scanInfo"></div>
     <div class="status" id="status">Ready.</div>
     <div class="cards" id="cardsContainer"></div>
   </div>
 
   <div class="popup-footer">
     <span class="footer-source">congress.gov · official record</span>
-    <span class="footer-version" id="versionLabel">v0.12.1</span>
+    <span class="footer-version" id="versionLabel">v0.13.0</span>
   </div>
 
   <script src="src/config.js"></script>

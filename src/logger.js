@@ -26,7 +26,7 @@ async function log(level, context, message) {
 
     await storageSet(STORAGE_KEY, stored);
   } catch (e) {
-    // fail silently — logging should never break the app
+    // fail silently - logging should never break the app
   }
 }
 

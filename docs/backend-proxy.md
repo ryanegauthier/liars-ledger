@@ -13,7 +13,7 @@ The Liar's Ledger backend proxy runs at `api.liarsledger.com` (Node.js/Express, 
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/health` | Health check — returns status, version, timestamp |
+| `GET` | `/health` | Health check - returns status, version, timestamp |
 | `POST` | `/api/claude/extract` | Claude claim extraction |
 | `POST` | `/api/mistral/extract` | Mistral claim extraction |
 | `GET` | `/api/congress/*` | Congress.gov proxy (appends API key) |
@@ -46,7 +46,7 @@ And return the standard shape:
 
 ## Deployment
 
-The proxy is deployed on [Render](https://render.com) (Starter plan, $7/month — always-on, no cold starts). Auto-deploy triggers on every push to `main`.
+The proxy is deployed on [Render](https://render.com) (Starter plan, $7/month - always-on, no cold starts). Auto-deploy triggers on every push to `main`.
 
 Environment variables set in Render:
 
@@ -71,11 +71,11 @@ Only requests from the Chrome extension are allowed. The `ALLOWED_ORIGINS` envir
 
 All async route handlers are wrapped with a `wrap()` helper that catches rejected promises and routes them to Express error middleware. The global error handler ensures the client always receives a JSON response instead of hanging.
 
-Provider `extract()` functions guard `res.json()` in try/catch — a non-JSON upstream response returns `{ ok: false, error: "...returned non-JSON response" }` rather than throwing.
+Provider `extract()` functions guard `res.json()` in try/catch - a non-JSON upstream response returns `{ ok: false, error: "...returned non-JSON response" }` rather than throwing.
 
 ## Prompt consistency
 
-The prompt sent to both Claude and Mistral is defined in `server/providers/_shared.js` — a single source of truth. Both providers import `buildPrompt` and `parseContent` from this file. The extension-side copy in `src/llm.js` is kept manually in sync.
+The prompt sent to both Claude and Mistral is defined in `server/providers/_shared.js` - a single source of truth. Both providers import `buildPrompt` and `parseContent` from this file. The extension-side copy in `src/llm.js` is kept manually in sync.
 
 ## Local development
 

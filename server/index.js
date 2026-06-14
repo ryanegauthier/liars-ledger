@@ -2,16 +2,16 @@
 // Backend proxy server.
 //
 // Routes:
-//   POST /register             — anonymous token registration
-//   GET  /api/scan-status      — remaining scans for token
-//   POST /api/claude/extract   — Claude extraction (counted)
-//   POST /api/mistral/extract  — Mistral extraction (counted)
-//   POST /api/verify-claim     — claim verification
-//   GET  /api/congress/*       — Congress.gov proxy
-//   GET  /api/votesmart/*      — VoteSmart proxy (JWT auth + refresh)
-//   GET  /api/govtrack/*       — GovTrack proxy (no key)
-//   GET  /api/legislators      — congress-legislators dataset (cached)
-//   GET  /health               — health check
+//   POST /register             - anonymous token registration
+//   GET  /api/scan-status      - remaining scans for token
+//   POST /api/claude/extract   - Claude extraction (counted)
+//   POST /api/mistral/extract  - Mistral extraction (counted)
+//   POST /api/verify-claim     - claim verification
+//   GET  /api/congress/*       - Congress.gov proxy
+//   GET  /api/votesmart/*      - VoteSmart proxy (JWT auth + refresh)
+//   GET  /api/govtrack/*       - GovTrack proxy (no key)
+//   GET  /api/legislators      - congress-legislators dataset (cached)
+//   GET  /health               - health check
 
 import "dotenv/config";
 import express from "express";
@@ -23,13 +23,13 @@ import { congress }  from "./providers/congress.js";
 import { votesmart } from "./providers/votesmart.js";
 import { govtrack }  from "./providers/govtrack.js";
 import { verifyClaim } from "./providers/verify.js";
-import { createToken, getToken, getScans } from "./providers/store.js";
+import { createToken, getToken, getScans, incrementUserCount, getFreeTierLimit } from "./providers/store.js";
 import { requireToken, countScan } from "./middleware/auth.js";
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
 
-// ── Async wrapper — catches rejected promises from async route handlers ────────
+// ── Async wrapper - catches rejected promises from async route handlers ────────
 // Express 4.x does not catch async errors automatically.
 const wrap = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
@@ -44,7 +44,7 @@ app.use(cors({
     callback(new Error(`CORS: origin ${origin} not allowed`));
   },
   methods: ["GET", "POST"],
-  allowedHeaders: ["Content-Type", "Authorization"],
+  allowedHeaders: ["Content-Type", "Authorization", "x-token"],
 }));
 
 app.use(express.json({ limit: "64kb" }));
@@ -65,7 +65,7 @@ app.get("/health", (req, res) => {
 });
 
 // ── Registration ──────────────────────────────────────────────────────────────
-// POST /register — create an anonymous token for a new extension install
+// POST /register - create an anonymous token for a new extension install
 app.post("/register", wrap(async (req, res) => {
   const { tokenId } = req.body;
 
@@ -75,33 +75,52 @@ app.post("/register", wrap(async (req, res) => {
 
   const existing = await getToken(tokenId);
   if (existing) {
-    const scans = await getScans(tokenId);
+    const [scans, { limit, warn }] = await Promise.all([
+      getScans(tokenId),
+      existing.tier === "pro" ? Promise.resolve({ limit: "unlimited", warn: false }) : getFreeTierLimit(),
+    ]);
     return res.json({
       status: "existing",
       tier: existing.tier,
       scansToday: scans,
-      limit: existing.tier === "pro" ? "unlimited" : 5,
+      limit,
+      capacityWarning: warn,
     });
   }
 
-  const tokenData = await createToken(tokenId, "free");
+  const [tokenData, { limit, warn }] = await Promise.all([
+    createToken(tokenId, "free"),
+    getFreeTierLimit(),
+  ]);
+  await incrementUserCount();
   console.log(`[register] new token: ${tokenId.slice(0, 8)}...`);
 
   res.json({
     status: "created",
     tier: tokenData.tier,
     scansToday: 0,
-    limit: 5,
+    limit,
+    capacityWarning: warn,
   });
 }));
 
 // ── Scan status ───────────────────────────────────────────────────────────────
 app.get("/api/scan-status", requireToken, wrap(async (req, res) => {
-  const scans = await getScans(req.tokenId);
-  const limit = req.tier === "pro" ? "unlimited" : 5;
-  const remaining = req.tier === "pro" ? "unlimited" : Math.max(0, 5 - scans);
+  const isPro = req.tier === "pro";
+  const [scans, { limit, warn, userCount }] = await Promise.all([
+    getScans(req.tokenId),
+    isPro ? Promise.resolve({ limit: "unlimited", warn: false, userCount: null }) : getFreeTierLimit(),
+  ]);
+  const remaining = isPro ? "unlimited" : Math.max(0, limit - scans);
 
-  res.json({ tier: req.tier, scansToday: scans, limit, remaining });
+  res.json({
+    tier: req.tier,
+    scansToday: scans,
+    limit,
+    remaining,
+    capacityWarning: warn,     // true at 2500–4999 users — surface in extension UI
+    userCount,                 // null for pro; useful for admin/monitoring
+  });
 }));
 
 // ── LLM routes (counted against daily scan limit) ─────────────────────────────

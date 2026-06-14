@@ -227,7 +227,7 @@ async function buildDictionary() {
 
     for (const alias of memberAliases) {
       if (aliases[alias] && aliases[alias] !== bioguide) {
-        // Collision — prefer current member, then most recent congress
+        // Collision - prefer current member, then most recent congress
         const existingMember = memberMap.get(aliases[alias]);
         if (member.is_current && !existingMember.is_current) {
           aliases[alias] = bioguide;

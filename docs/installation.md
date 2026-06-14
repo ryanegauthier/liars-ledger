@@ -16,7 +16,7 @@ nav_order: 6
 7. Click **Load unpacked** and select the unzipped folder
 8. The Liar's Ledger icon will appear in your toolbar
 
-No API keys needed — everything runs through `api.liarsledger.com`.
+No API keys needed - everything runs through `api.liarsledger.com`.
 
 ## From source
 
@@ -40,7 +40,7 @@ Register for a free key at [api.congress.gov/sign-up](https://api.congress.gov/s
 
 ### Running the backend proxy locally
 
-See [Backend Proxy — Local development](backend-proxy#local-development).
+See [Backend Proxy - Local development](backend-proxy#local-development).
 
 ## Building a release zip
 

@@ -1,7 +1,7 @@
 {
   "name": "liars-ledger-api",
   "version": "1.0.0",
-  "description": "Backend proxy for Liar's Ledger — holds API keys, proxies Claude/Mistral/VoteSmart",
+  "description": "Backend proxy for Liar's Ledger - holds API keys, proxies Claude/Mistral/VoteSmart",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",

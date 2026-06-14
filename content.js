@@ -1,4 +1,4 @@
-// Liars Ledger - content.js v0.12.1
+// Liars Ledger - content.js v0.13.0
 const browser = window.browser || window.chrome;
 
 function escapeHtml(s) {
@@ -12,14 +12,6 @@ function escapeHtml(s) {
 // --- Logger ---
 async function clog(message) {
   console.log("[Liars Ledger]", message);
-  try {
-    const result = await browser.storage.session.get("ll_debug_log");
-    const entries = result.ll_debug_log || [];
-    const ts = new Date().toLocaleTimeString("en-US", { hour12: false });
-    entries.push(`[${ts}] content: ${message}`);
-    if (entries.length > 200) entries.splice(0, entries.length - 200);
-    await browser.storage.session.set({ ll_debug_log: entries });
-  } catch (e) {}
 }
 
 // --- Sidebar ---
@@ -27,7 +19,7 @@ async function clog(message) {
 // --navy: #121f44  --accent: #c8a96e  --alert: #c73a25
 // --text: #f1eedf  --muted: #c4c9d7  --faint: #5a5f6e
 // --border: rgba(239,233,221,0.12)  --border-acc: rgba(200,169,110,0.35)
-// Fonts: Oswald (headings/brand) + IBM Plex Mono (data/mono) — loaded via Google Fonts
+// Fonts: Oswald (headings/brand) + IBM Plex Mono (data/mono) - loaded via Google Fonts
 
 function initSidebar() {
   const existing = document.getElementById("ll-bar");
@@ -62,7 +54,7 @@ function initSidebar() {
     }
     #ll-bar.ll-visible { transform: translateY(0); }
 
-    /* Header — mirrors site nav */
+    /* Header - mirrors site nav */
     #ll-header {
       display: flex; align-items: center;
       padding: 6px 16px; gap: 12px;
@@ -123,7 +115,7 @@ function initSidebar() {
     #ll-cards::-webkit-scrollbar { height: 3px; }
     #ll-cards::-webkit-scrollbar-thumb { background: rgba(200,169,110,0.25); }
 
-    /* Individual politician card — mirrors .mockup-bar card */
+    /* Individual politician card - mirrors .mockup-bar card */
     .ll-card {
       min-width: 230px; max-width: 290px;
       padding: 10px 14px 12px;
@@ -280,7 +272,7 @@ function initSidebar() {
     .ll-not-found-name   { font-size: 0.7rem; color: #c4c9d7; margin-bottom: 2px; font-family: Oswald, sans-serif; text-transform: uppercase; }
     .ll-not-found-reason { font-size: 0.54rem; color: #5a5f6e; font-style: italic; }
 
-    /* Detail panel — expandable below cards */
+    /* Detail panel - expandable below cards */
     #ll-detail {
       border-top: 1px solid rgba(239,233,221,0.12);
       padding: 10px 16px;
@@ -425,7 +417,7 @@ function initSidebar() {
       <span id="ll-footer-source">congress.gov · official record · non-partisan</span>
       <div id="ll-footer-right">
         <span class="ll-ticker-dot"></span>
-        <span id="ll-version">v0.12.1</span>
+        <span id="ll-version">v0.13.0</span>
       </div>
     </div>
   `;
@@ -469,7 +461,7 @@ function renderSidebar(results) {
     const partyCode = partyRaw === "D" || partyRaw === "Democratic"   ? "D"
                     : partyRaw === "R" || partyRaw === "Republican"   ? "R"
                     : "I";
-    const partyLabel = partyCode === "D" ? "DEM" : partyCode === "R" ? "REP" : partyRaw || "—";
+    const partyLabel = partyCode === "D" ? "DEM" : partyCode === "R" ? "REP" : partyRaw || "-";
 
     const chamber = p.chamber
       ? p.chamber.charAt(0).toUpperCase() + p.chamber.slice(1).toLowerCase()
@@ -486,8 +478,8 @@ function renderSidebar(results) {
     const verdictLabels = {
       supported: "✓ Record supports this claim",
       contradicted: "✗ Record contradicts this claim",
-      mixed: "⚠ Mixed — record partially supports, partially contradicts",
-      insufficient: "— Insufficient record data to verify",
+      mixed: "⚠ Mixed - record partially supports, partially contradicts",
+      insufficient: "- Insufficient record data to verify",
     };
     let claimLine = "";
     if (displayClaim) {
@@ -574,8 +566,8 @@ function renderSidebar(results) {
       const detailVerdictLabels = {
         supported: "✓ RECORD SUPPORTS THIS CLAIM",
         contradicted: "✗ RECORD CONTRADICTS THIS CLAIM",
-        mixed: "⚠ MIXED — PARTIAL SUPPORT, PARTIAL CONTRADICTION",
-        insufficient: "— INSUFFICIENT DATA TO VERIFY",
+        mixed: "⚠ MIXED - PARTIAL SUPPORT, PARTIAL CONTRADICTION",
+        insufficient: "- INSUFFICIENT DATA TO VERIFY",
       };
       const detailVerdictColors = {
         supported: "#1b8a84",
@@ -605,7 +597,7 @@ function renderSidebar(results) {
               <div>
                 <div class="ll-bill-title">${escapeHtml(v.question || "Roll call vote")}</div>
                 <div class="ll-bill-date">${escapeHtml(v.date || "")}${v.legislation ? " &middot; " + escapeHtml(v.legislation) : ""}${link}</div>
-                <div class="ll-vote-pos">Position: ${escapeHtml(v.position || "—")}</div>
+                <div class="ll-vote-pos">Position: ${escapeHtml(v.position || "-")}</div>
               </div>
             </div>`;
         });
@@ -683,7 +675,7 @@ function renderSidebar(results) {
     });
   });
 
-  // Report button — open standalone report page in new tab
+  // Report button - open standalone report page in new tab
   cardsEl.querySelectorAll(".ll-report-btn").forEach(function(btn) {
     btn.addEventListener("click", function(e) {
       e.stopPropagation(); // don't trigger card expand
@@ -748,6 +740,66 @@ async function scanPage() {
   };
 }
 
+// --- Rate-limited sidebar ---
+function renderRateLimited(response) {
+  initSidebar();
+  const cardsEl  = document.getElementById("ll-cards");
+  const detailEl = document.getElementById("ll-detail");
+  const topicsEl = document.getElementById("ll-topics");
+  const bar      = document.getElementById("ll-bar");
+
+  topicsEl.innerHTML = "";
+  detailEl.classList.remove("ll-visible");
+
+  const upgradeUrl = response.upgrade_url || "https://liarsledger.com/pricing";
+  cardsEl.innerHTML = `
+    <div style="
+      padding: 18px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      border-right: 1px solid rgba(239,233,221,0.08);
+      min-width: 300px;
+    ">
+      <div style="
+        font-size: 0.54rem;
+        color: #c73a25;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        margin-bottom: 2px;
+      ">⊘ Daily scan limit reached</div>
+      <div style="
+        font-family: Oswald, sans-serif;
+        font-size: 0.9rem;
+        color: #f1eedf;
+        text-transform: uppercase;
+        letter-spacing: -0.01em;
+        line-height: 1.2;
+      ">Upgrade to Pro</div>
+      <div style="
+        font-size: 0.58rem;
+        color: #c4c9d7;
+        line-height: 1.5;
+      ">Free accounts are limited to a set number of scans per day. Pro accounts get unlimited scans.</div>
+      <a href="${escapeHtml(upgradeUrl)}" target="_blank" style="
+        display: inline-block;
+        margin-top: 4px;
+        padding: 5px 12px;
+        background: #c73a25;
+        color: #fff6ef;
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.54rem;
+        font-weight: 700;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        text-decoration: none;
+        width: fit-content;
+      ">View Pricing →</a>
+    </div>`;
+
+  requestAnimationFrame(function() { bar.classList.add("ll-visible"); });
+}
+
 // --- Poll for results ---
 function startPolling() {
   console.log("[Liars Ledger] poll started");
@@ -757,6 +809,7 @@ function startPolling() {
       if (!response || response.status === "working") return;
       clearInterval(poll);
       if (response.status === "ok") renderSidebar(response);
+      else if (response.status === "rate_limited") renderRateLimited(response);
     });
   }, 500);
   setTimeout(function() { clearInterval(poll); }, 30000);
@@ -765,7 +818,6 @@ function startPolling() {
 // --- Message listener ---
 browser.runtime.onMessage.addListener(function(message, sender, sendResponse) {
   if (message.action === "scan") {
-    browser.storage.session.set({ ll_results: { status: "working" } });
     scanPage().then(function(result) { sendResponse(result); });
     return true;
   }
@@ -775,10 +827,9 @@ browser.runtime.onMessage.addListener(function(message, sender, sendResponse) {
     return true;
   }
   if (message.action === "showResults") {
-    browser.storage.session.get("ll_results", function(data) {
-      if (data.ll_results?.status === "ok") {
-        renderSidebar(data.ll_results);
-      }
+    browser.runtime.sendMessage({ action: "getResults" }, function(response) {
+      if (response?.status === "ok") renderSidebar(response);
+      else if (response?.status === "rate_limited") renderRateLimited(response);
     });
     sendResponse({ ok: true });
     return true;

@@ -11,10 +11,10 @@
 //   // On read-only routes (congress, govtrack, votesmart, legislators):
 //   app.get("/api/congress/*", requireToken, wrap(async (req, res) => { ... }));
 
-import { getToken, incrementScans } from "../providers/store.js";
+import { getToken, incrementScans } from '../providers/store.js';
 
 /**
- * requireToken — validates the Bearer token exists and is registered.
+ * requireToken - validates the Bearer token exists and is registered.
  * Attaches req.tokenId and req.tier for downstream use.
  */
 export async function requireToken(req, res, next) {
@@ -43,7 +43,7 @@ export async function requireToken(req, res, next) {
     next();
   } catch (e) {
     console.error("[auth] token lookup failed:", e.message);
-    // Fail open — don't block users if Redis is down
+    // Fail open - don't block users if Redis is down
     req.tokenId = tokenId;
     req.tier = "free";
     next();
@@ -51,33 +51,33 @@ export async function requireToken(req, res, next) {
 }
 
 /**
- * countScan — increments the daily scan counter and blocks if over limit.
+ * countScan - increments the daily scan counter and blocks if over limit.
  * Only attach this to routes that count as a "scan" (LLM extraction).
  * Read-only routes (congress, govtrack) don't count against the limit.
  */
 export async function countScan(req, res, next) {
-  // Pro users skip counting
-  if (req.tier === "pro") return next();
+  // requireToken must run before this — req.tokenId and req.tier are set by it
+  const token = req.tokenId;
+  if (!token) return next(); // fail-open (shouldn't happen if requireToken ran)
 
   try {
-    const result = await incrementScans(req.tokenId, req.tier);
-
-    // Attach scan info for the response
-    req.scanInfo = result;
+    const result = await incrementScans(token, req.tier);
 
     if (!result.allowed) {
       return res.status(429).json({
-        error: "Daily scan limit reached.",
+        error: "Daily scan limit reached",
         limit: result.limit,
         remaining: 0,
-        upgrade_url: "https://liarsledger.com/pricing",
+        upgradeUrl: "https://liarsledger.com/pricing",
       });
     }
 
+    req.scanAllowed = true;
+    req.scanWarn = result.warn;
+    req.scanRemaining = result.remaining;
     next();
-  } catch (e) {
-    console.error("[auth] scan count failed:", e.message);
-    // Fail open — don't block users if Redis is down
-    next();
+  } catch (err) {
+    console.error("[auth] countScan error:", err);
+    next(); // fail-open
   }
 }

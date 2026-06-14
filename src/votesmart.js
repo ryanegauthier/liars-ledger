@@ -1,6 +1,6 @@
 // Liars Ledger - src/votesmart.js
 // VoteSmart v2 API client.
-// All calls go through the backend proxy — VoteSmart is CORS-blocked from browsers.
+// All calls go through the backend proxy - VoteSmart is CORS-blocked from browsers.
 //
 // Exports:
 //   resolveVoteSmartId(member)             → candidateId or null
@@ -98,7 +98,8 @@ async function vsFetch(path) {
   if (cached) return cached;
 
   const url = `${proxyBase()}${path}`;
-  const res = await fetch(url);
+  const auth = await authHeaders();
+  const res = await fetch(url, { headers: auth });
   if (!res.ok) throw new Error(`VoteSmart proxy ${res.status} on ${path}`);
   const data = await res.json();
   await vsSet(cacheKey, data);
@@ -220,7 +221,7 @@ async function getVoteSmartVotes(candidateId, topics) {
 
 function normalizeVsVote(raw) {
   const map = { "Y": "Yea", "N": "Nay", "-": "Not Voting", "A": "Abstain" };
-  return map[raw] || raw || "—";
+  return map[raw] || raw || "-";
 }
 
 // --- Main entry point ---
@@ -238,6 +239,6 @@ async function lookupVoteSmart(member, topics) {
     getVoteSmartVotes(candidateId, topics),
   ]);
 
-  console.log(`[Liars Ledger] VoteSmart: ${member.full_name} — ${ratings.length} ratings, ${votes.length} votes`);
+  console.log(`[Liars Ledger] VoteSmart: ${member.full_name} - ${ratings.length} ratings, ${votes.length} votes`);
   return { candidateId, ratings, votes };
 }

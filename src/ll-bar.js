@@ -1,5 +1,5 @@
 /**
- * ll-bar.js — Liar's Ledger in-page bottom bar
+ * ll-bar.js - Liar's Ledger in-page bottom bar
  *
  * Injected into article pages by content.js after scan completes.
  * Call: LiarsLedgerBar.show(result) to render, LiarsLedgerBar.hide() to remove.
@@ -114,7 +114,7 @@ const LiarsLedgerBar = (() => {
     .ll-cards::-webkit-scrollbar-thumb { background: rgba(200,169,110,0.3); }
     .ll-cards::-webkit-scrollbar-track { background: transparent; }
 
-    /* Individual card — mirrors .mockup-bar card structure */
+    /* Individual card - mirrors .mockup-bar card structure */
     .ll-card {
       background: #121f44;
       border-top: 2px solid #9c7f4e;
@@ -271,7 +271,7 @@ const LiarsLedgerBar = (() => {
   function buildBillId(bill) {
     if (bill.type && bill.number) return `${bill.type} ${bill.number}`;
     if (bill.amendmentNumber)     return `AMDT ${bill.amendmentNumber}`;
-    return "—";
+    return "-";
   }
 
   function buildBillUrl(bill) {
@@ -285,7 +285,7 @@ const LiarsLedgerBar = (() => {
     const member = record.politician;
     const party  = member.party || "";
     const partyClass = party === "D" ? "ll-party-D" : party === "R" ? "ll-party-R" : "ll-party-I";
-    const partyLabel = party === "D" ? "DEM" : party === "R" ? "REP" : party || "—";
+    const partyLabel = party === "D" ? "DEM" : party === "R" ? "REP" : party || "-";
     const chamber = member.chamber
       ? member.chamber.charAt(0).toUpperCase() + member.chamber.slice(1).toLowerCase()
       : "";

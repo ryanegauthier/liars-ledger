@@ -65,12 +65,12 @@ This is the recommended way to install. No configuration needed.
 If you want to fork, contribute, or run your own instance, you'll need your own API keys and backend. The production proxy at `api.liarsledger.com` does not accept requests from unauthorized extension IDs.
 
 1. Clone this repo
-2. Copy `src/config.example.js` to `src/config.js` — update with your own proxy URL
-3. Copy `server/.env.example` to `server/.env` — add your own API keys:
-   - `CONGRESS_API_KEY` — free at [api.congress.gov/sign-up](https://api.congress.gov/sign-up/)
-   - `CLAUDE_API_KEY` — [console.anthropic.com](https://console.anthropic.com)
-   - `MISTRAL_API_KEY` — [console.mistral.ai](https://console.mistral.ai)
-   - `VOTESMART_EMAIL` / `VOTESMART_PASSWORD` — requires [VoteSmart educational API license](https://votesmart.org/share/api)
+2. Copy `src/config.example.js` to `src/config.js` - update with your own proxy URL
+3. Copy `server/.env.example` to `server/.env` - add your own API keys:
+   - `CONGRESS_API_KEY` - free at [api.congress.gov/sign-up](https://api.congress.gov/sign-up/)
+   - `CLAUDE_API_KEY` - [console.anthropic.com](https://console.anthropic.com)
+   - `MISTRAL_API_KEY` - [console.mistral.ai](https://console.mistral.ai)
+   - `VOTESMART_EMAIL` / `VOTESMART_PASSWORD` - requires [VoteSmart educational API license](https://votesmart.org/share/api)
 4. `cd server && npm install && npm run dev`
 5. To rebuild the politician dictionary: `node scripts/build-dictionary.cjs YOUR_CONGRESS_API_KEY`
 
@@ -87,10 +87,10 @@ See [SECURITY.md](SECURITY.md) for architecture details and the completed pre-re
 ## Contributing
 
 Pull requests are welcome for:
-- **Politician dictionary** — adding missing members or aliases
-- **Topic keywords** — expanding `TOPIC_TITLE_KEYWORDS` coverage in `topic-match.js`
-- **Frontend fixes** — sidebar styling, report layout, accessibility
-- **Browser compatibility** — Firefox / Safari testing
+- **Politician dictionary** - adding missing members or aliases
+- **Topic keywords** - expanding `TOPIC_TITLE_KEYWORDS` coverage in `topic-match.js`
+- **Frontend fixes** - sidebar styling, report layout, accessibility
+- **Browser compatibility** - Firefox / Safari testing
 
 The backend proxy and API integrations (VoteSmart, Congress.gov, LLM providers) are maintained by the core team only. If you have ideas for backend changes, open an issue first.
 

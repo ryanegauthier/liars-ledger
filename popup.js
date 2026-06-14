@@ -1,4 +1,4 @@
-// Liar's Ledger - popup.js v0.12.1
+// Liar's Ledger - popup.js v0.13.0
 
 const browser = window.browser || window.chrome;
 const toggle         = document.getElementById("enableToggle");
@@ -44,7 +44,7 @@ function setStatus(text, type = "") {
 function buildBillId(bill) {
   if (bill.type && bill.number) return `${bill.type} ${bill.number}`;
   if (bill.amendmentNumber)     return `AMDT ${bill.amendmentNumber}`;
-  return "—";
+  return "-";
 }
 
 function buildBillUrl(bill) {
@@ -75,7 +75,7 @@ function renderCards(result) {
 
     const party = member.party || "";
     const partyClass = party === "D" ? "party-D" : party === "R" ? "party-R" : "party-I";
-    const partyLabel = party === "D" ? "DEM" : party === "R" ? "REP" : party || "—";
+    const partyLabel = party === "D" ? "DEM" : party === "R" ? "REP" : party || "-";
 
     const chamber = member.chamber
       ? member.chamber.charAt(0).toUpperCase() + member.chamber.slice(1).toLowerCase()
@@ -208,11 +208,42 @@ function handleResult(result) {
     setStatus(result.message || "No current Congress members found.", "");
   } else if (result.status === "no_topics") {
     setStatus("Members found but no policy topics detected.", "");
+  } else if (result.status === "rate_limited") {
+    setStatus("Daily scan limit reached.", "error");
+    const upgradeUrl = result.upgrade_url || "https://liarsledger.com/pricing";
+    cardsContainer.innerHTML = `
+      <div class="upgrade-prompt">
+        <div class="upgrade-heading">Upgrade to Pro</div>
+        <div class="upgrade-body">Free accounts are limited to a set number of scans per day. Pro accounts get unlimited scans.</div>
+        <a class="upgrade-btn" href="${upgradeUrl}" target="_blank">View Pricing →</a>
+      </div>`;
   } else if (result.status === "ok") {
     const count = result.records?.length || 0;
     setStatus(`✓ ${count} member${count !== 1 ? "s" : ""} · record retrieved`, "success");
-    // Close popup after brief delay — results show in sidebar
+    // Close popup after brief delay - results show in sidebar
     setTimeout(() => window.close(), 800);
   }
 }
+
+// ── Tier / scan count display ─────────────────────────────────────────────────
+function loadScanInfo() {
+  const scanInfoEl = document.getElementById("scanInfo");
+  if (!scanInfoEl) return;
+  browser.storage.sync.get("ll_auth_token", (data) => {
+    const token = data.ll_auth_token;
+    if (!token) return;
+    if (token.tier === "pro") {
+      scanInfoEl.textContent = "Pro · Unlimited scans";
+      scanInfoEl.className = "scan-info pro";
+    } else {
+      const used = token.scansToday ?? 0;
+      const limit = token.limit ?? 5;
+      const remaining = token.remaining ?? (limit - used);
+      scanInfoEl.textContent = `Free · ${remaining} scan${remaining !== 1 ? "s" : ""} remaining today`;
+      scanInfoEl.className = "scan-info" + (remaining === 0 ? " exhausted" : remaining <= 1 ? " low" : "");
+    }
+  });
+}
+
+loadScanInfo();
 
