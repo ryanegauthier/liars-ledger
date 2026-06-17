@@ -62,8 +62,13 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // --- Main analysis pipeline ---
 async function handleAnalyze({ politicians, articleText }) {
   try {
-    const tokenData = await getOrCreateToken();
-    const isPro = tokenData.tier === "pro";
+    // Fetch tier once, up front — used to gate VoteSmart lookups below
+    // (cost-saving: free tier never calls VoteSmart at all) and to strip
+    // claim/verdict/VoteSmart fields from the final response further down.
+    // See the "PRO-TIER GATING" comment near the end of this function for
+    // the full list of what's gated and why.
+    const { tier } = await getOrCreateToken();
+    const isPro = tier === "pro";
 
     let articleSummary   = null;
     let figures          = [];
@@ -73,6 +78,41 @@ async function handleAnalyze({ politicians, articleText }) {
     const llmOn       = !!(articleText?.trim());
 
     if (llmOn) {
+      // ── Scan counting — single call, before any LLM provider runs ─────────
+      // This is the ONLY place a scan gets counted. /api/claude/extract and
+      // /api/mistral/extract do not count themselves, so dual-model mode
+      // (both providers firing for one page-scan) never double-charges.
+      const proxyUrl = (typeof CONFIG !== "undefined" && CONFIG.PROXY_URL)
+        || "https://api.liarsledger.com";
+      const auth = await authHeaders();
+
+      try {
+        const scanRes = await fetch(`${proxyUrl}/api/scan/start`, {
+          method: "POST",
+          headers: auth,
+        });
+
+        // Refresh chrome.storage.sync immediately so popup.js's scan-count
+        // display is accurate the moment this scan is counted — regardless
+        // of whether it was allowed, rate-limited, or the request itself
+        // had a transient error. syncTier() is the single source of truth
+        // for this storage write; we don't duplicate that logic here.
+        syncTier();
+
+        if (scanRes.status === 429) {
+          logger.warn("background", "scan limit reached - aborting before LLM call");
+          return {
+            status: "rate_limited",
+            message: "Daily scan limit reached. Upgrade to Pro for unlimited scans.",
+            upgrade_url: "https://liarsledger.com/pricing",
+          };
+        }
+        // Any other non-OK status (5xx, auth issue, etc.) — fail open and
+        // proceed with the scan rather than blocking the user on a server hiccup.
+      } catch (e) {
+        logger.warn("background", `scan/start request failed: ${e.message} - failing open`);
+      }
+
       logger.info("background", `LLM analysis: provider=${llmProvider}`);
 
       const ann = await extractArticleAnalysis(articleText, {
@@ -85,20 +125,8 @@ async function handleAnalyze({ politicians, articleText }) {
       });
       if (ann.ok) {
         articleSummary   = ann.summary || null;
+        figures          = ann.figures || [];
         mainTopicsGlobal = ann.main_topics || [];
-
-        // Strip figures that are positional titles with no specific person name
-        const TITLE_ONLY = [
-          "majority leader", "minority leader", "house speaker", "senate speaker",
-          "speaker of the house", "president pro tempore", "senate president",
-          "house majority", "house minority", "senate majority", "senate minority",
-          "senate whip", "house whip", "deputy whip", "committee chair",
-          "ranking member", "floor leader",
-        ];
-        figures = (ann.figures || []).filter(f => {
-          const name = (f.lookup_name || "").toLowerCase().trim();
-          return !TITLE_ONLY.some(t => name.includes(t));
-        });
         if (ann._meta) {
           const loserError = figures?.[0]?._loser_error || "unknown";
           const logMsg = ann._meta.provider === "single_model"
@@ -209,13 +237,15 @@ async function handleAnalyze({ politicians, articleText }) {
       }
     }
 
-    // Mark free tier records so the UI can show upsell prompts
-    if (!isPro) {
-      for (const r of records) r._pro_locked = true;
-    }
-
     logger.info("background", `analysis complete - ${records.length} record(s) returned`);
 
+    // --- Claim-vs-record verification (Pro only) ---
+    // Skipped entirely for free tier — /api/verify-claim now requires Pro
+    // server-side anyway (see index.js's requirePro middleware), so calling
+    // it here for free users would just burn a wasted request. Server cost
+    // savings and field-stripping below are two separate, intentionally
+    // redundant layers: this skip saves the API call; the strip below is
+    // a fallback in case verifyAllClaims ever runs unconditionally again.
     if (isPro) {
       logger.info("background", `verifying claims for ${records.length} member(s)`);
       await verifyAllClaims(records);
@@ -224,14 +254,53 @@ async function handleAnalyze({ politicians, articleText }) {
       }
     }
 
-    logger.info("background", `analysis complete - ${records.length} record(s) returned`);
+    // ╔═══════════════════════════════════════════════════════════════════════╗
+    // ║ PRO-TIER GATING — KEEP IN SYNC WITH report.js AND content.js           ║
+    // ║                                                                         ║
+    // ║ Scans are pooled across all users; tier only changes what data is      ║
+    // ║ shown, not how many scans are available.                               ║
+    // ║                                                                         ║
+    // ║ This is now a DEFENSIVE FALLBACK, not the primary gate. The real       ║
+    // ║ security boundary is server-side: /api/verify-claim and               ║
+    // ║ /api/votesmart/* require Pro via requirePro middleware in index.js,    ║
+    // ║ and /api/claude/extract + /api/mistral/extract strip summary/claim     ║
+    // ║ fields server-side before responding. Free tier also never calls      ║
+    // ║ verifyAllClaims() (skipped above) or VoteSmart (skipVoteSmart passed   ║
+    // ║ to lookupAll above), so most of these fields should already be        ║
+    // ║ absent by the time we get here. This block stays as a safety net in   ║
+    // ║ case any of those upstream skips are ever removed by accident.        ║
+    // ║                                                                         ║
+    // ║ The fields stripped below are advertised as "Pro features" in the      ║
+    // ║ upsell cards in report.js (proFeaturesUpsellHtml) and content.js       ║
+    // ║ (the VoteSmart upsell card). If you add, remove, or rename a gated     ║
+    // ║ field here, update the matching bullet list / copy in BOTH of those    ║
+    // ║ files too — otherwise the upsell will advertise features that don't   ║
+    // ║ exist, or silently fail to mention ones that do.                       ║
+    // ╚═══════════════════════════════════════════════════════════════════════╝
+    if (!isPro) {
+      for (const r of records) {
+        delete r.voteSmartVotes;
+        delete r.voteSmartRatings;
+        delete r.voteSmartId;
+        delete r.claim;
+        delete r.verdict;
+        delete r.verdict_explanation;
+        delete r._verification;
+        delete r._claude_claim;
+        delete r._mistral_claim;
+        delete r._similarity;
+      }
+    }
+
+    logger.info("background", `analysis complete - ${records.length} record(s) returned, tier=${tier}`);
     return {
       status: "ok",
       topics: topicsUnion,
       records,
       notMembers,
       notFound,
-      articleSummary,
+      articleSummary: isPro ? articleSummary : null,
+      tier,
     };
   } catch (err) {
     logger.error("background", `analysis failed: ${err.message}`);

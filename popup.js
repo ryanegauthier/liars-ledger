@@ -202,6 +202,11 @@ scanBtn.addEventListener("click", async () => {
 });
 
 function handleResult(result) {
+  // Refresh scan count display — background.js's syncTier() call after
+  // /api/scan/start means storage.sync should already reflect the new
+  // count by now, regardless of which branch below fires.
+  loadScanInfo();
+
   if (result.status === "error") {
     setStatus("Error: " + result.message, "error");
   } else if (result.status === "no_members") {
@@ -214,7 +219,7 @@ function handleResult(result) {
     cardsContainer.innerHTML = `
       <div class="upgrade-prompt">
         <div class="upgrade-heading">Upgrade to Pro</div>
-        <div class="upgrade-body">Free accounts are limited to a set number of scans per day. Pro accounts get unlimited scans.</div>
+        <div class="upgrade-body">All accounts share a daily scan pool. Pro unlocks AI summaries, claim verdicts, and full VoteSmart data.</div>
         <a class="upgrade-btn" href="${upgradeUrl}" target="_blank">View Pricing →</a>
       </div>`;
   } else if (result.status === "ok") {

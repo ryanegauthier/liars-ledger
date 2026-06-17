@@ -24,7 +24,7 @@ function voteClass(vote) {
   return "ll-vote-notvoting";
 }
 
-function renderRecord(record) {
+function renderRecord(record, tier) {
   const p         = record.politician || {};
   const partyRaw  = p.party || "";
   const partyCode = partyRaw === "D" || partyRaw === "Democratic" ? "D"
@@ -102,7 +102,66 @@ function renderRecord(record) {
           </div>`;
       }).join("");
 
-  // VoteSmart votes
+  // VoteSmart — gated behind Pro. Free tier sees a single upsell card
+  // instead of the real sections (or a broken-looking empty state).
+  const isPro = tier === "pro";
+
+  // Combined pro-features upsell — shown once, replacing both VoteSmart
+  // sections, when the user is on free tier.
+  //
+  // KEEP THIS BULLET LIST IN SYNC WITH background.js's gating block
+  // (search "PRO-TIER GATING" in handleAnalyze). Each bullet here should
+  // correspond to a field that's actually being stripped there for free
+  // tier — if you add/remove a gated field in background.js, update this
+  // list too.
+  const proFeaturesUpsellHtml = `
+    <div style="
+      background: rgba(200,169,110,0.07);
+      border: 1px solid rgba(200,169,110,0.25);
+      border-radius: 3px;
+      padding: 18px 20px;
+      margin: 8px 0;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    ">
+      <a href="https://liarsledger.com/pricing" target="_blank" style="
+        display: inline-block;
+        padding: 8px 18px;
+        background: #c8a96e;
+        color: #121f44;
+        font-family: 'Inter', sans-serif;
+        font-size: 0.66rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        text-decoration: none;
+        width: fit-content;
+      ">Upgrade to Pro →</a>
+      <div style="
+        font-family: 'Inter', sans-serif;
+        font-size: 0.62rem;
+        color: #c8a96e;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        font-weight: 600;
+        margin-top: 4px;
+      ">Pro features</div>
+      <ul style="
+        margin: 0;
+        padding-left: 18px;
+        font-size: 0.74rem;
+        color: #c4c9d7;
+        line-height: 1.9;
+      ">
+        <li>Full VoteSmart vote history for every politician</li>
+        <li>Interest group ratings and scorecards</li>
+        <li>AI-generated article summary</li>
+        <li>AI claim-vs-record analysis and verdicts</li>
+      </ul>
+    </div>`;
+
+  // VoteSmart votes (pro only — used in the pro-tier section below)
   const vsVotes = record.voteSmartVotes || [];
   const vsVotesHtml = vsVotes.length === 0
     ? `<div class="ll-empty">No topic-matched votes found.</div>`
@@ -117,7 +176,7 @@ function renderRecord(record) {
           </div>
         </div>`).join("");
 
-  // VoteSmart ratings
+  // VoteSmart ratings (pro only — used in the pro-tier section below)
   const vsRatings = record.voteSmartRatings || [];
   const vsRatingsHtml = vsRatings.length === 0
     ? `<div class="ll-empty">No interest group ratings found.</div>`
@@ -139,6 +198,25 @@ function renderRecord(record) {
             <div class="ll-rating-text">${escapeHtml(r.ratingText || "")}</div>
           </div>`;
       }).join("");
+
+  // Combined VoteSmart section — split into two sub-sections for pro,
+  // single upsell card with section title for free.
+  const voteSmartSectionHtml = !isPro
+    ? `
+      <div class="ll-section">
+        <div class="ll-section-title">Vote History &amp; Interest Group Ratings <span class="ll-section-source">· votesmart</span></div>
+        ${proFeaturesUpsellHtml}
+      </div>`
+    : `
+      <div class="ll-section">
+        <div class="ll-section-title">Vote History <span class="ll-section-source">· votesmart</span></div>
+        ${vsVotesHtml}
+      </div>
+
+      <div class="ll-section">
+        <div class="ll-section-title">Interest Group Ratings <span class="ll-section-source">· votesmart</span></div>
+        ${vsRatingsHtml}
+      </div>`;
 
   const congressLabel = p.is_current === false
     ? `Former Member · ${p.congresses ? p.congresses[0] + "th–" + p.congresses[p.congresses.length - 1] + "th Congress" : "Previously served"}`
@@ -169,15 +247,7 @@ function renderRecord(record) {
       ${rollHtml}
     </div>
 
-    <div class="ll-section">
-      <div class="ll-section-title">Vote History <span class="ll-section-source">· votesmart</span></div>
-      ${vsVotesHtml}
-    </div>
-
-    <div class="ll-section">
-      <div class="ll-section-title">Interest Group Ratings <span class="ll-section-source">· votesmart</span></div>
-      ${vsRatingsHtml}
-    </div>
+    ${voteSmartSectionHtml}
 
     <hr style="border:none;border-top:1px solid rgba(239,233,221,0.12);margin:32px 0">
   `;
@@ -210,7 +280,8 @@ async function loadReport() {
     document.title = `Liar's Ledger - ${records[0].politician?.full_name || "Report"}`;
   }
 
-  document.getElementById("reportContent").innerHTML = records.map(renderRecord).join("");
+  document.getElementById("reportContent").innerHTML =
+    records.map(r => renderRecord(r, results.tier)).join("");
 }
 
 document.addEventListener("DOMContentLoaded", loadReport);

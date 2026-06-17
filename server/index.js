@@ -75,9 +75,11 @@ app.post("/register", wrap(async (req, res) => {
 
   const existing = await getToken(tokenId);
   if (existing) {
+    // Scans are pooled across all users regardless of tier — pro changes
+    // what data the extension shows, not how many scans are available.
     const [scans, { limit, warn }] = await Promise.all([
       getScans(tokenId),
-      existing.tier === "pro" ? Promise.resolve({ limit: "unlimited", warn: false }) : getFreeTierLimit(),
+      getFreeTierLimit(),
     ]);
     return res.json({
       status: "existing",
@@ -106,12 +108,13 @@ app.post("/register", wrap(async (req, res) => {
 
 // ── Scan status ───────────────────────────────────────────────────────────────
 app.get("/api/scan-status", requireToken, wrap(async (req, res) => {
-  const isPro = req.tier === "pro";
+  // Scans are pooled across all users regardless of tier — pro changes
+  // what data the extension shows (AI summary, VoteSmart), not scan count.
   const [scans, { limit, warn, userCount }] = await Promise.all([
     getScans(req.tokenId),
-    isPro ? Promise.resolve({ limit: "unlimited", warn: false, userCount: null }) : getFreeTierLimit(),
+    getFreeTierLimit(),
   ]);
-  const remaining = isPro ? "unlimited" : Math.max(0, limit - scans);
+  const remaining = Math.max(0, limit - scans);
 
   res.json({
     tier: req.tier,
@@ -119,29 +122,85 @@ app.get("/api/scan-status", requireToken, wrap(async (req, res) => {
     limit,
     remaining,
     capacityWarning: warn,     // true at 2500–4999 users — surface in extension UI
-    userCount,                 // null for pro; useful for admin/monitoring
+    userCount,
   });
 }));
 
-// ── LLM routes (counted against daily scan limit) ─────────────────────────────
+// ── Scan counting ─────────────────────────────────────────────────────────────
+// Single source of truth for "did this user use up a scan today."
+// Call this ONCE per page-scan, before kicking off LLM extraction — regardless
+// of how many providers run underneath (dual-model Claude+Mistral, single-model
+// fallback, etc.) or how many politicians the article ends up returning.
+// /api/claude/extract and /api/mistral/extract are pure extraction endpoints
+// below — they do NOT count against the limit, by design, so dual-model mode
+// never double-charges a single scan.
+app.post("/api/scan/start", requireToken, countScan, wrap(async (req, res) => {
+  res.json({
+    allowed: req.scanAllowed,
+    remaining: req.scanRemaining,
+    warn: req.scanWarn,
+  });
+}));
+
+// ── LLM extraction (NOT counted here — see /api/scan/start above) ─────────────
+
+// Strips Pro-only fields from a claude/mistral extraction result before it
+// reaches a free-tier client. `lookup_name` and `search_terms` always stay -
+// free tier needs those to resolve politicians and search bills. Only the
+// article summary and each figure's claim text are gated, matching the
+// "PRO-TIER GATING" list in background.js and the upsell copy in
+// report.js / content.js.
+function gateExtractionResult(result, tier) {
+  if (tier === "pro" || !result.ok) return result;
+  return {
+    ...result,
+    summary: "",
+    figures: (result.figures || []).map(fig => ({
+      lookup_name:  fig.lookup_name,
+      search_terms: fig.search_terms,
+      claim: null,
+    })),
+  };
+}
 
 // POST /api/claude/extract
-app.post("/api/claude/extract", requireToken, countScan, wrap(async (req, res) => {
+app.post("/api/claude/extract", requireToken, wrap(async (req, res) => {
   const { articleText } = req.body;
   if (!articleText) return res.status(400).json({ error: "articleText required" });
   const result = await claude.extract(articleText);
-  res.status(result.ok ? 200 : 502).json(result);
+  res.status(result.ok ? 200 : 502).json(gateExtractionResult(result, req.tier));
 }));
 
 // POST /api/mistral/extract
-app.post("/api/mistral/extract", requireToken, countScan, wrap(async (req, res) => {
+app.post("/api/mistral/extract", requireToken, wrap(async (req, res) => {
   const { articleText } = req.body;
   if (!articleText) return res.status(400).json({ error: "articleText required" });
   const result = await mistral.extract(articleText);
-  res.status(result.ok ? 200 : 502).json(result);
+  res.status(result.ok ? 200 : 502).json(gateExtractionResult(result, req.tier));
 }));
 
-app.post("/api/verify-claim", requireToken, wrap(async (req, res) => {
+// ── Pro-tier gating ────────────────────────────────────────────────────────────
+// Server-side enforcement — the actual security boundary. Client-side stripping
+// in background.js is a UX nicety (avoids flashing gated data before deciding
+// not to show it) and a cost-saver (free tier never even calls these routes),
+// but a modified or malicious client could call these endpoints directly,
+// bypassing any client-side logic entirely. This middleware is what actually
+// keeps free-tier responses from containing Pro-only data.
+//
+// KEEP THIS LIST IN SYNC with background.js's "PRO-TIER GATING" comment block,
+// and with the upsell copy in report.js / content.js. If a route here starts
+// returning a new field that's supposed to be Pro-only, gate it here too.
+function requirePro(req, res, next) {
+  if (req.tier !== "pro") {
+    return res.status(403).json({
+      error: "This feature requires a Pro subscription.",
+      upgradeUrl: "https://liarsledger.com/pricing",
+    });
+  }
+  next();
+}
+
+app.post("/api/verify-claim", requireToken, requirePro, wrap(async (req, res) => {
   const { claim, member, record } = req.body;
 
   if (!claim) return res.status(400).json({ error: "claim required" });
@@ -168,7 +227,7 @@ app.get("/api/congress/*", requireToken, wrap(async (req, res) => {
 }));
 
 // ── VoteSmart proxy ───────────────────────────────────────────────────────────
-app.get("/api/votesmart/*", requireToken, wrap(async (req, res) => {
+app.get("/api/votesmart/*", requireToken, requirePro, wrap(async (req, res) => {
   const path  = req.params[0];
   const query = new URLSearchParams(req.query);
 

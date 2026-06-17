@@ -19,7 +19,7 @@ async function clog(message) {
 // --navy: #121f44  --accent: #c8a96e  --alert: #c73a25
 // --text: #f1eedf  --muted: #c4c9d7  --faint: #5a5f6e
 // --border: rgba(239,233,221,0.12)  --border-acc: rgba(200,169,110,0.35)
-// Fonts: Oswald (headings/brand) + IBM Plex Mono (data/mono) - loaded via Google Fonts
+// Fonts: Oswald (headings/brand) + Inter (body/data/labels) - loaded via Google Fonts
 
 function initSidebar() {
   const existing = document.getElementById("ll-bar");
@@ -35,7 +35,7 @@ function initSidebar() {
     const link = document.createElement("link");
     link.id = "ll-fonts";
     link.rel = "stylesheet";
-    link.href = "https://fonts.googleapis.com/css2?family=Oswald:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap";
+    link.href = "https://fonts.googleapis.com/css2?family=Oswald:wght@400;500&family=Inter:wght@400;500;600;700&display=swap";
     document.head.appendChild(link);
   }
 
@@ -45,7 +45,7 @@ function initSidebar() {
       position: fixed; bottom: 0; left: 0; right: 0; z-index: 2147483647;
       background: #0b1530;
       border-top: 2px solid #c8a96e;
-      font-family: "IBM Plex Mono", monospace;
+      font-family: "Inter", sans-serif;
       font-size: 0.72rem;
       color: #f1eedf;
       box-shadow: 0 -8px 32px rgba(0,0,0,0.5);
@@ -91,7 +91,7 @@ function initSidebar() {
       background: none; border: none;
       color: rgba(239,233,221,0.35);
       cursor: pointer;
-      font-family: "IBM Plex Mono", monospace;
+      font-family: "Inter", sans-serif;
       font-size: 0.56rem;
       letter-spacing: 0.12em;
       text-transform: uppercase;
@@ -244,7 +244,7 @@ function initSidebar() {
     .ll-card.ll-card-mixed:hover { border-top-color: #c8a96e; }
 
     .ll-report-btn {
-      font-family: "IBM Plex Mono", monospace;
+      font-family: "Inter", sans-serif;
       font-size: 0.5rem;
       letter-spacing: 0.1em;
       text-transform: uppercase;
@@ -330,10 +330,6 @@ function initSidebar() {
       color: #f1eedf;
       line-height: 1.4;
       margin-bottom: 2px;
-      display: -webkit-box;
-      -webkit-line-clamp: 2;
-      -webkit-box-orient: vertical;
-      overflow: hidden;
     }
 
     .ll-bill-date {
@@ -361,23 +357,6 @@ function initSidebar() {
       font-style: italic;
       padding: 6px 0;
     }
-
-    .ll-pro-locked {
-      border-left-color: #c8a96e !important;
-      background: rgba(200,169,110,0.06) !important;
-    }
-    .ll-pro-upsell-line {
-      font-size: 0.54rem;
-      color: rgba(200,169,110,0.55);
-      font-style: normal;
-      margin-top: 4px;
-      display: block;
-    }
-    .ll-pro-upsell-line a {
-      color: #c8a96e;
-      text-decoration: none;
-    }
-    .ll-pro-upsell-line a:hover { text-decoration: underline; }
 
     .ll-summary {
       font-size: 0.58rem;
@@ -437,6 +416,7 @@ function initSidebar() {
     <div id="ll-footer">
       <span id="ll-footer-source">congress.gov · official record · non-partisan</span>
       <div id="ll-footer-right">
+        <span id="ll-pro-badge" style="display:none;color:#c8a96e;font-family:'Inter',sans-serif;font-size:0.5rem;letter-spacing:0.1em;text-transform:uppercase;margin-right:8px;">★ Pro</span>
         <span class="ll-ticker-dot"></span>
         <span id="ll-version">v0.13.0</span>
       </div>
@@ -459,6 +439,10 @@ function renderSidebar(results) {
   const cardsEl  = document.getElementById("ll-cards");
   const detailEl = document.getElementById("ll-detail");
   const bar      = document.getElementById("ll-bar");
+
+  // Pro badge — visible only for pro tier
+  const proBadge = document.getElementById("ll-pro-badge");
+  if (proBadge) proBadge.style.display = results.tier === "pro" ? "inline" : "none";
 
   // Topics / summary strip
   const summaryHtml = results.articleSummary
@@ -511,7 +495,6 @@ function renderSidebar(results) {
         ${verdictLabel ? `<span class="ll-verdict-label">${verdictLabel}</span>` : ""}
         ${escapeHtml(displayClaim)}
         ${explanation ? `<span class="ll-verdict-explanation">${escapeHtml(explanation)}</span>` : ""}
-        ${record._pro_locked ? `<span class="ll-pro-upsell-line">⬡ <a href="https://liarsledger.com/pricing" target="_blank">Upgrade to Pro for verdict →</a></span>` : ""}
       </div>`;
     }
 
@@ -605,7 +588,6 @@ function renderSidebar(results) {
           ${escapeHtml(detailClaim)}
           ${vLabel ? `<br><span style="color:${vColor};font-size:0.52rem;text-transform:uppercase;letter-spacing:0.08em">${vLabel}</span>` : ""}
           ${vExplanation ? `<br><span style="color:rgba(196,201,215,0.7);font-size:0.54rem;font-style:normal">${escapeHtml(vExplanation)}</span>` : ""}
-          ${record._pro_locked ? `<br><span style="font-size:0.54rem;color:rgba(200,169,110,0.6);font-style:normal">⬡ <a href="https://liarsledger.com/pricing" target="_blank" style="color:#c8a96e">Upgrade to Pro for verdict →</a></span>` : ""}
         </div>`;
       }
 
@@ -658,6 +640,53 @@ function renderSidebar(results) {
         html += `<div class="ll-empty">No sponsored or cosponsored bills found on these topics.</div>`;
       }
 
+      // VoteSmart — gated behind Pro. Show an upsell card for free tier
+      // instead of silently hiding the section or showing a broken empty state.
+      //
+      // KEEP THIS CARD'S COPY IN SYNC WITH background.js's gating block
+      // (search "PRO-TIER GATING" in handleAnalyze) and with report.js's
+      // proFeaturesUpsellHtml. All three should agree on what Pro unlocks.
+      if (results.tier !== "pro") {
+        html += `<div class="ll-detail-title" style="margin-top:10px">Vote History &amp; Interest Group Ratings <span style="color:#5a5f6e;font-size:0.48rem;text-transform:uppercase;letter-spacing:0.08em">&nbsp;· VoteSmart</span></div>`;
+        html += `
+          <div style="
+            background: rgba(200,169,110,0.07);
+            border: 1px solid rgba(200,169,110,0.25);
+            border-radius: 3px;
+            padding: 14px 16px;
+            margin: 6px 0 4px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+          ">
+            <div style="
+              font-family: 'Inter', sans-serif;
+              font-size: 0.64rem;
+              color: #c8a96e;
+              text-transform: uppercase;
+              letter-spacing: 0.08em;
+              font-weight: 600;
+            ">★ Pro feature</div>
+            <div style="font-size: 0.72rem; color: #c4c9d7; line-height: 1.55;">
+              See full VoteSmart vote history and interest group ratings for every politician with Pro.
+            </div>
+            <a href="https://liarsledger.com/pricing" target="_blank" style="
+              display: inline-block;
+              margin-top: 4px;
+              padding: 6px 14px;
+              background: #c8a96e;
+              color: #121f44;
+              font-family: 'Inter', sans-serif;
+              font-size: 0.64rem;
+              font-weight: 700;
+              letter-spacing: 0.08em;
+              text-transform: uppercase;
+              text-decoration: none;
+              width: fit-content;
+            ">Upgrade to Pro →</a>
+          </div>`;
+      } else {
+
       // VoteSmart vote history
       const vsVotes = record.voteSmartVotes || [];
       if (vsVotes.length > 0) {
@@ -673,19 +702,6 @@ function renderSidebar(results) {
               </div>
             </div>`;
         });
-      }
-
-      // Pro upsell for VoteSmart sections (free tier)
-      if (record._pro_locked) {
-        html += `
-          <div class="ll-detail-title" style="margin-top:10px">
-            Interest Group Ratings &amp; Vote History
-            <span style="color:#5a5f6e;font-size:0.48rem;text-transform:uppercase;letter-spacing:0.08em">&nbsp;· VoteSmart</span>
-          </div>
-          <div class="ll-empty" style="font-style:normal;color:#c8a96e;opacity:0.7">
-            ⬡ Pro feature &nbsp;·&nbsp;
-            <a href="https://liarsledger.com/pricing" target="_blank" style="color:#c8a96e">Upgrade to Pro →</a>
-          </div>`;
       }
 
       // VoteSmart interest group ratings
@@ -705,6 +721,7 @@ function renderSidebar(results) {
             </div>`;
         });
       }
+      } // end pro-tier VoteSmart else block
 
       detailEl.innerHTML = html;
       detailEl.classList.add("ll-visible");
@@ -746,21 +763,12 @@ function findArticleBody() {
 // --- Name extraction ---
 const TITLE_PATTERN = /\b(?:President|Vice\s+President|Sen\.?|Senator|Rep\.?|Representative|Gov\.?|Governor|Mayor|Secretary|Sec\.?|Democrat|Republican|Independent)\s+([A-Z][a-z]+(?:[-'\s][A-Z][a-z]+)?)/g;
 
-const GENERIC_TITLE_WORDS = [
-  "majority", "minority", "speaker", "whip", "leader", "chairman", "chairwoman",
-  "president", "emeritus", "designate",
-];
-
 function extractPoliticianNames(text) {
   const found = new Set();
   let match;
   TITLE_PATTERN.lastIndex = 0;
   while ((match = TITLE_PATTERN.exec(text)) !== null) {
-    const name = match[0].trim();
-    const lastName = (match[1] || "").toLowerCase();
-    // Skip if the captured "name" is actually a leadership title word
-    if (GENERIC_TITLE_WORDS.includes(lastName)) continue;
-    found.add(name);
+    found.add(match[0].trim());
   }
   return Array.from(found);
 }
@@ -825,14 +833,14 @@ function renderRateLimited(response) {
         font-size: 0.58rem;
         color: #c4c9d7;
         line-height: 1.5;
-      ">Free accounts are limited to a set number of scans per day. Pro accounts get unlimited scans.</div>
+      ">All accounts share a daily scan pool. Pro unlocks AI summaries, claim verdicts, and full VoteSmart data.</div>
       <a href="${escapeHtml(upgradeUrl)}" target="_blank" style="
         display: inline-block;
         margin-top: 4px;
         padding: 5px 12px;
         background: #c73a25;
         color: #fff6ef;
-        font-family: 'IBM Plex Mono', monospace;
+        font-family: 'Inter', sans-serif;
         font-size: 0.54rem;
         font-weight: 700;
         letter-spacing: 0.14em;
@@ -845,6 +853,26 @@ function renderRateLimited(response) {
   requestAnimationFrame(function() { bar.classList.add("ll-visible"); });
 }
 
+// --- Capacity warning nudge (shown after successful scan when user count is 2500-4999) ---
+// Not shown to pro users — they already know they're pro, no need to upsell.
+function renderCapacityWarning() {
+  const footer = document.getElementById("ll-footer-source");
+  if (!footer || document.getElementById("ll-capacity-warning")) return;
+  const nudge = document.createElement("span");
+  nudge.id = "ll-capacity-warning";
+  nudge.style.cssText = [
+    "display:inline-block",
+    "margin-left:8px",
+    "font-family:'Inter',sans-serif",
+    "font-size:0.5rem",
+    "color:#c8a96e",
+    "letter-spacing:0.08em",
+    "text-transform:uppercase",
+  ].join(";");
+  nudge.innerHTML = '⚠ High demand &mdash; <a href="https://liarsledger.com/pricing" target="_blank" style="color:#c8a96e;">upgrade for guaranteed access</a>';
+  footer.appendChild(nudge);
+}
+
 // --- Poll for results ---
 function startPolling() {
   console.log("[Liars Ledger] poll started");
@@ -853,7 +881,10 @@ function startPolling() {
       if (browser.runtime.lastError) return;
       if (!response || response.status === "working") return;
       clearInterval(poll);
-      if (response.status === "ok") renderSidebar(response);
+      if (response.status === "ok") {
+        renderSidebar(response);
+        if (response.capacityWarning && response.tier !== "pro") renderCapacityWarning();
+      }
       else if (response.status === "rate_limited") renderRateLimited(response);
     });
   }, 500);
@@ -873,7 +904,10 @@ browser.runtime.onMessage.addListener(function(message, sender, sendResponse) {
   }
   if (message.action === "showResults") {
     browser.runtime.sendMessage({ action: "getResults" }, function(response) {
-      if (response?.status === "ok") renderSidebar(response);
+      if (response?.status === "ok") {
+        renderSidebar(response);
+        if (response.capacityWarning && response.tier !== "pro") renderCapacityWarning();
+      }
       else if (response?.status === "rate_limited") renderRateLimited(response);
     });
     sendResponse({ ok: true });
