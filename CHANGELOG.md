@@ -207,7 +207,21 @@
 - Missed vote rates and committee assignments
 - Historical roll-call votes back to 1990s
 
-### [0.17.0] - Creator shareable graphics
+### [0.17.0] - Social media scanning (X / Facebook)
+- **X (Twitter)** — extract claims from individual tweet pages and thread views
+  - Platform-specific content extractor targeting tweet text containers
+  - Looser name extraction — last-name-only references ("Trump", "Pelosi") without title prefix
+  - Handle short-form text: LLM prompt adjusted for claim extraction from single sentences
+  - `manifest.json` host permission: `https://x.com/*`, `https://twitter.com/*`
+- **Facebook** — extract claims from public post pages
+  - Platform-specific extractor targeting post body containers
+  - Handle dynamic React-rendered content — MutationObserver or scan-on-demand
+  - `manifest.json` host permission: `https://www.facebook.com/*`
+- **Shared work** — user-highlight scan mode: select any text on any page → right-click → "Scan with Liar's Ledger"
+  - Fallback for sites with no supported extractor
+  - Context menu registered via `chrome.contextMenus`
+
+### [0.18.0] - Creator shareable graphics
 - One-click image card: politician name, claim, voting record
 - Twitter/X (1200×628) and Instagram (1080×1080) formats
 - Canvas API, no server render, Creator tier feature

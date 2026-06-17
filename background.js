@@ -62,6 +62,9 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // --- Main analysis pipeline ---
 async function handleAnalyze({ politicians, articleText }) {
   try {
+    const tokenData = await getOrCreateToken();
+    const isPro = tokenData.tier === "pro";
+
     let articleSummary   = null;
     let figures          = [];
     let mainTopicsGlobal = [];
@@ -82,8 +85,20 @@ async function handleAnalyze({ politicians, articleText }) {
       });
       if (ann.ok) {
         articleSummary   = ann.summary || null;
-        figures          = ann.figures || [];
         mainTopicsGlobal = ann.main_topics || [];
+
+        // Strip figures that are positional titles with no specific person name
+        const TITLE_ONLY = [
+          "majority leader", "minority leader", "house speaker", "senate speaker",
+          "speaker of the house", "president pro tempore", "senate president",
+          "house majority", "house minority", "senate majority", "senate minority",
+          "senate whip", "house whip", "deputy whip", "committee chair",
+          "ranking member", "floor leader",
+        ];
+        figures = (ann.figures || []).filter(f => {
+          const name = (f.lookup_name || "").toLowerCase().trim();
+          return !TITLE_ONLY.some(t => name.includes(t));
+        });
         if (ann._meta) {
           const loserError = figures?.[0]?._loser_error || "unknown";
           const logMsg = ann._meta.provider === "single_model"
@@ -175,7 +190,7 @@ async function handleAnalyze({ politicians, articleText }) {
     const topicsUnion = [...new Set([...mainTopicsGlobal, ...memberJobs.flatMap((j) => j.topics)])];
     logger.info("background", `search terms (union): ${topicsUnion.join(", ")}`);
 
-    const records = await lookupAll(memberJobs);
+    const records = await lookupAll(memberJobs, { skipVoteSmart: !isPro });
 
     for (let i = 0; i < records.length; i++) {
       const label = allMembers[i].matched_as;
@@ -194,12 +209,19 @@ async function handleAnalyze({ politicians, articleText }) {
       }
     }
 
+    // Mark free tier records so the UI can show upsell prompts
+    if (!isPro) {
+      for (const r of records) r._pro_locked = true;
+    }
+
     logger.info("background", `analysis complete - ${records.length} record(s) returned`);
-    // --- Claim-vs-record verification ---
-    logger.info("background", `verifying claims for ${records.length} member(s)`);
-    await verifyAllClaims(records);
-    for (const r of records) {
-      logger.info("background", `${r.politician.full_name}: verdict=${r.verdict}`);
+
+    if (isPro) {
+      logger.info("background", `verifying claims for ${records.length} member(s)`);
+      await verifyAllClaims(records);
+      for (const r of records) {
+        logger.info("background", `${r.politician.full_name}: verdict=${r.verdict}`);
+      }
     }
 
     logger.info("background", `analysis complete - ${records.length} record(s) returned`);

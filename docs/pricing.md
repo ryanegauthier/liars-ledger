@@ -14,11 +14,12 @@ nav_order: 8
 | | Free | Pro | Creator |
 |---|---|---|---|
 | **Price** | $0 / forever | $5 / month | $19 / month |
-| **Daily scans** | Dynamic — up to 30/day at launch | Unlimited | Unlimited |
+| **Daily scans** | Dynamic — scales with user base | Same as Free | Same as Free |
 | **Politician detection** | ✓ | ✓ | ✓ |
 | **Roll-call votes** | ✓ | ✓ | ✓ |
-| **AI claim extraction & verdict** | ✓ | ✓ | ✓ |
-| **VoteSmart interest group ratings** | ✓ | ✓ | ✓ |
+| **AI claim extraction** | ✓ | ✓ | ✓ |
+| **Claim verdict (supports / contradicts / mixed)** | — | ✓ | ✓ |
+| **VoteSmart interest group ratings** | — | ✓ | ✓ |
 | **Embeddable record cards** | — | — | ✓ |
 | **API access** | — | — | ✓ |
 

@@ -78,7 +78,7 @@ function renderRecord(record) {
               <span style="font-size:0.58rem">${escapeHtml(bill.type || "")} ${escapeHtml(String(num))}</span>
             </div>
             <div class="ll-row-right">
-              <div>${escapeHtml(truncate(bill.title, 120))}</div>
+              <div>${escapeHtml(bill.title || "")}</div>
               <div class="ll-row-sub">${escapeHtml(bill.introducedDate || "")} · <a href="${escapeHtml(url)}" target="_blank">View on congress.gov →</a></div>
             </div>
           </div>`;
@@ -96,7 +96,7 @@ function renderRecord(record) {
               <span style="font-size:0.56rem;color:#5a5f6e">${escapeHtml(v.date || "")}</span>
             </div>
             <div class="ll-row-right">
-              <div>${escapeHtml(truncate(v.question, 120))}</div>
+              <div>${escapeHtml(v.question || "")}</div>
               <div class="ll-row-sub">${v.legislation ? escapeHtml(v.legislation) + " · " : ""}${vurl}</div>
             </div>
           </div>`;
@@ -112,7 +112,7 @@ function renderRecord(record) {
             <span style="font-size:0.56rem;color:#5a5f6e">${escapeHtml(v.date || "")}</span>
           </div>
           <div class="ll-row-right">
-            <div>${escapeHtml(truncate(v.title, 120))}</div>
+            <div>${escapeHtml(v.title || "")}</div>
             <div class="ll-row-sub">${escapeHtml(v.billNumber || "")}${v.stage ? " · " + escapeHtml(v.stage) : ""}${v.categories?.length ? " · " + v.categories.map(escapeHtml).join(", ") : ""}</div>
           </div>
         </div>`).join("");
@@ -136,7 +136,7 @@ function renderRecord(record) {
                 <div class="ll-rating-bar" style="width:${pct}%;background:${color}"></div>
               </div>
             </div>
-            <div class="ll-rating-text">${escapeHtml(truncate(r.ratingText, 120))}</div>
+            <div class="ll-rating-text">${escapeHtml(r.ratingText || "")}</div>
           </div>`;
       }).join("");
 

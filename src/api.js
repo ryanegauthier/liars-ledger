@@ -105,7 +105,7 @@ async function searchBillsByKeyword(keyword, limit = 10) {
 
 // --- Main: look up a politician's record on given topics ---
 // Returns { politician, topics, sponsored, cosponsored, notFound }
-async function lookupPoliticianOnTopics(member, topics) {
+async function lookupPoliticianOnTopics(member, topics, options = {}) {
   const result = {
     politician: member,
     topics,
@@ -195,22 +195,12 @@ async function lookupPoliticianOnTopics(member, topics) {
     if (billMatchesAny(bill)) addIfNew(bill, result.cosponsored, "cosponsored");
   }
 
-  // Direct keyword search - use a subset of most specific LLM terms
-  // to avoid too many API calls; cap at 6 most distinctive terms
-  const searchTermsToQuery = [
-    ...new Set([...llmSearchTerms.slice(0, 4), ...topics.slice(0, 2)]),
-  ].slice(0, 6);
-
-  // Parallel keyword searches - all independent, safe to batch
-  const searchResults = await Promise.all(
-    searchTermsToQuery.map((term) => searchBillsByKeyword(term, 10)),
-  );
-  searchTermsToQuery.forEach((term, i) => {
-    for (const b of searchResults[i]) addIfNew(b, result.searched, term);
-  });
+  // Keyword search for "Related" bills removed — broad topic names produce too
+  // many false positives and the results add more noise than signal for users.
 
   // Fetch GovTrack roll-call votes + VoteSmart data in parallel
   const vsEnabled =
+    !options.skipVoteSmart &&
     typeof lookupVoteSmart === "function" &&
     typeof CONFIG !== "undefined" &&
     CONFIG.PROXY_URL;
@@ -374,9 +364,9 @@ async function resolveGovTrackId(bioguideId) {
 }
 
 // --- Parallel lookup for all resolved politicians ---
-async function lookupAll(memberJobs) {
+async function lookupAll(memberJobs, options = {}) {
   const results = await Promise.all(
-    memberJobs.map(({ member, topics }) => lookupPoliticianOnTopics(member, topics))
+    memberJobs.map(({ member, topics }) => lookupPoliticianOnTopics(member, topics, options))
   );
   return results;
 }

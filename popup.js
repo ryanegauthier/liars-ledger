@@ -232,16 +232,12 @@ function loadScanInfo() {
   browser.storage.sync.get("ll_auth_token", (data) => {
     const token = data.ll_auth_token;
     if (!token) return;
-    if (token.tier === "pro") {
-      scanInfoEl.textContent = "Pro · Unlimited scans";
-      scanInfoEl.className = "scan-info pro";
-    } else {
-      const used = token.scansToday ?? 0;
-      const limit = token.limit ?? 5;
-      const remaining = token.remaining ?? (limit - used);
-      scanInfoEl.textContent = `Free · ${remaining} scan${remaining !== 1 ? "s" : ""} remaining today`;
-      scanInfoEl.className = "scan-info" + (remaining === 0 ? " exhausted" : remaining <= 1 ? " low" : "");
-    }
+    const used = token.scansToday ?? 0;
+    const limit = token.limit ?? 30;
+    const remaining = token.remaining ?? (limit - used);
+    const tierLabel = token.tier === "pro" ? "Pro" : "Free";
+    scanInfoEl.textContent = `${tierLabel} · ${remaining} scan${remaining !== 1 ? "s" : ""} remaining today`;
+    scanInfoEl.className = "scan-info" + (token.tier === "pro" ? " pro" : "") + (remaining === 0 ? " exhausted" : remaining <= 1 ? " low" : "");
   });
 }
 

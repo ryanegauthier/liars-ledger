@@ -330,6 +330,10 @@ function initSidebar() {
       color: #f1eedf;
       line-height: 1.4;
       margin-bottom: 2px;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
     }
 
     .ll-bill-date {
@@ -357,6 +361,23 @@ function initSidebar() {
       font-style: italic;
       padding: 6px 0;
     }
+
+    .ll-pro-locked {
+      border-left-color: #c8a96e !important;
+      background: rgba(200,169,110,0.06) !important;
+    }
+    .ll-pro-upsell-line {
+      font-size: 0.54rem;
+      color: rgba(200,169,110,0.55);
+      font-style: normal;
+      margin-top: 4px;
+      display: block;
+    }
+    .ll-pro-upsell-line a {
+      color: #c8a96e;
+      text-decoration: none;
+    }
+    .ll-pro-upsell-line a:hover { text-decoration: underline; }
 
     .ll-summary {
       font-size: 0.58rem;
@@ -490,6 +511,7 @@ function renderSidebar(results) {
         ${verdictLabel ? `<span class="ll-verdict-label">${verdictLabel}</span>` : ""}
         ${escapeHtml(displayClaim)}
         ${explanation ? `<span class="ll-verdict-explanation">${escapeHtml(explanation)}</span>` : ""}
+        ${record._pro_locked ? `<span class="ll-pro-upsell-line">⬡ <a href="https://liarsledger.com/pricing" target="_blank">Upgrade to Pro for verdict →</a></span>` : ""}
       </div>`;
     }
 
@@ -583,6 +605,7 @@ function renderSidebar(results) {
           ${escapeHtml(detailClaim)}
           ${vLabel ? `<br><span style="color:${vColor};font-size:0.52rem;text-transform:uppercase;letter-spacing:0.08em">${vLabel}</span>` : ""}
           ${vExplanation ? `<br><span style="color:rgba(196,201,215,0.7);font-size:0.54rem;font-style:normal">${escapeHtml(vExplanation)}</span>` : ""}
+          ${record._pro_locked ? `<br><span style="font-size:0.54rem;color:rgba(200,169,110,0.6);font-style:normal">⬡ <a href="https://liarsledger.com/pricing" target="_blank" style="color:#c8a96e">Upgrade to Pro for verdict →</a></span>` : ""}
         </div>`;
       }
 
@@ -652,6 +675,19 @@ function renderSidebar(results) {
         });
       }
 
+      // Pro upsell for VoteSmart sections (free tier)
+      if (record._pro_locked) {
+        html += `
+          <div class="ll-detail-title" style="margin-top:10px">
+            Interest Group Ratings &amp; Vote History
+            <span style="color:#5a5f6e;font-size:0.48rem;text-transform:uppercase;letter-spacing:0.08em">&nbsp;· VoteSmart</span>
+          </div>
+          <div class="ll-empty" style="font-style:normal;color:#c8a96e;opacity:0.7">
+            ⬡ Pro feature &nbsp;·&nbsp;
+            <a href="https://liarsledger.com/pricing" target="_blank" style="color:#c8a96e">Upgrade to Pro →</a>
+          </div>`;
+      }
+
       // VoteSmart interest group ratings
       const vsRatings = record.voteSmartRatings || [];
       if (vsRatings.length > 0) {
@@ -710,12 +746,21 @@ function findArticleBody() {
 // --- Name extraction ---
 const TITLE_PATTERN = /\b(?:President|Vice\s+President|Sen\.?|Senator|Rep\.?|Representative|Gov\.?|Governor|Mayor|Secretary|Sec\.?|Democrat|Republican|Independent)\s+([A-Z][a-z]+(?:[-'\s][A-Z][a-z]+)?)/g;
 
+const GENERIC_TITLE_WORDS = [
+  "majority", "minority", "speaker", "whip", "leader", "chairman", "chairwoman",
+  "president", "emeritus", "designate",
+];
+
 function extractPoliticianNames(text) {
   const found = new Set();
   let match;
   TITLE_PATTERN.lastIndex = 0;
   while ((match = TITLE_PATTERN.exec(text)) !== null) {
-    found.add(match[0].trim());
+    const name = match[0].trim();
+    const lastName = (match[1] || "").toLowerCase();
+    // Skip if the captured "name" is actually a leadership title word
+    if (GENERIC_TITLE_WORDS.includes(lastName)) continue;
+    found.add(name);
   }
   return Array.from(found);
 }

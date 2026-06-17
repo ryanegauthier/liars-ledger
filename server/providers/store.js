@@ -139,10 +139,6 @@ export async function incrementScans(tokenId, tier = "free") {
     await redis.expire(key, SCAN_TTL_SECONDS);
   }
 
-  if (tier === "pro") {
-    return { count, limit: "unlimited", remaining: "unlimited", allowed: true, warn: false };
-  }
-
   const { limit, warn } = await getFreeTierLimit();
   const allowed = count <= limit;
 
