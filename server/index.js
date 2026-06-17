@@ -12,6 +12,7 @@
 //   GET  /api/govtrack/*       - GovTrack proxy (no key)
 //   GET  /api/legislators      - congress-legislators dataset (cached)
 //   GET  /health               - health check
+//   POST /admin/set-tier       - manual tier override (TEMPORARY - testing only, see warning below)
 
 import "dotenv/config";
 import express from "express";
@@ -23,7 +24,7 @@ import { congress }  from "./providers/congress.js";
 import { votesmart } from "./providers/votesmart.js";
 import { govtrack }  from "./providers/govtrack.js";
 import { verifyClaim } from "./providers/verify.js";
-import { createToken, getToken, getScans, incrementUserCount, getFreeTierLimit } from "./providers/store.js";
+import { createToken, getToken, getScans, incrementUserCount, getFreeTierLimit, upgradeTier } from "./providers/store.js";
 import { requireToken, countScan } from "./middleware/auth.js";
 
 const app  = express();
@@ -260,6 +261,55 @@ app.get("/api/legislators", requireToken, wrap(async (req, res) => {
     res.json(await govtrack.legislators());
   } catch (e) {
     res.status(502).json({ error: e.message });
+  }
+}));
+
+// ── Admin: manual tier override ────────────────────────────────────────────────
+// TEMPORARY — built to unblock testing while Square integration doesn't exist
+// yet (no real way to become Pro). Once Square's /webhook/square is live and
+// actually flips tiers automatically, this route should be removed entirely —
+// it's a manual bypass, not a feature.
+//
+// Auth: a shared secret via the x-admin-key header, set as ADMIN_SECRET in
+// Render's environment variables. Never the same value as any other secret in
+// this codebase. If ADMIN_SECRET isn't set, this route always 403s — it does
+// NOT fail open, unlike requireToken elsewhere, since failing open here would
+// let anyone grant themselves Pro for free.
+//
+// Usage:
+//   POST /admin/set-tier
+//   Headers: x-admin-key: <ADMIN_SECRET>, Content-Type: application/json
+//   Body: { "tokenId": "...", "tier": "pro" }  (tier: "free" or "pro")
+app.post("/admin/set-tier", express.json(), wrap(async (req, res) => {
+  const adminSecret = process.env.ADMIN_SECRET;
+  const providedKey = req.headers["x-admin-key"];
+
+  if (!adminSecret || !providedKey || providedKey !== adminSecret) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  const { tokenId, tier } = req.body || {};
+  if (!tokenId || typeof tokenId !== "string") {
+    return res.status(400).json({ error: "tokenId required" });
+  }
+  if (tier !== "free" && tier !== "pro") {
+    return res.status(400).json({ error: 'tier must be "free" or "pro"' });
+  }
+
+  try {
+    let updated = await upgradeTier(tokenId, tier);
+    if (!updated) {
+      // Token didn't exist or was corrupted (getToken() returns null in both
+      // cases) — create it fresh rather than leaving the request stuck.
+      updated = await createToken(tokenId, tier);
+      console.log(`[admin] token ${tokenId.slice(0, 8)}... did not exist or was corrupted - created fresh as ${tier}`);
+    } else {
+      console.log(`[admin] token ${tokenId.slice(0, 8)}... set to ${tier}`);
+    }
+    res.json({ ok: true, tokenId, tier: updated.tier });
+  } catch (e) {
+    console.error("[admin] set-tier failed:", e.message);
+    res.status(500).json({ error: "Failed to update tier" });
   }
 }));
 
