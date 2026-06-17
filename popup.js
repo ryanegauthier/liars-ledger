@@ -17,6 +17,11 @@ toggle.addEventListener("change", () => {
 });
 
 // ── Check for existing results on popup open ──────────────────────────────────
+// Previously this auto-closed the popup after restoring results to the
+// sidebar, with no way to trigger a fresh scan of the same page short of
+// closing/reopening the tab or browser. Now it keeps the popup open and
+// relabels the scan button to "Rescan This Page" — a deliberate action,
+// since a rescan costs a real scan from the daily pool, same as any scan.
 browser.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
   if (!tab) return;
   browser.storage.session.get(["ll_results", "ll_results_url"], (data) => {
@@ -24,7 +29,9 @@ browser.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
       browser.tabs.sendMessage(tab.id, { action: "showResults" }, () => {
         if (browser.runtime.lastError) return;
       });
-      setTimeout(() => window.close(), 200);
+      const count = data.ll_results.records?.length || 0;
+      setStatus(`Showing cached results (${count} member${count !== 1 ? "s" : ""}). Rescan for an update.`, "");
+      scanBtn.textContent = "Rescan This Page";
     }
   });
 });
@@ -247,4 +254,3 @@ function loadScanInfo() {
 }
 
 loadScanInfo();
-
