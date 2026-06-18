@@ -13,6 +13,7 @@
 //   GET  /api/legislators      - congress-legislators dataset (cached)
 //   GET  /health               - health check
 //   POST /admin/set-tier       - manual tier override (TEMPORARY - testing only, see warning below)
+//   POST /admin/reset-scans    - manual scan count reset (TEMPORARY - testing only)
 
 import "dotenv/config";
 import express from "express";
@@ -24,7 +25,7 @@ import { congress }  from "./providers/congress.js";
 import { votesmart } from "./providers/votesmart.js";
 import { govtrack }  from "./providers/govtrack.js";
 import { verifyClaim } from "./providers/verify.js";
-import { createToken, getToken, getScans, incrementUserCount, getFreeTierLimit, upgradeTier } from "./providers/store.js";
+import { createToken, getToken, getScans, incrementUserCount, getFreeTierLimit, upgradeTier, resetScans } from "./providers/store.js";
 import { requireToken, countScan } from "./middleware/auth.js";
 
 const app  = express();
@@ -59,6 +60,23 @@ const limiter = rateLimit({
   message: { error: "Too many requests, please slow down." },
 });
 app.use("/api", limiter);
+
+// /register gets its own, much stricter limiter, keyed by IP. A real install
+// calls this once (occasionally again on startup to refresh state) — there's
+// no legitimate reason for one IP to register many tokens quickly. This is
+// the main defense against a script mass-creating fake tokens to drain the
+// shared scan pool or inflate global:user_count (which lowers everyone's
+// daily limit). Not a complete fix — a distributed attacker with many IPs
+// or proxies isn't stopped by this — but it closes the trivial single-machine
+// case for free, with no user-facing downside for real installs.
+const registerLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many registration attempts. Please try again later." },
+});
+app.use("/register", registerLimiter);
 
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => {
@@ -264,29 +282,31 @@ app.get("/api/legislators", requireToken, wrap(async (req, res) => {
   }
 }));
 
-// ── Admin: manual tier override ────────────────────────────────────────────────
-// TEMPORARY — built to unblock testing while Square integration doesn't exist
-// yet (no real way to become Pro). Once Square's /webhook/square is live and
-// actually flips tiers automatically, this route should be removed entirely —
-// it's a manual bypass, not a feature.
+// ── Admin endpoints (TEMPORARY — testing/manual-override only) ────────────────
+// Both routes below exist to unblock testing while Square integration doesn't
+// exist yet — there's no real way to become Pro or reset a count otherwise.
+// Once /webhook/square is live and handles this automatically, these routes
+// should be removed entirely; they're manual bypasses, not features.
 //
 // Auth: a shared secret via the x-admin-key header, set as ADMIN_SECRET in
 // Render's environment variables. Never the same value as any other secret in
-// this codebase. If ADMIN_SECRET isn't set, this route always 403s — it does
+// this codebase. If ADMIN_SECRET isn't set, these routes always 403 — they do
 // NOT fail open, unlike requireToken elsewhere, since failing open here would
-// let anyone grant themselves Pro for free.
-//
-// Usage:
-//   POST /admin/set-tier
-//   Headers: x-admin-key: <ADMIN_SECRET>, Content-Type: application/json
-//   Body: { "tokenId": "...", "tier": "pro" }  (tier: "free" or "pro")
-app.post("/admin/set-tier", express.json(), wrap(async (req, res) => {
+// let anyone grant themselves Pro or unlimited scans for free.
+function checkAdminAuth(req, res) {
   const adminSecret = process.env.ADMIN_SECRET;
   const providedKey = req.headers["x-admin-key"];
-
   if (!adminSecret || !providedKey || providedKey !== adminSecret) {
-    return res.status(403).json({ error: "Forbidden" });
+    res.status(403).json({ error: "Forbidden" });
+    return false;
   }
+  return true;
+}
+
+// POST /admin/set-tier
+// Body: { "tokenId": "...", "tier": "pro" }  (tier: "free" or "pro")
+app.post("/admin/set-tier", express.json(), wrap(async (req, res) => {
+  if (!checkAdminAuth(req, res)) return;
 
   const { tokenId, tier } = req.body || {};
   if (!tokenId || typeof tokenId !== "string") {
@@ -310,6 +330,26 @@ app.post("/admin/set-tier", express.json(), wrap(async (req, res) => {
   } catch (e) {
     console.error("[admin] set-tier failed:", e.message);
     res.status(500).json({ error: "Failed to update tier" });
+  }
+}));
+
+// POST /admin/reset-scans — testing convenience, skip waiting until midnight UTC
+// Body: { "tokenId": "..." }
+app.post("/admin/reset-scans", express.json(), wrap(async (req, res) => {
+  if (!checkAdminAuth(req, res)) return;
+
+  const { tokenId } = req.body || {};
+  if (!tokenId || typeof tokenId !== "string") {
+    return res.status(400).json({ error: "tokenId required" });
+  }
+
+  try {
+    await resetScans(tokenId);
+    console.log(`[admin] scan count reset for token ${tokenId.slice(0, 8)}...`);
+    res.json({ ok: true, tokenId, scansToday: 0 });
+  } catch (e) {
+    console.error("[admin] reset-scans failed:", e.message);
+    res.status(500).json({ error: "Failed to reset scan count" });
   }
 }));
 

@@ -2,6 +2,38 @@
 
 > **Note:** [0.14.0] shipped before [0.13.0] is dated below. 0.13.0 (Chrome Web Store launch) was submitted for review first but is still pending approval, so it remains in the Planned section until that completes. 0.14.0 (freemium tier) was built and shipped in the meantime.
 
+## [0.14.2] - 2026-06-17
+
+### Automated test suite (Vitest) + first real-world catch
+
+- **`server/test/`** - new Vitest-based test suite, split into two tiers by cost:
+  - `test/free/` - runs by default (`npm test`), zero or near-zero API cost. Covers Pro-tier gating (403s on `/api/verify-claim` and `/api/votesmart/*` for free tier, field-stripping on extraction routes), the pooled-scan-limit regression from 0.14.1, admin endpoint fail-closed behavior, and `/register` validation
+  - `test/cost/` - opt-in only (`npm run test:cost`), makes real Claude/Mistral extraction calls (~$0.001/call). Basic sanity checks that extraction returns sensible data
+  - `test/helpers.js` - shared utilities (`api()`, `setTestTokenTier()`, `resetTestTokenScans()`) wrapping the same admin endpoints used for manual testing in 0.14.0/0.14.1
+- **`server/package.json`** - added `vitest` devDependency, `test`/`test:watch`/`test:cost` scripts
+- **`server/vitest.config.js`** / **`vitest.cost.config.js`** - separate configs so the two tiers never accidentally run together
+- **Deliberately not tested:** the `/register` rate limiter's actual 5/hour threshold. Verifying it would require sending 6+ rapid registrations, which would itself inflate `global:user_count` and degrade the real pooled limit on every test run - the exact harm the limiter exists to prevent. Documented as a known gap rather than worked around.
+- **First real catch:** running this suite for the first time immediately surfaced that `/admin/reset-scans` (added in 0.14.1) was returning 404 against the live deployment, and the pooled-scan-limit regression test failed as a direct consequence (it depends on being able to reset the test token's count first). This strongly suggests the 0.14.1 deploy never actually went live on Render before 0.14.2's changes were bundled in - see the "Known limitation" note below.
+
+### Known limitation
+- **Deploy status of 0.14.1 is unconfirmed.** The first test run (pre-0.14.2) showed `/admin/reset-scans` returning 404, which only happens if that route isn't deployed. 0.14.1's and 0.14.2's changes are being pushed together as a single deploy rather than verifying 0.14.1 in isolation first. Re-run `npm test` immediately after this deploy goes live and confirm all tests pass before relying on any of 0.14.0/0.14.1/0.14.2's fixes being active in production.
+
+---
+
+## [0.14.1] - 2026-06-17
+
+### Bugfix - pro tier was bypassing the pooled scan limit entirely
+
+- **`server/providers/store.js`** - removed a stale `tier === "pro"` short-circuit in `incrementScans()` that returned `{ limit: "unlimited", allowed: true }` for any pro token, regardless of the actual pooled limit
+  - This was a real regression: `/register` and `/api/scan-status` were correctly updated in 0.14.0 to treat scans as pooled across all tiers, but `incrementScans()` - the function that actually gates `/api/scan/start` - never got the same fix. A pro token hitting `/api/scan/start` had no scan limit at all until this fix.
+  - Caught during manual pre-ship verification, not by automated tests - there are none yet for this codebase
+- **`server/providers/store.js`** - new `resetScans(tokenId)` - deletes a token's scan-count key for the current day
+- **`server/index.js`** - new `POST /admin/reset-scans` (testing convenience, skip waiting until midnight UTC to re-test limits)
+  - Shares `checkAdminAuth()` with `/admin/set-tier` (added in 0.14.0) - both fail closed if `ADMIN_SECRET` isn't set on Render
+- **Note:** both `/admin/*` routes are temporary, meant to unblock testing before Square integration exists. They should be removed once `/webhook/square` (planned 0.15.0) makes manual tier/scan overrides unnecessary.
+
+---
+
 ## [0.14.0] - 2026-06-17
 
 ### Freemium tier — dynamic scan limits, pro feature gating, upgrade prompts

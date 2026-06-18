@@ -135,6 +135,9 @@ export async function deleteToken(tokenId) {
 /**
  * Increment today's scan count for a token.
  * Fetches the current free-tier limit dynamically — no hardcoded constant.
+ * Scans are pooled across ALL tiers (see README "Free vs. Pro" section and
+ * the PRO-TIER GATING comments in background.js / index.js) — tier does not
+ * change the scan limit here, only which fields get returned elsewhere.
  * Returns { count, limit, remaining, allowed, warn }.
  *   warn — true when the capacity warning band is active (2500–4999 users);
  *          pass this through to /api/scan-status for UI surfacing.
@@ -146,10 +149,6 @@ export async function incrementScans(tokenId, tier = "free") {
   // Set TTL on first scan of the day
   if (count === 1) {
     await redis.expire(key, SCAN_TTL_SECONDS);
-  }
-
-  if (tier === "pro") {
-    return { count, limit: "unlimited", remaining: "unlimited", allowed: true, warn: false };
   }
 
   const { limit, warn } = await getFreeTierLimit();
@@ -171,4 +170,14 @@ export async function getScans(tokenId) {
   const key = `scans:${tokenId}:${todayKey()}`;
   const count = (await redis.get(key)) || 0;
   return Number(count);
+}
+
+/**
+ * Reset today's scan count for a token to zero (deletes the Redis key
+ * entirely, same effect as it never having been incremented today).
+ * Admin/testing use only — see /admin/reset-scans in index.js.
+ */
+export async function resetScans(tokenId) {
+  const key = `scans:${tokenId}:${todayKey()}`;
+  await redis.del(key);
 }

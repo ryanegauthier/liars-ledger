@@ -5,7 +5,10 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "node --watch index.js"
+    "dev": "node --watch index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:cost": "vitest run --config vitest.cost.config.js"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -18,5 +21,8 @@
     "express": "^4.19.2",
     "express-rate-limit": "^7.3.1",
     "node-fetch": "^3.3.2"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.9"
   }
 }
