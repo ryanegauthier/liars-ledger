@@ -80,7 +80,7 @@ app.use("/register", registerLimiter);
 
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => {
-  res.json({ status: "ok", version: process.env.npm_package_version || "0.13.0", ts: new Date().toISOString() });
+  res.json({ status: "ok", version: process.env.npm_package_version || "0.14.2", ts: new Date().toISOString() });
 });
 
 // ── Registration ──────────────────────────────────────────────────────────────
