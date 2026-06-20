@@ -2,6 +2,28 @@
 
 > **Note:** [0.13.0] (Chrome Web Store launch) was submitted for review before [0.14.0]'s freemium work began, and was actually approved on 2026-06-16 — before any of 0.14.0–0.14.2 was built. The approval went unnoticed for several days (no email confirmation arrived; only found by checking the developer dashboard directly), which is why it's documented here after the fact rather than at the time. Listed below in its correct chronological position by approval date, not by when it was noticed or written up.
 
+## [0.15.2] - 2026-06-20
+
+### Fix — Square `CreatePaymentLink` rejecting subscription checkout requests
+
+**The bug**: the first real sandbox checkout attempt (after 0.15.1's fixes cleared the `trust proxy` and CORS blockers) failed with a Square `400 INVALID_REQUEST_ERROR` — `Value for 'order.line_items' should not be empty`. `createPaymentLink()`'s `order` object only ever set `location_id` and `reference_id`; it never included a line item describing what was actually being purchased.
+
+**Why this wasn't caught earlier**: every prior verification pass (the original design doc, the live-docs check against Square's Subscription Plan Checkout guide, the code review of `square.js`) confirmed `checkout_options.subscription_plan_id` as the field that drives billing cadence and price — which it does — but none of those passes surfaced that `order.line_items` is *independently* required by `CreatePaymentLink` regardless of whether a subscription plan is also specified. This only became visible by actually running a request against Square's API, not by reading documentation about the subscription-specific fields in isolation.
+
+**Investigation — order vs. quick_pay**: Square's docs demonstrate subscription checkout using a `quick_pay` block (`name` + `price_money` + `location_id`) rather than `order`, which raised a real risk: `quick_pay` has no `reference_id`-equivalent field, and the entire token-resolution chain built in 0.15.0 (`order.reference_id` → webhook's `order_template_id` → `RetrieveOrder` → recovered token) depends on that field existing somewhere in the request. Confirmed against Square's `CreatePaymentLink` reference and `quick_pay` documentation that `order` and `quick_pay` are alternate ways of supplying the *same* underlying data — `quick_pay`'s `name`/`price_money` map internally into an `Order` object's line item — so `order` remains a fully supported path and `reference_id` is preserved. No redesign of the token-resolution mechanism was needed.
+
+**`server/providers/square.js`**
+- `createPaymentLink()` now accepts `priceCents` and `priceName`, and builds a single `order.line_items` entry (`name`, `quantity: "1"`, `base_price_money`) alongside the existing `location_id`/`reference_id`. Doc comment updated to record the order-vs-quick_pay investigation above, so a future reader doesn't have to re-derive it from a 400 error again.
+
+**`server/index.js`**
+- `/pricing/checkout` now reads `SQUARE_PRO_PRICE_CENTS` (default `500` = $5.00) and `SQUARE_PRO_PRICE_NAME` (default `"Liar's Ledger Pro — Monthly"`) from environment, passed through to `createPaymentLink`.
+- **Operational note, not just a code change**: per Square's own Subscription Plan Checkout docs, this price must match the plan variation's actual catalog price (set via `setup-square-catalog.mjs`) — a mismatch acts as a checkout-time price *override*, not just display text. `SQUARE_PRO_PRICE_CENTS` is a second, manually-maintained source of truth for a value Square's catalog already holds; if the Pro price is ever changed in the Square dashboard or by re-running the setup script, this env var must be updated to match by hand, or checkout will silently charge the wrong amount.
+
+**`server/.env.example`**
+- Added: `SQUARE_PRO_PRICE_CENTS`, `SQUARE_PRO_PRICE_NAME`.
+
+---
+
 ## [0.15.1] - 2026-06-20
 
 ### Fixes — two bugs caught during sandbox verification of 0.15.0

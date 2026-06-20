@@ -427,6 +427,16 @@ app.post("/pricing/checkout", wrap(async (req, res) => {
   const locationId      = process.env.SQUARE_LOCATION_ID;
   const planVariationId = process.env.SQUARE_PLAN_VARIATION_ID;
   const backendUrl      = process.env.BACKEND_URL || "https://api.liarsledger.com";
+  // Square's CreatePaymentLink requires a populated order.line_items even for
+  // subscription checkout — confirmed against live docs (the order/quick_pay
+  // distinction is cosmetic; quick_pay's name+price_money map internally to
+  // the same order line item shape). This must match the plan variation's
+  // actual price set in Square's catalog (see setup-square-catalog.mjs) —
+  // per Square's own subscription-checkout docs, a mismatch acts as a price
+  // OVERRIDE, not just display text, so these two numbers must stay in sync
+  // by hand if the Pro price is ever changed in the Square dashboard.
+  const proPriceCents = parseInt(process.env.SQUARE_PRO_PRICE_CENTS || "500", 10); // $5.00 default
+  const proPriceName  = process.env.SQUARE_PRO_PRICE_NAME || "Liar's Ledger Pro — Monthly";
 
   if (!locationId || !planVariationId) {
     console.error("[checkout] SQUARE_LOCATION_ID or SQUARE_PLAN_VARIATION_ID not set");
@@ -438,6 +448,8 @@ app.post("/pricing/checkout", wrap(async (req, res) => {
       locationId,
       referenceId:     token,
       planVariationId,
+      priceCents:      proPriceCents,
+      priceName:       proPriceName,
       redirectUrl:     `${process.env.PRICING_SITE_URL || "https://liarsledger.com"}/pricing/success`,
     });
 
