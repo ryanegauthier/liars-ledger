@@ -670,7 +670,7 @@ function renderSidebar(results) {
             <div style="font-size: 0.72rem; color: #c4c9d7; line-height: 1.55;">
               See full VoteSmart vote history and interest group ratings for every politician with Pro.
             </div>
-            <a href="https://liarsledger.com/pricing" target="_blank" style="
+            <a href="${escapeHtml(results.upgradeUrl || "https://liarsledger.com/pricing")}" target="_blank" style="
               display: inline-block;
               margin-top: 4px;
               padding: 6px 14px;
@@ -855,7 +855,7 @@ function renderRateLimited(response) {
 
 // --- Capacity warning nudge (shown after successful scan when user count is 2500-4999) ---
 // Not shown to pro users — they already know they're pro, no need to upsell.
-function renderCapacityWarning() {
+function renderCapacityWarning(upgradeUrl) {
   const footer = document.getElementById("ll-footer-source");
   if (!footer || document.getElementById("ll-capacity-warning")) return;
   const nudge = document.createElement("span");
@@ -869,7 +869,8 @@ function renderCapacityWarning() {
     "letter-spacing:0.08em",
     "text-transform:uppercase",
   ].join(";");
-  nudge.innerHTML = '⚠ High demand &mdash; <a href="https://liarsledger.com/pricing" target="_blank" style="color:#c8a96e;">upgrade for guaranteed access</a>';
+  const url = escapeHtml(upgradeUrl || "https://liarsledger.com/pricing");
+  nudge.innerHTML = `⚠ High demand &mdash; <a href="${url}" target="_blank" style="color:#c8a96e;">upgrade for guaranteed access</a>`;
   footer.appendChild(nudge);
 }
 
@@ -883,7 +884,7 @@ function startPolling() {
       clearInterval(poll);
       if (response.status === "ok") {
         renderSidebar(response);
-        if (response.capacityWarning && response.tier !== "pro") renderCapacityWarning();
+        if (response.capacityWarning && response.tier !== "pro") renderCapacityWarning(response.upgradeUrl);
       }
       else if (response.status === "rate_limited") renderRateLimited(response);
     });
@@ -906,7 +907,7 @@ browser.runtime.onMessage.addListener(function(message, sender, sendResponse) {
     browser.runtime.sendMessage({ action: "getResults" }, function(response) {
       if (response?.status === "ok") {
         renderSidebar(response);
-        if (response.capacityWarning && response.tier !== "pro") renderCapacityWarning();
+        if (response.capacityWarning && response.tier !== "pro") renderCapacityWarning(response.upgradeUrl);
       }
       else if (response?.status === "rate_limited") renderRateLimited(response);
     });

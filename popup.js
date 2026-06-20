@@ -227,8 +227,20 @@ function handleResult(result) {
       <div class="upgrade-prompt">
         <div class="upgrade-heading">Upgrade to Pro</div>
         <div class="upgrade-body">All accounts share a daily scan pool. Pro unlocks AI summaries, claim verdicts, and full VoteSmart data.</div>
-        <a class="upgrade-btn" href="${upgradeUrl}" target="_blank">View Pricing →</a>
+        <a class="upgrade-btn" id="upgradeBtn" href="${upgradeUrl}" target="_blank">View Pricing →</a>
       </div>`;
+    // Append the install token as a query param so /pricing can pre-fill
+    // and auto-redirect to Square without the user copy/pasting anything —
+    // same mechanism as the Account panel's pricing link (see below).
+    // Done after the innerHTML write (rather than templated into it above)
+    // because the token read from chrome.storage.sync is async.
+    browser.storage.sync.get("ll_auth_token", (data) => {
+      const id = data.ll_auth_token?.tokenId;
+      const btn = document.getElementById("upgradeBtn");
+      if (id && btn) {
+        btn.href = `${upgradeUrl}?token=${encodeURIComponent(id)}`;
+      }
+    });
   } else if (result.status === "ok") {
     const count = result.records?.length || 0;
     setStatus(`✓ ${count} member${count !== 1 ? "s" : ""} · record retrieved`, "success");
@@ -248,9 +260,158 @@ function loadScanInfo() {
     const limit = token.limit ?? 30;
     const remaining = token.remaining ?? (limit - used);
     const tierLabel = token.tier === "pro" ? "Pro" : "Free";
+
+    // token.downgradeReason is expected to be copied through from
+    // /api/scan-status's response by src/token.js's syncTier() — same
+    // pattern as tier/scansToday/limit/remaining above. If syncTier()
+    // doesn't yet pass this field through into chrome.storage.sync,
+    // this will just silently be undefined and fall through to the
+    // normal label below — nothing breaks, but the explanation won't
+    // show until that wiring is confirmed/added on the syncTier() side.
+    if (token.tier === "free" && token.downgradeReason === "payment_failed") {
+      scanInfoEl.textContent = "Pro paused — your card was declined. Update it in Square to resume.";
+      scanInfoEl.className = "scan-info exhausted"; // reuses the existing alert-red state, no new CSS needed
+      return;
+    }
+
     scanInfoEl.textContent = `${tierLabel} · ${remaining} scan${remaining !== 1 ? "s" : ""} remaining today`;
     scanInfoEl.className = "scan-info" + (token.tier === "pro" ? " pro" : "") + (remaining === 0 ? " exhausted" : remaining <= 1 ? " low" : "");
   });
 }
 
 loadScanInfo();
+
+// ── Account panel: token display, copy, restore ───────────────────────────────
+
+const accountToggle = document.getElementById("accountToggle");
+const accountPanel  = document.getElementById("accountPanel");
+const tokenDisplay  = document.getElementById("tokenDisplay");
+const copyTokenBtn  = document.getElementById("copyTokenBtn");
+const pricingLink   = document.getElementById("pricingLink");
+const restoreInput  = document.getElementById("restoreInput");
+const restoreBtn    = document.getElementById("restoreBtn");
+const restoreStatus = document.getElementById("restoreStatus");
+
+// Toggle panel open/closed
+accountToggle?.addEventListener("click", () => {
+  const isOpen = accountPanel.classList.toggle("open");
+  accountToggle.classList.toggle("open", isOpen);
+  accountToggle.setAttribute("aria-expanded", String(isOpen));
+});
+
+// Populate token display and set pricing link hash when panel is visible
+browser.storage.sync.get("ll_auth_token", (data) => {
+  const token = data.ll_auth_token;
+  if (!token?.tokenId) return;
+
+  // Show truncated token in the panel
+  const id = token.tokenId;
+  if (tokenDisplay) tokenDisplay.textContent = `${id.slice(0, 8)}…${id.slice(-8)}`;
+  if (tokenDisplay) tokenDisplay.title = id; // full value on hover
+
+  // Pre-fill token in the pricing link query param so the form auto-populates.
+  // The ?token= param is read by JS on the pricing page, then removed from the
+  // URL bar and sent only in the POST body — never in a GET to our server.
+  if (pricingLink) {
+    pricingLink.href = `https://liarsledger.com/pricing?token=${encodeURIComponent(id)}`;
+  }
+});
+
+// Copy token to clipboard
+copyTokenBtn?.addEventListener("click", () => {
+  browser.storage.sync.get("ll_auth_token", (data) => {
+    const id = data.ll_auth_token?.tokenId;
+    if (!id) return;
+    navigator.clipboard.writeText(id).then(() => {
+      copyTokenBtn.textContent = "Copied!";
+      copyTokenBtn.classList.add("copied");
+      setTimeout(() => {
+        copyTokenBtn.textContent = "Copy";
+        copyTokenBtn.classList.remove("copied");
+      }, 1800);
+    }).catch(() => {
+      // Clipboard API may fail without focus; fall back to selection
+      if (tokenDisplay) {
+        tokenDisplay.textContent = id;
+        const range = document.createRange();
+        range.selectNode(tokenDisplay);
+        window.getSelection().removeAllRanges();
+        window.getSelection().addRange(range);
+      }
+    });
+  });
+});
+
+// Restore Pro access: takes Square order reference from receipt, calls
+// /restore-token which returns the anonymous token linked to that order.
+restoreBtn?.addEventListener("click", () => {
+  const orderReference = restoreInput.value.trim();
+  if (!orderReference) {
+    restoreStatus.textContent = "Paste your Square order number from your receipt email first.";
+    restoreStatus.className = "restore-status error";
+    return;
+  }
+  if (orderReference.length < 8) {
+    restoreStatus.textContent = "Order reference looks too short — check and try again.";
+    restoreStatus.className = "restore-status error";
+    return;
+  }
+
+  restoreBtn.disabled = true;
+  restoreStatus.textContent = "Looking up your order…";
+  restoreStatus.className = "restore-status";
+
+  const proxyUrl = (typeof CONFIG !== "undefined" && CONFIG.PROXY_URL)
+    || "https://api.liarsledger.com";
+
+  fetch(`${proxyUrl}/restore-token`, {
+    method:  "POST",
+    headers: { "Content-Type": "application/json" },
+    body:    JSON.stringify({ orderReference }),
+  })
+    .then(async r => {
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || `Server returned ${r.status}`);
+
+      const restoredTokenId = data.token;
+      if (!restoredTokenId) throw new Error("No token in response");
+
+      // Validate the restored token against scan-status to get current tier/limits
+      const statusRes = await fetch(`${proxyUrl}/api/scan-status`, {
+        headers: { "Authorization": `Bearer ${restoredTokenId}` },
+      });
+      const status = statusRes.ok ? await statusRes.json() : {};
+
+      // Swap the stored token in chrome.storage.sync
+      browser.storage.sync.get("ll_auth_token", (stored) => {
+        const current = stored.ll_auth_token || {};
+        const updated = {
+          ...current,
+          tokenId:    restoredTokenId,
+          tier:       status.tier       ?? "pro",
+          scansToday: status.scansToday ?? 0,
+          limit:      status.limit      ?? 30,
+          remaining:  status.remaining  ?? 30,
+        };
+        browser.storage.sync.set({ ll_auth_token: updated }, () => {
+          restoreStatus.textContent = `✓ Pro access restored. Your token has been updated.`;
+          restoreStatus.className = "restore-status ok";
+          loadScanInfo();
+          // Refresh token display
+          if (tokenDisplay) {
+            tokenDisplay.textContent = `${restoredTokenId.slice(0, 8)}…${restoredTokenId.slice(-8)}`;
+            tokenDisplay.title = restoredTokenId;
+          }
+          if (pricingLink) {
+            pricingLink.href = `https://liarsledger.com/pricing?token=${encodeURIComponent(restoredTokenId)}`;
+          }
+          restoreInput.value = "";
+        });
+      });
+    })
+    .catch(err => {
+      restoreStatus.textContent = err.message || "Failed to restore. Check the order number and try again.";
+      restoreStatus.className = "restore-status error";
+    })
+    .finally(() => { restoreBtn.disabled = false; });
+});

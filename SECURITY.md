@@ -45,7 +45,7 @@ The anonymous per-install token model (no email, no account, no payment verifica
 - **Token farming**: nothing currently prevents a script from calling `POST /register` directly (bypassing the extension entirely) to mass-create fake tokens, each with its own daily scan allowance. This both drains API budget directly (if the bot also calls the scan endpoints) and indirectly degrades the experience for real users, since each new registration increments the global user count that the dynamic scan-limit table is based on.
 - **Mitigation in place**: `POST /register` is rate-limited to 5 requests/hour per IP (separate from and stricter than the general 60/minute API limiter). This closes the trivial single-machine bot case.
 - **Not mitigated**: a distributed attacker using many IPs or proxies, registering slowly, is not stopped by IP-based rate limiting. A more complete fix (CAPTCHA, proof-of-work, or some form of identity verification on registration) would close this further but adds friction for legitimate users and hasn't been built. This is an accepted tradeoff at the current scale and userbase size, revisit if abuse is observed in practice.
-- **Admin override endpoints** (`/admin/set-tier`, `/admin/reset-scans`) exist as temporary, manual testing tools while Square subscription integration doesn't exist yet. Both fail closed (403) unless `ADMIN_SECRET` is set in Render's environment and provided via the `x-admin-key` header on the request. These should be removed once automatic tier management via Square is live.
+- **Admin override endpoints** (`/admin/set-tier`, `/admin/reset-scans`) exist as temporary, manual testing tools. Both fail closed (403) unless `ADMIN_SECRET` is set in Render's environment and provided via the `x-admin-key` header on the request. **These are now formally deprecated** — `POST /webhook/square` (added in v0.15.0) is the real tier-management path. They should be removed in a subsequent release once the Square integration has been verified in production.
 
 ---
 
@@ -75,6 +75,7 @@ This is a core design principle enforced at every layer.
 - [x] Free/Pro tier gating enforced server-side, not just client-side (v0.14.1 - verified via direct API calls bypassing the extension entirely, confirmed 403 on `/api/verify-claim` and `/api/votesmart/*` for free tier, confirmed claim/summary stripped from extraction responses)
 - [x] `POST /register` rate-limited separately and more strictly than general API traffic (v0.14.1)
 - [x] Admin override endpoints (`/admin/set-tier`, `/admin/reset-scans`) fail closed when `ADMIN_SECRET` is unset - confirmed they 403 rather than fail open
+- [ ] **`/admin/set-tier` and `/admin/reset-scans` should be removed** once `POST /webhook/square` (v0.15.0) is verified live in production — they are now superseded by the real Square webhook tier management path
 - [ ] No automated test suite exists yet - all verification in this checklist was done by manual API calls during this release. A real regression test suite covering tier gating would catch issues like the v0.14.0→v0.14.1 pooled-scan-limit bug (see CHANGELOG) automatically.
 - [ ] Distributed token-farming (many IPs, slow registration rate) is not mitigated - see "Known Gaps" above
 

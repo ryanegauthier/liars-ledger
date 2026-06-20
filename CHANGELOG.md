@@ -1,6 +1,114 @@
 # Changelog
 
-> **Note:** [0.14.0] shipped before [0.13.0] is dated below. 0.13.0 (Chrome Web Store launch) was submitted for review first but is still pending approval, so it remains in the Planned section until that completes. 0.14.0 (freemium tier) was built and shipped in the meantime.
+> **Note:** [0.13.0] (Chrome Web Store launch) was submitted for review before [0.14.0]'s freemium work began, and was actually approved on 2026-06-16 — before any of 0.14.0–0.14.2 was built. The approval went unnoticed for several days (no email confirmation arrived; only found by checking the developer dashboard directly), which is why it's documented here after the fact rather than at the time. Listed below in its correct chronological position by approval date, not by when it was noticed or written up.
+
+## [0.15.0] - Unreleased
+
+### Square subscription integration — full Pro billing pipeline
+
+**Design decisions (per SQUAREDESIGN.md)**
+
+- **No email collection. No pre-created customer.** The anonymous token rides as `order.reference_id` into `CreatePaymentLink`. Square's hosted checkout collects whatever contact info Square requires — Liar's Ledger never sees it.
+- **Token resolution path (confirmed Feb 2025, Square engineer + independent dev):** `CreatePaymentLink` → Square-hosted checkout → `subscription.created` webhook → `phases[0].order_template_id` → `RetrieveOrder` → `order.reference_id` = our token → `upgradeTier`.
+- **`CreatePaymentLink`'s `subscription_plan_id` field takes the plan *variation* ID**, not the top-level plan ID. Misleading name — gotcha is documented in SQUAREDESIGN.md §1 and `server/providers/square.js`.
+- **Customer pre-creation is silently ignored by Square** (confirmed Feb 2025 forum thread). `customer_id` passed to `CreatePaymentLink` doesn't stick; Square derives the customer from checkout-entered info. So we don't attempt it.
+- **Token relay uses `?token=` query param** (not hash fragment). JS reads it, strips from URL bar, sends only in POST body — raw token never appears in a GET request line to our server. See SQUAREDESIGN.md §2 for full rationale.
+- **Recovery via `customer_id`**, not `reference_id`, because billed-cycle orders (what appears on a receipt) may not carry `reference_id` reliably. `square:customer:*` mapping is written at webhook time from the subscription event.
+- **Payment-failure event corrected after live-docs verification: `invoice.scheduled_charge_failed`, not `payment.updated`.** The originally planned `payment.updated` FAILED filter was too broad and not subscription-specific. Confirmed against current Square docs that `invoice.scheduled_charge_failed` is the purpose-built event for this.
+- **No grace period beyond Square's own retry window.** Square retries automatically on day 3, 6, and 9 after the initial decline (3 attempts), emailing the buyer on each failure — but does **not** auto-cancel the subscription afterward; it stays ACTIVE with an unpaid invoice indefinitely. So `subscription.updated → CANCELED` is not a guaranteed signal. We track failures ourselves (`recordFailedCharge`) and self-downgrade once `count >= 3`, rather than waiting on an event that may never come.
+- **WebhooksHelper from `square` npm package** for signature verification — not hand-rolled HMAC.
+
+**`server/scripts/setup-square-catalog.mjs`** *(new)*
+- One-time catalog setup: creates `SUBSCRIPTION_PLAN` ("Liar's Ledger Pro") and `SUBSCRIPTION_PLAN_VARIATION` ("Liar's Ledger Pro Monthly", STATIC pricing, configurable amount, no end date).
+- Prints `SQUARE_PLAN_ID` and `SQUARE_PLAN_VARIATION_ID` to stdout. Run sandbox first, then production.
+
+**`server/providers/square.js`** *(new)*
+- `createPaymentLink({ locationId, referenceId, planVariationId, redirectUrl })` — creates Square-hosted checkout link; embeds anonymous token as `order.reference_id`.
+- `retrieveOrder(orderId)` — used in webhook handler (resolve token from order template) and `/restore-token` (validate receipt order, get `customer_id`).
+- `verifyWebhookSignature({ rawBody, signature, notificationUrl })` — delegates to `WebhooksHelper.verifySignature` from `square` npm package.
+
+**`server/providers/store.js`**
+- Replaced `sq:cust:` / `sq:sub:` key scheme with: `square:ordertemplate:*`, `square:customer:*`, `square:subscription:*`.
+- New functions: `storeOrderTemplateMapping`, `lookupTokenByOrderTemplate`, `storeSquareCustomerMapping`, `lookupTokenBySquareCustomer`, `storeSquareSubscriptionMapping`, `lookupTokenBySquareSubscription`.
+- **New: `square:failedcharge:{subId}`** *(JSON `{ count, firstFailedAt, lastFailedAt }`, 14-day TTL)* — `recordFailedCharge`, `getFailedCharges`, `clearFailedCharges`. Tracks repeated `invoice.scheduled_charge_failed` events per subscription so the webhook handler can self-downgrade after Square's 3-retry window, since Square doesn't auto-cancel.
+- **New: `square:downgradereason:{tokenId}`** *(JSON `{ reason, at }`, 30-day TTL)* — `setDowngradeReason`, `getDowngradeReason`, `clearDowngradeReason`. Set only on a failure-driven downgrade (not a normal user cancellation), so the extension can tell "never subscribed" apart from "subscribed, then card declined 3x" and show the right message. Cleared on successful payment or resubscribe.
+- All keys hold opaque IDs only — no PII.
+
+**`server/index.js`**
+- `express.json()` `verify` callback stashes `req.rawBody` before parsing (required for webhook HMAC over raw bytes).
+- **`POST /pricing/checkout`** — accepts `{ token }`, validates token in Redis, calls `createPaymentLink`, returns `{ url }`. Frontend navigates to Square's hosted checkout. No email collected. `ALLOWED_ORIGINS` must include `https://liarsledger.com`.
+- **`POST /webhook/square`** — verifies signature via SDK, responds 200 immediately, handles event after:
+  - `subscription.created/updated` ACTIVE/PENDING → resolve token via `orderTemplateId → RetrieveOrder → reference_id` → `upgradeTier("pro")`; clears failed-charge tracking and any stale downgrade-reason marker on reaching ACTIVE. Resolution cached in Redis; future events skip `RetrieveOrder`.
+  - `subscription.updated` CANCELED/DEACTIVATED → `upgradeTier("free")`, no downgrade-reason marker (user-initiated, they already know why).
+  - `subscription.updated` FAILED → `upgradeTier("free")` **with** downgrade-reason marker set to `payment_failed`.
+  - `invoice.payment_made` → idempotent Pro confirmation; clears failed-charge tracking and downgrade-reason marker.
+  - **`invoice.scheduled_charge_failed`** *(replaces planned `payment.updated` FAILED handling)* → records the failure via `recordFailedCharge`; once `count >= 3` (matching Square's day 3/6/9 retry schedule), self-downgrades to free **and sets the downgrade-reason marker** — this is the path expected to actually fire in practice, since Square may never send a terminal CANCELED event on its own.
+- **`/api/scan-status`** now also returns `downgradeReason` (only queried for free-tier tokens, to skip an extra Redis round-trip for everyone else) — `"payment_failed"` if the token was downgraded that way, otherwise `null`.
+- **`POST /restore-token`** — accepts `{ orderReference }` (Square order ID from receipt), calls `RetrieveOrder`, gets `customer_id`, looks up `square:customer:{id}` mapping, returns `{ token }`. Rate-limited (5 attempts / 15 min).
+
+**`server/.env.example`**
+- Added: `BACKEND_URL`, `PRICING_SITE_URL`, `SQUARE_ACCESS_TOKEN`, `SQUARE_ENVIRONMENT`, `SQUARE_LOCATION_ID`, `SQUARE_PLAN_ID`, `SQUARE_PLAN_VARIATION_ID`, `SQUARE_WEBHOOK_SIGNATURE_KEY`, `SQUARE_WEBHOOK_NOTIFICATION_URL`.
+
+**`extension/src/token.js`**
+- `updateScanInfo()` now also copies `downgradeReason` from `/api/scan-status` into `chrome.storage.sync` (falls through to `null` when absent from the response, rather than carrying forward a stale stored value — the field is intentionally omitted server-side once cleared, so the client needs to clear it too).
+
+**`extension/background.js`**
+- `handleAnalyze()` now builds a single token-bearing `upgradeUrl` (`https://liarsledger.com/pricing?token=<id>`) right after `getOrCreateToken()`, since the token is already in scope there. Used for both `rate_limited` returns (`upgrade_url` field, consumed by `popup.js` and `content.js`'s `renderRateLimited`) and added to the `"ok"` success response (`upgradeUrl` field, consumed by `content.js`'s VoteSmart upsell card and capacity-warning nudge) — previously both were hardcoded to a bare `/pricing` link with no token attached.
+
+**`extension/content.js`**
+- VoteSmart upsell card and capacity-warning nudge (`renderCapacityWarning`) now use the token-bearing `results.upgradeUrl` / `response.upgradeUrl` instead of a hardcoded link.
+
+**`popup.html`** / **`popup.js`**
+- Account panel: token display (truncated + hover), copy button.
+- Pricing link points to `https://liarsledger.com/pricing?token=<id>` (query param, not hash fragment).
+- **"Restore Pro after reinstalling" section**: user enters Square order number from receipt email → `POST /restore-token` → on success, swaps `chrome.storage.sync` to recovered token.
+- Rate-limited upgrade prompt's link now also resolves its own token from storage as a fallback, in case `result.upgrade_url` is ever missing.
+- **`loadScanInfo()`** now checks `token.downgradeReason === "payment_failed"` and shows "Pro paused — your card was declined. Update it in Square to resume." (reusing the existing `.exhausted` alert-red style) instead of the normal tier/scan-count line.
+
+**`LiarsLedger/pricing.html`** / **`pricing-page.js`** / **`pricing.css`**
+- Token field only (no email). When a token arrives via `?token=`, the manual paste field is now **hidden entirely** and replaced with a one-click "token detected" confirmation — no copy/paste needed for anyone arriving from the extension. Falls back to the manual field for direct/bookmarked visits.
+- On submit: `POST /pricing/checkout` → redirect to `data.url` (Square hosted checkout).
+- Success: Square redirects to `liarsledger.com/pricing/success` after payment; tier flip happens via webhook, not on the success page.
+- New FAQ item: lost-token recovery, pointing to the extension's Account panel rather than duplicating the flow on-site (we don't collect email, so the website itself can't look up a lost token).
+- Square donate button (one-off, unrelated to the subscription flow) left as a visibly disabled placeholder with a detailed TODO, rather than a dead `href="#"`, pending a real Quick Pay Payment Link URL from the Square dashboard.
+
+**`LiarsLedger/privacy.html`**
+- §03 Payment processing rewritten to match SQUAREDESIGN.md §5 language exactly:
+  - Square's hosted checkout collects contact/payment info; we never see it.
+  - We retain only an opaque identifier pairing (customer + subscription IDs → token). No name, email, or payment data.
+  - Purpose: activate Pro features and allow receipt-based token recovery.
+- Short-version summary updated to remove email reference.
+
+**`LiarsLedger/js/site-config.js`**
+- Split the single `installUrl` (carried a hardcoded `utm_source=ext_sidebar`) into `installUrl` (clean, used by every on-site install button — nav, hero, pricing tier card, footer, bottom CTA) and `installFromExtensionUrl` (keeps `utm_source=ext_sidebar`, reserved for if/when something inside the extension chrome itself links straight to the Chrome Web Store rather than routing through `/pricing` first). Nothing currently uses the latter — every existing install link is on the website, not inside the extension UI.
+
+### Resolved open questions (previously listed below as unconfirmed)
+- ~~Exact Square Invoices API webhook event names for payment-succeeded/failed~~ → confirmed: `invoice.payment_made` (correct as originally planned) and `invoice.scheduled_charge_failed` (corrected from the originally planned `payment.updated` FAILED).
+- ~~Square's dunning/retry window for failed payments~~ → confirmed: 3 automatic retries on day 3, 6, and 9 after the initial decline; Square emails the buyer on each attempt; no auto-cancellation afterward.
+
+### Known open questions (still not resolved)
+- What identifier actually appears on a buyer's Square receipt email, to finalize `/restore-token` input label and validation. Currently labeled as "Square order # from your receipt" — unverified against an actual receipt.
+- Whether a billed-cycle order (as opposed to the order template) reliably carries `reference_id` — `/restore-token` currently sidesteps this by keying off `customer_id` instead, which is the safer-but-unconfirmed-as-strictly-necessary path.
+- The Square donation Payment Link (one-off, separate from the subscription flow) still needs to be created in the dashboard and its URL dropped into `pricing.html` — see TODO comment in that file.
+
+### Post-deploy verification (after `git push` + Render redeploy of this version)
+Three things worth confirming directly in the Upstash console once this is live — no Redis configuration or migration is needed beforehand (all `square:*` keys, including the new `square:failedcharge:*` and `square:downgradereason:*`, are schemaless and created automatically on first write), but it's worth checking the wiring is actually firing rather than assuming it from code review alone:
+1. After a real test subscription completes, confirm `square:ordertemplate:*`, `square:customer:*`, and `square:subscription:*` keys appear in the Upstash Data Browser with the expected token value.
+2. After deliberately failing a test charge (Square sandbox supports this), confirm `square:failedcharge:{subId}` appears and increments correctly across the simulated retry sequence.
+3. After a simulated 3rd failure, confirm `square:downgradereason:{tokenId}` appears with `reason: "payment_failed"`, and that the extension popup actually shows the "card was declined" message rather than the normal free-tier line — this exercises the full round trip (`store.js` → `/api/scan-status` → `token.js`'s `updateScanInfo` → `popup.js`'s `loadScanInfo`), not just the backend half.
+
+---
+
+## [0.13.0] - 2026-06-16
+
+### Chrome Web Store launch — approved
+
+- **Status: approved and live on the Chrome Web Store as of 2026-06-16.** Submitted for review before 0.14.0's freemium work began, and approval landed the day before 0.14.0–0.14.2 were built — it just went unnoticed for several days (no email confirmation arrived from Chrome Web Store; only found by checking the developer dashboard directly). Sequenced here by actual approval date.
+- Store listing: screenshots, short/long description, category.
+- Developer account ($5 one-time) set up.
+- Install Extension links across `liarsledger.com` (nav, hero, pricing tier card, footer, bottom CTA) all point to the live listing via `data-ll-link="install"` → `site-config.js`'s `installUrl`.
+
+---
 
 ## [0.14.2] - 2026-06-17
 
@@ -256,19 +364,6 @@
 ---
 
 ## Planned
-
-### [0.13.0] - Chrome Web Store launch
-- Store listing: screenshots, short/long description, category
-- Developer account ($5 one-time)
-- Install Extension links updated across liarsledger.com
-- **Status:** submitted, awaiting Chrome Web Store review approval
-
-### [0.15.0] - Square payments + pricing page
-- `/webhook/square` endpoint - on successful payment, flip the token's tier flag from `free` to `pro` in Upstash
-- Subscription management (cancellation, renewal handling)
-- `liarsledger.com/pricing` page with Square checkout link - referenced by every upgrade prompt built in 0.14.0 but not yet built itself
-- Account creation via liarsledger.com (not in extension)
-- This is the blocking piece before Pro can actually be sold - see "Known limitations" under 0.14.0 above
 
 ### [0.16.0] - API cost optimization
 - Prompt caching on Claude extraction and verification calls - static instruction prefix cached, only article text varies

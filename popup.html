@@ -313,6 +313,117 @@
     }
     .upgrade-btn:hover { background: #d3482f; }
 
+    /* ── Token / account panel ── */
+    .account-toggle {
+      font-size: 0.48rem;
+      color: var(--text-faint);
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 4px 12px;
+      width: 100%;
+      text-align: left;
+      border-top: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .account-toggle:hover { color: var(--accent); }
+    .account-toggle .chevron { transition: transform 0.15s; display: inline-block; }
+    .account-toggle.open .chevron { transform: rotate(180deg); }
+
+    .account-panel {
+      display: none;
+      padding: 8px 12px 10px;
+      border-top: 1px solid var(--border);
+      background: var(--bg-2);
+    }
+    .account-panel.open { display: block; }
+
+    .account-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 6px;
+    }
+    .account-label {
+      font-size: 0.46rem;
+      color: var(--text-faint);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      flex-shrink: 0;
+      width: 42px;
+    }
+    .account-token-id {
+      font-family: "IBM Plex Mono", "Courier New", monospace;
+      font-size: 0.46rem;
+      color: var(--text-muted);
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .copy-btn {
+      font-size: 0.44rem;
+      color: var(--text-faint);
+      background: none;
+      border: 1px solid var(--border);
+      padding: 2px 5px;
+      cursor: pointer;
+      flex-shrink: 0;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    .copy-btn:hover { color: var(--accent); border-color: var(--border-acc); }
+    .copy-btn.copied { color: var(--green); border-color: var(--green); }
+
+    .restore-divider {
+      font-size: 0.44rem;
+      color: var(--text-faint);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin: 6px 0 4px;
+    }
+    .restore-row {
+      display: flex;
+      gap: 5px;
+      align-items: center;
+    }
+    .restore-input {
+      flex: 1;
+      background: rgba(239,233,221,0.05);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: "IBM Plex Mono", "Courier New", monospace;
+      font-size: 0.46rem;
+      padding: 4px 6px;
+      outline: none;
+    }
+    .restore-input:focus { border-color: var(--border-acc); }
+    .restore-input::placeholder { color: var(--text-faint); }
+    .restore-btn {
+      font-size: 0.44rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      background: none;
+      border: 1px solid var(--border-acc);
+      color: var(--accent);
+      padding: 4px 8px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .restore-btn:hover { background: rgba(200,169,110,0.1); }
+    .restore-status {
+      font-size: 0.46rem;
+      margin-top: 4px;
+      min-height: 12px;
+    }
+    .restore-status.ok    { color: var(--green); }
+    .restore-status.error { color: var(--alert); }
+
     /* ── Footer ── */
     .popup-footer {
       display: flex;
@@ -360,6 +471,38 @@
     <div class="scan-info" id="scanInfo"></div>
     <div class="status" id="status">Ready.</div>
     <div class="cards" id="cardsContainer"></div>
+  </div>
+
+  <!-- Collapsible account panel: token display, copy, restore -->
+  <button class="account-toggle" id="accountToggle" aria-expanded="false">
+    <span class="chevron">▾</span> Account
+  </button>
+  <div class="account-panel" id="accountPanel" role="region">
+    <div class="account-row">
+      <span class="account-label">Token</span>
+      <span class="account-token-id" id="tokenDisplay">—</span>
+      <button class="copy-btn" id="copyTokenBtn" title="Copy install token">Copy</button>
+    </div>
+    <div class="account-row" style="margin-bottom:0">
+      <span class="account-label" style="visibility:hidden">Token</span>
+      <span style="font-size:0.44rem;color:var(--text-faint);line-height:1.5">
+        You need this token to subscribe to Pro at
+        <a id="pricingLink" href="https://liarsledger.com/pricing" target="_blank"
+           style="color:var(--accent);text-decoration:none">liarsledger.com/pricing</a>.
+        It pre-fills automatically when you click the link.
+      </span>
+    </div>
+
+    <div class="restore-divider">Restore Pro after reinstalling</div>
+    <div style="font-size:0.44rem;color:var(--text-faint);line-height:1.5;margin-bottom:5px">
+      Find your order number in the Square receipt email, paste it below.
+    </div>
+    <div class="restore-row">
+      <input class="restore-input" id="restoreInput" type="text"
+             placeholder="Square order # from your receipt…" autocomplete="off" spellcheck="false">
+      <button class="restore-btn" id="restoreBtn">Restore</button>
+    </div>
+    <div class="restore-status" id="restoreStatus"></div>
   </div>
 
   <div class="popup-footer">

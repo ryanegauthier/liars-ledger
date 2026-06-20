@@ -67,8 +67,19 @@ async function handleAnalyze({ politicians, articleText }) {
     // claim/verdict/VoteSmart fields from the final response further down.
     // See the "PRO-TIER GATING" comment near the end of this function for
     // the full list of what's gated and why.
-    const { tier } = await getOrCreateToken();
+    const { tier, tokenId } = await getOrCreateToken();
     const isPro = tier === "pro";
+
+    // Pricing URL with the install token attached as a query param, so
+    // /pricing can pre-fill and auto-confirm checkout without the user
+    // copy/pasting anything — the token is already known here, no reason
+    // to make the person go dig it out of the popup's Account panel.
+    // Used by both rate_limited returns below AND passed through on the
+    // "ok" response so content.js's VoteSmart upsell card (non-blocking,
+    // shown alongside successful results) can link the same way.
+    const upgradeUrl = tokenId
+      ? `https://liarsledger.com/pricing?token=${encodeURIComponent(tokenId)}`
+      : "https://liarsledger.com/pricing"; // fallback — shouldn't happen, getOrCreateToken always returns one
 
     let articleSummary   = null;
     let figures          = [];
@@ -104,7 +115,7 @@ async function handleAnalyze({ politicians, articleText }) {
           return {
             status: "rate_limited",
             message: "Daily scan limit reached. Upgrade to Pro for unlimited scans.",
-            upgrade_url: "https://liarsledger.com/pricing",
+            upgrade_url: upgradeUrl,
           };
         }
         // Any other non-OK status (5xx, auth issue, etc.) — fail open and
@@ -140,7 +151,7 @@ async function handleAnalyze({ politicians, articleText }) {
         return {
           status: "rate_limited",
           message: "Daily scan limit reached. Upgrade to Pro for unlimited scans.",
-          upgrade_url: "https://liarsledger.com/pricing",
+          upgrade_url: upgradeUrl,
         };
       } else {
         logger.warn("background", `LLM failed: ${ann.error} - continuing with keyword fallback`);
@@ -301,6 +312,8 @@ async function handleAnalyze({ politicians, articleText }) {
       notFound,
       articleSummary: isPro ? articleSummary : null,
       tier,
+      upgradeUrl, // free tier only needs this for the VoteSmart upsell card in content.js;
+                  // harmless to include for pro tier too, just unused there.
     };
   } catch (err) {
     logger.error("background", `analysis failed: ${err.message}`);

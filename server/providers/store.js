@@ -2,9 +2,28 @@
 // Token and scan count storage via Upstash Redis.
 //
 // Data model:
-//   token:{id}        → JSON { tier, createdAt }
-//   scans:{id}:{date} → integer (daily scan count, TTL 48h)
-//   global:user_count → integer (total registered tokens, drives free tier limit)
+//   token:{id}                        → JSON { tier, createdAt }
+//   scans:{id}:{date}                 → integer (daily scan count, TTL 48h)
+//   global:user_count                 → integer (total registered tokens, drives free tier limit)
+//   square:ordertemplate:{templateId} → tokenId  (resolved at webhook time via RetrieveOrder)
+//   square:customer:{customerId}      → tokenId  (written alongside ordertemplate mapping)
+//   square:subscription:{subId}       → tokenId  (written when subscription lifecycle events fire)
+//   square:failedcharge:{subId}       → JSON { count, firstFailedAt, lastFailedAt } (TTL 14d)
+//   square:downgradereason:{tokenId}  → JSON { reason, at } (TTL 30d) — set only on
+//                                        failure-driven downgrade, lets the popup
+//                                        explain why Pro was lost (vs. never subscribed)
+//
+// The square:* keys contain only opaque IDs — no PII. They exist to:
+//   - route tier upgrades/downgrades when subscription webhooks fire
+//   - allow manual token recovery if a subscriber loses their token
+//     (subscriber provides their Square order reference; we look up their customer)
+//   - track repeated invoice.scheduled_charge_failed events so we can downgrade
+//     ourselves after Square's automatic retry window closes — Square does NOT
+//     auto-cancel a subscription on payment failure (confirmed against live
+//     docs: retries fire on day 3, 6, 9 after the initial decline, then Square
+//     just leaves the subscription ACTIVE indefinitely with an unpaid invoice).
+//     Without our own tracking, a permanently-failing card would stay "pro"
+//     forever, since the CANCELED event we'd otherwise wait for may never come.
 //
 // Swap this file to migrate to PostgreSQL later —
 // the interface (exported functions) stays the same.
@@ -180,4 +199,193 @@ export async function getScans(tokenId) {
 export async function resetScans(tokenId) {
   const key = `scans:${tokenId}:${todayKey()}`;
   await redis.del(key);
+}
+
+// ---------------------------------------------------------------------------
+// Square recovery mappings
+// ---------------------------------------------------------------------------
+// Written at webhook resolution time (not at checkout time — Square creates
+// the customer/subscription after the hosted checkout, not before).
+// Read during webhook processing and by /restore-token.
+// All keys contain only opaque IDs — no PII.
+
+/**
+ * Store a Square order-template ID → anonymous tokenId mapping.
+ * This is the primary resolution path: subscription.created webhook gives us
+ * phases[0].order_template_id → we call RetrieveOrder → read reference_id
+ * (our token) → store this mapping so future events can skip the RetrieveOrder.
+ */
+export async function storeOrderTemplateMapping(orderTemplateId, tokenId) {
+  await redis.set(`square:ordertemplate:${orderTemplateId}`, tokenId);
+}
+
+export async function lookupTokenByOrderTemplate(orderTemplateId) {
+  const val = await redis.get(`square:ordertemplate:${orderTemplateId}`);
+  return val ?? null;
+}
+
+/**
+ * Store a Square customer ID → anonymous tokenId mapping.
+ * Written alongside the ordertemplate mapping. Used by /restore-token:
+ * subscriber provides a Square order reference → RetrieveOrder → customer_id
+ * → look up this mapping → return token.
+ */
+export async function storeSquareCustomerMapping(customerId, tokenId) {
+  await redis.set(`square:customer:${customerId}`, tokenId);
+}
+
+export async function lookupTokenBySquareCustomer(customerId) {
+  const val = await redis.get(`square:customer:${customerId}`);
+  return val ?? null;
+}
+
+/**
+ * Store a Square subscription ID → anonymous tokenId mapping.
+ * Written when the subscription is first resolved. Used by lifecycle events
+ * (subscription.updated, invoice.payment_made, invoice.scheduled_charge_failed)
+ * to route to the correct token without an additional RetrieveOrder call.
+ */
+export async function storeSquareSubscriptionMapping(subscriptionId, tokenId) {
+  await redis.set(`square:subscription:${subscriptionId}`, tokenId);
+}
+
+export async function lookupTokenBySquareSubscription(subscriptionId) {
+  const val = await redis.get(`square:subscription:${subscriptionId}`);
+  return val ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Failed-charge tracking — self-managed downgrade after Square's retry window
+// ---------------------------------------------------------------------------
+// Square's automatic retry schedule for a failed subscription payment is
+// day 3, day 6, day 9 after the initial decline (3 retries over 9 days).
+// Square does NOT auto-cancel the subscription afterward — it stays ACTIVE
+// with an unpaid invoice indefinitely unless the buyer pays or we cancel it
+// ourselves. So `invoice.scheduled_charge_failed` events are the only signal
+// we get; there's no guaranteed CANCELED event to wait for. We track failure
+// count/timing here so the webhook handler can decide when enough retries
+// have failed to downgrade proactively, rather than granting Pro forever to
+// a permanently-failing card.
+//
+// 14-day TTL: comfortably past the 9-day retry window, so a stale failure
+// record doesn't linger past the point where it's still relevant. If a fresh
+// payment_made event comes in, callers should clear this record entirely
+// (see clearFailedCharges) rather than letting it expire on its own.
+
+const FAILED_CHARGE_TTL_SECONDS = 60 * 60 * 24 * 14; // 14 days
+
+/**
+ * Record a failed scheduled charge for a subscription.
+ * Returns the updated { count, firstFailedAt, lastFailedAt }.
+ */
+export async function recordFailedCharge(subscriptionId) {
+  const key = `square:failedcharge:${subscriptionId}`;
+  const now = new Date().toISOString();
+
+  const raw = await redis.get(key);
+  let record;
+  if (raw) {
+    const existing = typeof raw === "string" ? JSON.parse(raw) : raw;
+    record = {
+      count: (existing.count || 0) + 1,
+      firstFailedAt: existing.firstFailedAt || now,
+      lastFailedAt: now,
+    };
+  } else {
+    record = { count: 1, firstFailedAt: now, lastFailedAt: now };
+  }
+
+  await redis.set(key, JSON.stringify(record));
+  await redis.expire(key, FAILED_CHARGE_TTL_SECONDS);
+  return record;
+}
+
+/**
+ * Look up the current failed-charge record for a subscription.
+ * Returns { count, firstFailedAt, lastFailedAt } or null if no failures
+ * are on record (or the record expired).
+ */
+export async function getFailedCharges(subscriptionId) {
+  const raw = await redis.get(`square:failedcharge:${subscriptionId}`);
+  if (!raw) return null;
+  if (typeof raw !== "string") return raw;
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    console.error(`[store] corrupted failedcharge record for ${subscriptionId}:`, e.message);
+    return null;
+  }
+}
+
+/**
+ * Clear the failed-charge record for a subscription.
+ * Call this whenever invoice.payment_made fires — a successful payment
+ * means whatever retry sequence was in progress resolved itself, so the
+ * count should reset rather than carry forward into the next billing cycle.
+ */
+export async function clearFailedCharges(subscriptionId) {
+  await redis.del(`square:failedcharge:${subscriptionId}`);
+}
+
+// ---------------------------------------------------------------------------
+// Downgrade reason — lets the extension explain *why* a token lost Pro
+// ---------------------------------------------------------------------------
+// There's no grace period beyond Square's own 3-attempt/9-day retry window
+// (day 3, 6, 9) — Square emails the buyer on each failed attempt, so by the
+// time we downgrade, the person has already had 9 days and 3 emails of
+// warning from Square directly. What they DON'T get without this marker is
+// any signal from US, in the one place they'll actually notice — the
+// extension popup, the moment they look for it. Without this, "never
+// subscribed" and "subscribed, then a card declined three times" render
+// identically as plain "Free" — this lets the popup tell those apart and
+// show the right message ("update your card" vs. a generic upgrade pitch).
+//
+// Stored on the token itself (not the subscription) since that's what the
+// popup already has in hand via getToken(tokenId) — no extra lookup needed.
+// Set ONLY at the moment of the automatic, failure-driven downgrade in the
+// webhook handler — NOT on a normal user-initiated cancellation, where the
+// person already knows why (they clicked cancel).
+
+const DOWNGRADE_REASON_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days — long enough
+// for someone to notice on their own schedule, short enough that it doesn't
+// linger forever for an account that's since resubscribed and lapsed again
+// for an unrelated reason.
+
+/**
+ * Mark a token as downgraded due to repeated payment failure (as opposed to
+ * a normal cancellation). Call this at the same point upgradeTier(tokenId,
+ * "free") is called for a payment-failure-driven downgrade.
+ */
+export async function setDowngradeReason(tokenId, reason) {
+  const key = `square:downgradereason:${tokenId}`;
+  await redis.set(key, JSON.stringify({ reason, at: new Date().toISOString() }));
+  await redis.expire(key, DOWNGRADE_REASON_TTL_SECONDS);
+}
+
+/**
+ * Look up why a token was downgraded, if it was due to payment failure.
+ * Returns { reason, at } or null — null means either no downgrade marker
+ * exists, or the token was never downgraded this way (e.g. it cancelled
+ * normally, or it's simply never been Pro).
+ */
+export async function getDowngradeReason(tokenId) {
+  const raw = await redis.get(`square:downgradereason:${tokenId}`);
+  if (!raw) return null;
+  if (typeof raw !== "string") return raw;
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    console.error(`[store] corrupted downgradereason record for ${tokenId}:`, e.message);
+    return null;
+  }
+}
+
+/**
+ * Clear the downgrade-reason marker for a token.
+ * Call this whenever a token upgrades back to "pro" — once they've fixed
+ * the billing issue (or resubscribed fresh), the old reason is stale and
+ * showing it again after a successful resubscribe would be confusing.
+ */
+export async function clearDowngradeReason(tokenId) {
+  await redis.del(`square:downgradereason:${tokenId}`);
 }

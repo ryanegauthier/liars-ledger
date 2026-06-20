@@ -4,16 +4,22 @@
 // Routes:
 //   POST /register             - anonymous token registration
 //   GET  /api/scan-status      - remaining scans for token
-//   POST /api/claude/extract   - Claude extraction (counted)
-//   POST /api/mistral/extract  - Mistral extraction (counted)
-//   POST /api/verify-claim     - claim verification
+//   POST /api/scan/start       - consume a scan (returns allowed/remaining)
+//   POST /api/claude/extract   - Claude extraction (not counted here)
+//   POST /api/mistral/extract  - Mistral extraction (not counted here)
+//   POST /api/verify-claim     - claim verification (Pro only)
 //   GET  /api/congress/*       - Congress.gov proxy
-//   GET  /api/votesmart/*      - VoteSmart proxy (JWT auth + refresh)
+//   GET  /api/votesmart/*      - VoteSmart proxy (Pro only)
 //   GET  /api/govtrack/*       - GovTrack proxy (no key)
 //   GET  /api/legislators      - congress-legislators dataset (cached)
 //   GET  /health               - health check
-//   POST /admin/set-tier       - manual tier override (TEMPORARY - testing only, see warning below)
-//   POST /admin/reset-scans    - manual scan count reset (TEMPORARY - testing only)
+//   POST /pricing/checkout     - create Square payment link for Pro subscription
+//   POST /webhook/square       - Square webhook receiver (subscription lifecycle,
+//                                 events: subscription.created, subscription.updated,
+//                                 invoice.payment_made, invoice.scheduled_charge_failed)
+//   POST /restore-token        - recover Pro access via Square order reference
+//   POST /admin/set-tier       - manual tier override (TEMPORARY - pre-Square only)
+//   POST /admin/reset-scans    - manual scan count reset (TEMPORARY - pre-Square only)
 
 import "dotenv/config";
 import express from "express";
@@ -25,8 +31,9 @@ import { congress }  from "./providers/congress.js";
 import { votesmart } from "./providers/votesmart.js";
 import { govtrack }  from "./providers/govtrack.js";
 import { verifyClaim } from "./providers/verify.js";
-import { createToken, getToken, getScans, incrementUserCount, getFreeTierLimit, upgradeTier, resetScans } from "./providers/store.js";
+import { createToken, getToken, getScans, incrementUserCount, getFreeTierLimit, upgradeTier, resetScans, storeOrderTemplateMapping, lookupTokenByOrderTemplate, storeSquareCustomerMapping, lookupTokenBySquareCustomer, storeSquareSubscriptionMapping, lookupTokenBySquareSubscription, recordFailedCharge, clearFailedCharges, setDowngradeReason, clearDowngradeReason, getDowngradeReason } from "./providers/store.js";
 import { requireToken, countScan } from "./middleware/auth.js";
+import * as square from "./providers/square.js";
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
@@ -49,7 +56,13 @@ app.use(cors({
   allowedHeaders: ["Content-Type", "Authorization", "x-token"],
 }));
 
-app.use(express.json({ limit: "64kb" }));
+// Capture raw body before JSON parsing — required for Square webhook signature
+// verification. The webhook handler reads req.rawBody; all other routes use
+// the parsed req.body as normal. See POST /webhook/square below.
+app.use(express.json({
+  limit: "64kb",
+  verify: (req, _res, buf) => { req.rawBody = buf; },
+}));
 
 // ── Rate limiting ─────────────────────────────────────────────────────────────
 const limiter = rateLimit({
@@ -129,9 +142,15 @@ app.post("/register", wrap(async (req, res) => {
 app.get("/api/scan-status", requireToken, wrap(async (req, res) => {
   // Scans are pooled across all users regardless of tier — pro changes
   // what data the extension shows (AI summary, VoteSmart), not scan count.
-  const [scans, { limit, warn, userCount }] = await Promise.all([
+  const [scans, { limit, warn, userCount }, downgrade] = await Promise.all([
     getScans(req.tokenId),
     getFreeTierLimit(),
+    // Only meaningful for free tier — a pro user obviously hasn't been
+    // downgraded, and any stale marker would already have been cleared on
+    // their last successful payment/resubscribe anyway. Skipping the
+    // lookup entirely for pro tier avoids an extra Redis round-trip on
+    // every single poll for the common case.
+    req.tier === "free" ? getDowngradeReason(req.tokenId) : Promise.resolve(null),
   ]);
   const remaining = Math.max(0, limit - scans);
 
@@ -142,6 +161,11 @@ app.get("/api/scan-status", requireToken, wrap(async (req, res) => {
     remaining,
     capacityWarning: warn,     // true at 2500–4999 users — surface in extension UI
     userCount,
+    // Present only when this token was downgraded due to repeated payment
+    // failure (not a normal cancellation, and not "never subscribed").
+    // Lets the popup show "your card was declined" instead of a generic
+    // upgrade pitch. null/absent for everyone else.
+    downgradeReason: downgrade?.reason || null,
   });
 }));
 
@@ -350,6 +374,379 @@ app.post("/admin/reset-scans", express.json(), wrap(async (req, res) => {
   } catch (e) {
     console.error("[admin] reset-scans failed:", e.message);
     res.status(500).json({ error: "Failed to reset scan count" });
+  }
+}));
+
+// ── Square subscription checkout ──────────────────────────────────────────────
+// POST /pricing/checkout
+// Called from liarsledger.com/pricing when a user clicks "Subscribe to Pro".
+// Body: { token }  (the anonymous extension install token)
+//
+// Flow (per SQUAREDESIGN.md):
+//   1. Validate the token exists in Redis
+//   2. Create a Square payment link with order.reference_id = token
+//   3. Return { url } — frontend navigates to Square's hosted checkout
+//   4. Square collects payment + contact info (buyer's email, card) — we never see it
+//   5. POST /webhook/square fires on subscription events → upgradeTier
+//
+// CORS note: called from liarsledger.com. ALLOWED_ORIGINS must include
+// https://liarsledger.com in Render env vars.
+app.post("/pricing/checkout", wrap(async (req, res) => {
+  const { token } = req.body || {};
+
+  if (!token || typeof token !== "string") {
+    return res.status(400).json({ error: "token is required" });
+  }
+  // Basic plausibility check — UUIDs are 36 chars; our tokens are similar length
+  if (token.length < 16 || token.length > 128) {
+    return res.status(400).json({ error: "invalid token format" });
+  }
+
+  const tokenData = await getToken(token);
+  if (!tokenData) {
+    return res.status(404).json({
+      error: "Token not found. Check your install token in the extension popup → Account panel.",
+    });
+  }
+  if (tokenData.tier === "pro") {
+    return res.status(409).json({
+      error: "This token already has Pro access.",
+    });
+  }
+
+  const locationId      = process.env.SQUARE_LOCATION_ID;
+  const planVariationId = process.env.SQUARE_PLAN_VARIATION_ID;
+  const backendUrl      = process.env.BACKEND_URL || "https://api.liarsledger.com";
+
+  if (!locationId || !planVariationId) {
+    console.error("[checkout] SQUARE_LOCATION_ID or SQUARE_PLAN_VARIATION_ID not set");
+    return res.status(503).json({ error: "Subscription service is not yet configured. Try again soon." });
+  }
+
+  try {
+    const result = await square.createPaymentLink({
+      locationId,
+      referenceId:     token,
+      planVariationId,
+      redirectUrl:     `${process.env.PRICING_SITE_URL || "https://liarsledger.com"}/pricing/success`,
+    });
+
+    const checkoutUrl = result.payment_link?.url;
+    if (!checkoutUrl) {
+      throw new Error("Square returned no payment_link.url");
+    }
+
+    console.log(`[checkout] payment link created for token ${token.slice(0, 8)}… order_id=${result.payment_link.order_id}`);
+
+    res.json({ ok: true, url: checkoutUrl });
+  } catch (err) {
+    console.error("[checkout] createPaymentLink failed:", err.message, err.squareErrors);
+    res.status(502).json({ error: "Failed to create checkout link. Please try again." });
+  }
+}));
+
+// ── Square webhook receiver ───────────────────────────────────────────────────
+// POST /webhook/square
+//
+// Register this URL in Square Developer Console → Webhooks → Add endpoint.
+// Subscribe to: subscription.created, subscription.updated,
+//               invoice.payment_made, invoice.scheduled_charge_failed
+//
+// Token resolution path (per SQUAREDESIGN.md §3):
+//   1. subscription.created fires with phases[0].order_template_id
+//   2. Check Redis cache (square:ordertemplate:{id}) — skip RetrieveOrder if hit
+//   3. Cache miss: call RetrieveOrder → order.reference_id = our token
+//   4. Cache the resolution + write customer/subscription recovery mappings
+//   5. upgradeTier(token, "pro") or downgradeTier based on subscription.status
+//
+// SQUARE_WEBHOOK_NOTIFICATION_URL must exactly match what's in the Square
+// Dashboard (including scheme and trailing slash, if any). Set in Render env vars.
+app.post("/webhook/square", wrap(async (req, res) => {
+  const signature       = req.headers["x-square-hmacsha256-signature"];
+  const notificationUrl = process.env.SQUARE_WEBHOOK_NOTIFICATION_URL
+    || `${process.env.BACKEND_URL || "https://api.liarsledger.com"}/webhook/square`;
+
+  const isValid = await square.verifyWebhookSignature({
+    rawBody: req.rawBody,
+    signature,
+    notificationUrl,
+  });
+
+  if (!isValid) {
+    console.warn("[webhook/square] signature mismatch — rejecting");
+    return res.status(403).send();
+  }
+
+  // Acknowledge immediately — Square retries on non-2xx (up to 24h).
+  // We process the event after responding to minimize Square's retry window
+  // on transient internal errors (e.g. brief Redis downtime). Don't let a
+  // downstream failure become a Square retry storm.
+  res.status(200).send();
+
+  try {
+    await handleSquareEvent(req.body);
+  } catch (err) {
+    console.error("[webhook/square] event handler error:", err.message);
+  }
+}));
+
+/**
+ * Process a Square webhook event.
+ * Called after the 200 response has been sent.
+ */
+async function handleSquareEvent(event) {
+  const type = event?.type;
+  const obj  = event?.data?.object;
+
+  // ── subscription.created / subscription.updated ──────────────────────────
+  if (type === "subscription.created" || type === "subscription.updated") {
+    const sub = obj?.subscription;
+    if (!sub) return;
+
+    const { id: subscriptionId, customer_id: customerId, status } = sub;
+    const orderTemplateId = sub.phases?.[0]?.order_template_id;
+
+    if (status === "ACTIVE" || status === "PENDING") {
+      const tokenId = await resolveTokenFromOrderTemplate(orderTemplateId, subscriptionId, customerId);
+      if (tokenId) {
+        await upgradeTier(tokenId, "pro");
+        console.log(`[webhook/square] ${type} status=${status} → token ${tokenId.slice(0, 8)}… → pro`);
+      } else {
+        console.error(`[webhook/square] ${type}: could not resolve token for sub=${subscriptionId?.slice(0, 8)}…`);
+      }
+      if (status === "ACTIVE") {
+        // Reaching ACTIVE (e.g. after a card update following failed
+        // charges, or a fresh resubscribe) means whatever retry sequence
+        // was in progress is over — clear both the failure count and any
+        // stale "you were downgraded" marker so it doesn't resurface after
+        // the person has already fixed things.
+        await clearFailedCharges(subscriptionId);
+        if (tokenId) await clearDowngradeReason(tokenId);
+      }
+    } else if (status === "CANCELED" || status === "DEACTIVATED") {
+      // User-initiated (or otherwise not failure-driven) — the person
+      // already knows why (they cancelled, or Square/we deactivated it for
+      // some other reason unrelated to a declined card). No downgrade-
+      // reason marker here; that's reserved for the failure-driven path.
+      const tokenId = await resolveTokenFromOrderTemplate(orderTemplateId, subscriptionId, customerId);
+      if (tokenId) {
+        await upgradeTier(tokenId, "free");
+        await clearDowngradeReason(tokenId); // in case a stale marker exists from an earlier failed-payment episode
+        console.log(`[webhook/square] ${type} status=${status} → token ${tokenId.slice(0, 8)}… → free`);
+      }
+      await clearFailedCharges(subscriptionId);
+    } else if (status === "FAILED") {
+      // Square's own subscription-level FAILED status — this IS
+      // failure-driven (distinct from an individual invoice.scheduled_
+      // charge_failed event, but same underlying cause), so set the marker.
+      const tokenId = await resolveTokenFromOrderTemplate(orderTemplateId, subscriptionId, customerId);
+      if (tokenId) {
+        await upgradeTier(tokenId, "free");
+        await setDowngradeReason(tokenId, "payment_failed");
+        console.log(`[webhook/square] ${type} status=${status} → token ${tokenId.slice(0, 8)}… → free (payment_failed)`);
+      }
+      await clearFailedCharges(subscriptionId);
+    } else {
+      // PENDING without a start_date, PAUSED, etc.
+      console.log(`[webhook/square] ${type} status=${status} — no tier action`);
+    }
+    return;
+  }
+
+  // ── invoice.payment_made ─────────────────────────────────────────────────
+  // Idempotent confirmation of Pro status on recurring billing cycles.
+  // subscription.created/updated already handles the initial upgrade, but
+  // invoice.payment_made is a belt-and-suspenders confirmation each cycle.
+  // Also clears any failed-charge tracking — a successful payment means
+  // whatever retry sequence was in progress resolved itself.
+  if (type === "invoice.payment_made") {
+    const subscriptionId = obj?.invoice?.subscription_id;
+    if (!subscriptionId) return;
+
+    const tokenId = await lookupTokenBySquareSubscription(subscriptionId);
+    if (tokenId) {
+      await upgradeTier(tokenId, "pro");
+      await clearDowngradeReason(tokenId);
+      console.log(`[webhook/square] invoice.payment_made sub=${subscriptionId.slice(0, 8)}… → token ${tokenId.slice(0, 8)}… confirmed pro`);
+    }
+    await clearFailedCharges(subscriptionId);
+    return;
+  }
+
+  // ── invoice.scheduled_charge_failed ──────────────────────────────────────
+  // Fires when an automatic subscription payment attempt fails. This is the
+  // correct, documented event for this (payment.updated is too broad and not
+  // subscription-specific — see CHANGELOG for the live-docs verification).
+  //
+  // IMPORTANT: confirmed against Square's own docs — Square does NOT
+  // auto-cancel a subscription when payments fail. It retries automatically
+  // on day 3, day 6, and day 9 after the initial decline, then simply leaves
+  // the subscription ACTIVE with an unpaid invoice indefinitely. There is no
+  // guaranteed subscription.updated → CANCELED event to wait for after that.
+  //
+  // So we track failures ourselves and downgrade proactively once we're past
+  // Square's retry window with no successful payment in between. Using
+  // count >= 3 as the threshold (matches Square's 3-retry schedule: day 3,
+  // 6, 9) rather than a fixed day-9 timer — simpler, and avoids needing a
+  // separate scheduled job just to check elapsed time.
+  if (type === "invoice.scheduled_charge_failed") {
+    const subscriptionId = obj?.invoice?.subscription_id;
+    if (!subscriptionId) return;
+
+    const failureRecord = await recordFailedCharge(subscriptionId);
+    console.warn(`[webhook/square] invoice.scheduled_charge_failed sub=${subscriptionId.slice(0, 8)}… (failure #${failureRecord.count}, first failed ${failureRecord.firstFailedAt})`);
+
+    // After Square's full retry schedule (3 failures = day 3, 6, 9 all
+    // missed) has played out with no intervening payment_made, downgrade.
+    // subscription.updated → CANCELED, if it ever arrives, will also
+    // downgrade (idempotent) — this just stops us granting Pro forever to a
+    // card that's permanently failing while Square leaves it ACTIVE.
+    if (failureRecord.count >= 3) {
+      const tokenId = await lookupTokenBySquareSubscription(subscriptionId);
+      if (tokenId) {
+        await upgradeTier(tokenId, "free");
+        await setDowngradeReason(tokenId, "payment_failed");
+        console.warn(`[webhook/square] sub=${subscriptionId.slice(0, 8)}… exceeded retry window (${failureRecord.count} failures) → token ${tokenId.slice(0, 8)}… downgraded to free`);
+      } else {
+        console.error(`[webhook/square] sub=${subscriptionId.slice(0, 8)}… exceeded retry window but no token mapping found — could not downgrade`);
+      }
+    }
+    return;
+  }
+
+  console.log(`[webhook/square] unhandled event type: ${type}`);
+}
+
+/**
+ * Resolve a tokenId from a subscription event.
+ *
+ * Resolution order (per SQUAREDESIGN.md §3):
+ *   1. Redis cache: square:ordertemplate:{orderTemplateId} → token (fast)
+ *   2. Cache miss: RetrieveOrder(orderTemplateId) → order.reference_id → token
+ *   3. Cache the resolution; write all three recovery mappings
+ *   4. Last resort: square:subscription:{subscriptionId} lookup (handles
+ *      subscription.updated events after the initial created event is cached)
+ *
+ * @param {string|undefined} orderTemplateId - phases[0].order_template_id
+ * @param {string}           subscriptionId
+ * @param {string}           customerId
+ * @returns {Promise<string|null>}
+ */
+async function resolveTokenFromOrderTemplate(orderTemplateId, subscriptionId, customerId) {
+  // Fast path 1: subscription already resolved on a prior event
+  let tokenId = await lookupTokenBySquareSubscription(subscriptionId);
+  if (tokenId) return tokenId;
+
+  // Fast path 2: order template already resolved (e.g. created event cached it)
+  if (orderTemplateId) {
+    tokenId = await lookupTokenByOrderTemplate(orderTemplateId);
+    if (tokenId) {
+      // Backfill subscription mapping for future fast-path hits
+      await storeSquareSubscriptionMapping(subscriptionId, tokenId);
+      return tokenId;
+    }
+
+    // Slow path: RetrieveOrder to read reference_id = our token
+    try {
+      const orderResult = await square.retrieveOrder(orderTemplateId);
+      // batch-retrieve returns an array; grab the first match
+      const order = (orderResult.orders || [])[0] || orderResult.order;
+      tokenId = order?.reference_id ?? null;
+
+      if (tokenId && tokenId.length >= 16) {
+        // Cache all three mappings to avoid future RetrieveOrder calls
+        await Promise.all([
+          storeOrderTemplateMapping(orderTemplateId, tokenId),
+          storeSquareCustomerMapping(customerId, tokenId),
+          storeSquareSubscriptionMapping(subscriptionId, tokenId),
+        ]);
+        console.log(`[webhook/square] resolved token ${tokenId.slice(0, 8)}… via orderTemplate=${orderTemplateId.slice(0, 8)}…`);
+      } else {
+        console.error(`[webhook/square] RetrieveOrder(${orderTemplateId.slice(0, 8)}…) returned no usable reference_id`);
+        tokenId = null;
+      }
+    } catch (err) {
+      console.error("[webhook/square] RetrieveOrder failed:", err.message);
+      tokenId = null;
+    }
+  } else {
+    console.warn(`[webhook/square] subscription event has no order_template_id — cannot resolve token`);
+  }
+
+  return tokenId;
+}
+
+// ── Token restore (lost-token recovery) ───────────────────────────────────────
+// POST /restore-token
+// Called from popup.js when a subscriber has lost their token (e.g., after
+// reinstalling Chrome) and wants to recover Pro access.
+// Body: { orderReference }  — Square order ID from their receipt email
+//
+// Resolution path (per SQUAREDESIGN.md §4):
+//   1. Call RetrieveOrder(orderReference) — validates the order exists
+//   2. Get order.customer_id
+//   3. Look up square:customer:{customer_id} in Redis → tokenId
+//   4. Return { token: tokenId } to the extension popup
+//   5. Extension swaps chrome.storage.sync to use the recovered token
+//
+// Rate limited separately to prevent brute-forcing Square order IDs.
+const restoreTokenLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many restore attempts. Please wait 15 minutes and try again." },
+});
+
+app.post("/restore-token", restoreTokenLimiter, wrap(async (req, res) => {
+  const { orderReference } = req.body || {};
+
+  if (!orderReference || typeof orderReference !== "string") {
+    return res.status(400).json({ error: "orderReference is required" });
+  }
+  if (orderReference.length < 8 || orderReference.length > 128) {
+    return res.status(400).json({ error: "Invalid order reference format" });
+  }
+
+  try {
+    const orderResult = await square.retrieveOrder(orderReference.trim());
+    const order = (orderResult.orders || [])[0] || orderResult.order;
+
+    if (!order) {
+      return res.status(404).json({ error: "Order not found. Double-check your Square receipt." });
+    }
+
+    // Only accept completed/paid orders — not OPEN or CANCELED
+    if (order.state !== "COMPLETED") {
+      return res.status(404).json({
+        error: "No completed payment found for that reference. Check your receipt and try again.",
+      });
+    }
+
+    const customerId = order.customer_id;
+    if (!customerId) {
+      console.error(`[restore-token] order ${orderReference.slice(0, 8)}… has no customer_id`);
+      return res.status(404).json({ error: "Could not find your account. Contact support@liarsledger.com." });
+    }
+
+    const tokenId = await lookupTokenBySquareCustomer(customerId);
+    if (!tokenId) {
+      // Mapping not in Redis — possibly an edge case where the webhook fired
+      // before the mapping was written, or Redis was flushed.
+      console.error(`[restore-token] no token mapping for customer ${customerId.slice(0, 8)}…`);
+      return res.status(404).json({
+        error: "Account record not found. Please contact support@liarsledger.com with your order number.",
+      });
+    }
+
+    console.log(`[restore-token] token ${tokenId.slice(0, 8)}… restored via order ${orderReference.slice(0, 8)}…`);
+    res.json({ ok: true, token: tokenId });
+  } catch (err) {
+    if (err.statusCode === 404) {
+      return res.status(404).json({ error: "Order not found. Double-check the order number from your receipt." });
+    }
+    console.error("[restore-token] error:", err.message);
+    res.status(502).json({ error: "Failed to look up your order. Please try again." });
   }
 }));
 
