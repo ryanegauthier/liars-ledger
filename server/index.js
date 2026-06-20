@@ -38,6 +38,16 @@ import * as square from "./providers/square.js";
 const app  = express();
 const PORT = process.env.PORT || 3001;
 
+// Render sits behind a single reverse proxy hop, which sets X-Forwarded-For
+// on every incoming request. Express's default (trust proxy: false) ignores
+// that header entirely and falls back to the proxy's own connection IP for
+// anything IP-based — meaning every distinct visitor would resolve to the
+// same address as far as express-rate-limit is concerned, silently breaking
+// the /register, general API, and /restore-token limiters (all keyed by IP).
+// Setting this to 1 means "trust exactly one hop" — correct for Render's
+// architecture. Must be set before any rate limiter middleware is registered.
+app.set("trust proxy", 1);
+
 // ── Async wrapper - catches rejected promises from async route handlers ────────
 // Express 4.x does not catch async errors automatically.
 const wrap = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);

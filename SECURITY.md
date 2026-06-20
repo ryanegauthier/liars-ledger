@@ -1,7 +1,7 @@
 # Security Policy
 
 ## Current Status
-Liar's Ledger v0.14.1 has completed its pre-release security checklist. v0.12.1 is published on the Chrome Web Store; v0.13.0 (no functional changes from v0.12.1 beyond store-listing metadata) is submitted and awaiting Chrome Web Store review approval.
+Liar's Ledger v0.14.1 has completed its pre-release security checklist. v0.13.0 (Chrome Web Store launch, no functional changes from v0.12.1 beyond store-listing metadata) was approved and is live. v0.15.0 (Square subscription integration) is deployed to Render and has passed infrastructure-level verification (webhook route reachable, signature verification confirmed against both invalid and genuine Square-signed requests) - a full real subscription lifecycle has not yet been run end-to-end in sandbox as of this writing.
 
 ---
 
@@ -47,6 +47,16 @@ The anonymous per-install token model (no email, no account, no payment verifica
 - **Not mitigated**: a distributed attacker using many IPs or proxies, registering slowly, is not stopped by IP-based rate limiting. A more complete fix (CAPTCHA, proof-of-work, or some form of identity verification on registration) would close this further but adds friction for legitimate users and hasn't been built. This is an accepted tradeoff at the current scale and userbase size, revisit if abuse is observed in practice.
 - **Admin override endpoints** (`/admin/set-tier`, `/admin/reset-scans`) exist as temporary, manual testing tools. Both fail closed (403) unless `ADMIN_SECRET` is set in Render's environment and provided via the `x-admin-key` header on the request. **These are now formally deprecated** — `POST /webhook/square` (added in v0.15.0) is the real tier-management path. They should be removed in a subsequent release once the Square integration has been verified in production.
 
+### Known Gaps - Token in URL Query Parameters (v0.15.0)
+The install token is passed as `?token=<uuid>` in links from the extension to `liarsledger.com/pricing` - the extension popup's pricing link, the sidebar's rate-limited upgrade prompt, the capacity-warning nudge, and the standalone report page's Pro upsell card all build this URL so the person doesn't have to manually copy/paste their token at checkout. This is a deliberate tradeoff, not an oversight, made because the no-accounts model leaves the anonymous token as a bearer credential with no second factor - some transport mechanism is needed to carry it from extension storage into a page the browser is being navigated to, and a URL parameter is the simplest one available without new backend infrastructure.
+
+This does not contradict "No User Data Collection" below - the token isn't *collected from* the user, it's generated locally on install and never tied to identity. It is, however, the closest thing this system has to a credential, so its handling gets the same scrutiny a real credential would.
+
+- **Real exposure paths, accepted**: the token is written to local browser history at navigation time (before `history.replaceState` can strip it from the visible address bar); it's logged in plaintext in Render's (and any upstream proxy's) access logs for every `GET /pricing?token=...` request, for as long as logs are retained - this is the most certain exposure path, since it happens on every use rather than only under adversarial conditions; and it's visible in the browser's status bar on link hover and briefly in the address bar before JS strips it.
+- **Mitigated, not eliminated**: the token is stripped from the visible URL bar via `history.replaceState` immediately on page load; the actual checkout request (`POST /pricing/checkout`) sends the token in the request body rather than a second GET, so it isn't logged a second time at submission; `pricing.html` and `report.html` load no third-party scripts before the strip occurs, so `Referer`-header leakage to an external host is not currently a live path.
+- **Why this is acceptable given the actual blast radius**: the token is a random UUID, not predictable or guessable, and not reusable to extract anything beyond what it already grants - shared scan pool access, the ability to subscribe that token to Pro, or `/restore-token` access (which itself requires possession of a real completed Square order reference). Worst case if a token leaks is someone else uses the associated scan allowance, or - paradoxically harmlessly - subscribes that token to Pro using their own card. No PII, payment data, or account access is tied to the token itself.
+- **Considered and rejected (for now)**: a short-lived, single-use exchange nonce (the backend mints a temporary value tied to the real token; the URL carries the nonce instead; `/pricing/checkout` exchanges nonce→token server-side) would close the server-log exposure path specifically. Not implemented - meaningful new backend surface (a Redis key with a tight TTL, a new exchange step) for a risk profile this low. Revisit if the token model ever changes to carry higher stakes (e.g. if accounts or email are ever added).
+
 ---
 
 ## No User Data Collection (By Design)
@@ -78,6 +88,7 @@ This is a core design principle enforced at every layer.
 - [ ] **`/admin/set-tier` and `/admin/reset-scans` should be removed** once `POST /webhook/square` (v0.15.0) is verified live in production — they are now superseded by the real Square webhook tier management path
 - [ ] No automated test suite exists yet - all verification in this checklist was done by manual API calls during this release. A real regression test suite covering tier gating would catch issues like the v0.14.0→v0.14.1 pooled-scan-limit bug (see CHANGELOG) automatically.
 - [ ] Distributed token-farming (many IPs, slow registration rate) is not mitigated - see "Known Gaps" above
+- [ ] Token passed as a URL query parameter to liarsledger.com/pricing is logged in plaintext in server access logs - accepted tradeoff given the token's low blast radius, see "Known Gaps - Token in URL Query Parameters" above
 
 ---
 

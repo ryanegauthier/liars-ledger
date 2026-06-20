@@ -2,7 +2,20 @@
 
 > **Note:** [0.13.0] (Chrome Web Store launch) was submitted for review before [0.14.0]'s freemium work began, and was actually approved on 2026-06-16 — before any of 0.14.0–0.14.2 was built. The approval went unnoticed for several days (no email confirmation arrived; only found by checking the developer dashboard directly), which is why it's documented here after the fact rather than at the time. Listed below in its correct chronological position by approval date, not by when it was noticed or written up.
 
-## [0.15.0] - Unreleased
+## [0.15.1] - 2026-06-20
+
+### Fixes — two bugs caught during sandbox verification of 0.15.0
+
+**`server/index.js`**
+- **`app.set("trust proxy", 1)`** added immediately after app creation, before any middleware. Render sits behind a single reverse-proxy hop that sets `X-Forwarded-For` on every request; Express's default (`trust proxy: false`) ignores that header and falls back to the proxy's own connection IP for anything IP-based. `express-rate-limit` detected the mismatch and threw `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` rather than silently misidentifying every visitor as the same IP — which would have made the `/register`, general API, and `/restore-token` rate limiters (all keyed by IP) meaningless, treating every distinct user as one. Caught live in Render's logs during the first real subscription-flow test against Square sandbox, not in code review — this had been live since whichever release first added `express-rate-limit` and nothing had hit those limiter code paths hard enough to surface it until now.
+
+**`extension/report.js`**
+- The standalone full-report page's "Upgrade to Pro" link (`proFeaturesUpsellHtml`, shown in the VoteSmart section for free-tier users) was still hardcoded to a bare `https://liarsledger.com/pricing` with no token — the fourth place this exact bug was found independently, after the sidebar card, the rate-limited prompt, and the capacity-warning nudge (all fixed earlier in 0.15.0's work). `loadReport()` now also reads `ll_auth_token` from `chrome.storage.sync` (a separate storage area from `ll_results`, which is all it read before) and builds the same `?token=` URL pattern used everywhere else, threaded through `renderRecord`'s new third parameter.
+- **Note for future review**: this is the fourth instance of the same bug class found one screenshot at a time rather than in a single deliberate pass. Worth a dedicated search (`grep -rn "liarsledger.com/pricing" extension/`) before the next release that touches any upsell surface, rather than relying on catching the fifth instance by accident too.
+
+---
+
+## [0.15.0] - 2026-06-20
 
 ### Square subscription integration — full Pro billing pipeline
 

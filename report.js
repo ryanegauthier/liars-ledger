@@ -24,7 +24,7 @@ function voteClass(vote) {
   return "ll-vote-notvoting";
 }
 
-function renderRecord(record, tier) {
+function renderRecord(record, tier, upgradeUrl) {
   const p         = record.politician || {};
   const partyRaw  = p.party || "";
   const partyCode = partyRaw === "D" || partyRaw === "Democratic" ? "D"
@@ -125,7 +125,7 @@ function renderRecord(record, tier) {
       flex-direction: column;
       gap: 10px;
     ">
-      <a href="https://liarsledger.com/pricing" target="_blank" style="
+      <a href="${escapeHtml(upgradeUrl || "https://liarsledger.com/pricing")}" target="_blank" style="
         display: inline-block;
         padding: 8px 18px;
         background: #c8a96e;
@@ -272,6 +272,23 @@ async function loadReport() {
     return;
   }
 
+  // Build a token-bearing pricing link, same pattern as background.js's
+  // upgradeUrl / content.js's renderCapacityWarning — so "Upgrade to Pro"
+  // here doesn't drop the user on a bare /pricing page requiring manual
+  // copy/paste. The token lives in chrome.storage.sync (ll_auth_token),
+  // a different storage area than ll_results (session storage) above,
+  // so it's a separate read.
+  let upgradeUrl = "https://liarsledger.com/pricing";
+  try {
+    const tokenStorage = await browser.storage.sync.get("ll_auth_token");
+    const tokenId = tokenStorage.ll_auth_token?.tokenId;
+    if (tokenId) {
+      upgradeUrl = `https://liarsledger.com/pricing?token=${encodeURIComponent(tokenId)}`;
+    }
+  } catch (e) {
+    // fall through to the bare URL above — no token is better than a broken page
+  }
+
   const records = idx !== null && results.records[idx]
     ? [results.records[idx]]
     : results.records;
@@ -281,7 +298,7 @@ async function loadReport() {
   }
 
   document.getElementById("reportContent").innerHTML =
-    records.map(r => renderRecord(r, results.tier)).join("");
+    records.map(r => renderRecord(r, results.tier, upgradeUrl)).join("");
 }
 
 document.addEventListener("DOMContentLoaded", loadReport);
