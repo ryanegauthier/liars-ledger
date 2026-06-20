@@ -72,18 +72,41 @@ async function request(method, path, body) {
  * VARIATION ID (SQUARE_PLAN_VARIATION_ID), not the top-level plan ID. Square's
  * field name is misleading — see SQUAREDESIGN.md §1 gotcha.
  *
+ * IMPORTANT: Square's CreatePaymentLink requires `order.line_items` to be
+ * non-empty even for subscription checkout — confirmed against live docs.
+ * `quick_pay` (Square's other top-level option) maps its `name`/`price_money`
+ * internally into the exact same order line-item shape, so this isn't a
+ * different mechanism, just a different way of supplying the same data —
+ * which means it's safe to keep using `order` (and therefore keep
+ * `reference_id`) rather than switching to `quick_pay`, which has no
+ * `reference_id`-equivalent field and would have broken the whole
+ * token-resolution chain this design depends on.
+ *
+ * The line item's price should match the plan variation's actual catalog
+ * price (set via setup-square-catalog.mjs) — per Square's docs, a mismatch
+ * acts as a price OVERRIDE on checkout, not just display text.
+ *
  * @param {string} locationId      - SQUARE_LOCATION_ID env var
  * @param {string} referenceId     - anonymous extension tokenId
  * @param {string} planVariationId - SQUARE_PLAN_VARIATION_ID env var
+ * @param {number} priceCents      - price in cents, must match the plan variation's catalog price
+ * @param {string} priceName       - display name for the line item on Square's checkout page
  * @param {string} redirectUrl     - success page URL after payment
  * @returns {Promise<{ paymentLink: { id, url, order_id, ... }, ... }>}
  */
-export async function createPaymentLink({ locationId, referenceId, planVariationId, redirectUrl }) {
+export async function createPaymentLink({ locationId, referenceId, planVariationId, priceCents, priceName, redirectUrl }) {
   return request("POST", "/online-checkout/payment-links", {
     idempotency_key: `${referenceId}-${Date.now()}`,
     order: {
       location_id:  locationId,
       reference_id: referenceId,  // ← our anonymous token; recovered at webhook time
+      line_items: [
+        {
+          name:             priceName,
+          quantity:         "1",
+          base_price_money: { amount: priceCents, currency: "USD" },
+        },
+      ],
     },
     checkout_options: {
       subscription_plan_id: planVariationId,  // variation ID, not plan ID (see SQUAREDESIGN.md)
