@@ -90,12 +90,20 @@ async function handleAnalyze({ politicians, articleText }) {
 
     if (llmOn) {
       // ── Scan counting — single call, before any LLM provider runs ─────────
-      // This is the ONLY place a scan gets counted. /api/claude/extract and
-      // /api/mistral/extract do not count themselves, so dual-model mode
-      // (both providers firing for one page-scan) never double-charges.
+      // This is the ONLY place a scan gets counted. /api/scan/start also
+      // issues a single-use scanToken (see auth.js / store.js) that the
+      // extraction endpoints now REQUIRE — server-side enforcement closes
+      // the bypass found in the June 2026 security review (see
+      // SECURITY.md "Known Gaps - Scan Limit Bypassable"). The same
+      // scanToken is passed to BOTH Claude and Mistral calls in dual-model
+      // mode; whichever reaches the server first consumes it, the second
+      // is rejected by the server rather than re-counted — this still
+      // never double-charges a single scan, it's just enforced server-side
+      // now instead of relying on the client only calling this once.
       const proxyUrl = (typeof CONFIG !== "undefined" && CONFIG.PROXY_URL)
         || "https://api.liarsledger.com";
       const auth = await authHeaders();
+      let scanToken = null;
 
       try {
         const scanRes = await fetch(`${proxyUrl}/api/scan/start`, {
@@ -118,8 +126,21 @@ async function handleAnalyze({ politicians, articleText }) {
             upgrade_url: upgradeUrl,
           };
         }
+
+        if (scanRes.ok) {
+          const scanData = await scanRes.json();
+          scanToken = scanData.scanToken || null;
+          if (!scanToken) {
+            logger.warn("background", "scan/start succeeded but returned no scanToken - extraction calls will be rejected server-side");
+          }
+        }
         // Any other non-OK status (5xx, auth issue, etc.) — fail open and
-        // proceed with the scan rather than blocking the user on a server hiccup.
+        // proceed with the scan rather than blocking the user on a server
+        // hiccup. NOTE: if scan/start failed, scanToken stays null, and the
+        // extraction call(s) below will be rejected server-side by
+        // requireScanToken (403) rather than silently succeeding unguarded
+        // — this is the intended, correct behavior post-hardening. The
+        // user sees a failed scan rather than an uncounted one.
       } catch (e) {
         logger.warn("background", `scan/start request failed: ${e.message} - failing open`);
       }
@@ -133,6 +154,17 @@ async function handleAnalyze({ politicians, articleText }) {
         claudeEndpoint: CONFIG.CLAUDE_API_ENDPOINT  || undefined,
         mistralEndpoint:CONFIG.MISTRAL_API_ENDPOINT || undefined,
         timeoutMs:      CONFIG.LLM_TIMEOUT_MS || 30000,
+        // NEW — required server-side as of the scan-token hardening pass.
+        // src/llm.js's extractArticleAnalysis must include this in the
+        // POST body of BOTH the Claude and Mistral extraction requests it
+        // makes (dual mode calls both with the SAME scanToken value — see
+        // store.js/auth.js for why reusing one token across both calls is
+        // correct, not a bug). If llm.js doesn't yet thread this through to
+        // its actual fetch() calls, both extraction requests will be
+        // rejected with 403 by the server until it does — this is a
+        // necessary follow-up change in llm.js that's outside what's
+        // visible/editable from background.js alone.
+        scanToken,
       });
       if (ann.ok) {
         articleSummary   = ann.summary || null;

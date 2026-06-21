@@ -32,7 +32,7 @@ import { votesmart } from "./providers/votesmart.js";
 import { govtrack }  from "./providers/govtrack.js";
 import { verifyClaim } from "./providers/verify.js";
 import { createToken, getToken, getScans, incrementUserCount, getFreeTierLimit, upgradeTier, resetScans, storeOrderTemplateMapping, lookupTokenByOrderTemplate, storeSquareCustomerMapping, lookupTokenBySquareCustomer, storeSquareSubscriptionMapping, lookupTokenBySquareSubscription, recordFailedCharge, clearFailedCharges, setDowngradeReason, clearDowngradeReason, getDowngradeReason } from "./providers/store.js";
-import { requireToken, countScan } from "./middleware/auth.js";
+import { requireToken, countScan, requireScanToken } from "./middleware/auth.js";
 import * as square from "./providers/square.js";
 
 const app  = express();
@@ -187,15 +187,33 @@ app.get("/api/scan-status", requireToken, wrap(async (req, res) => {
 // /api/claude/extract and /api/mistral/extract are pure extraction endpoints
 // below — they do NOT count against the limit, by design, so dual-model mode
 // never double-charges a single scan.
+// POST /api/scan/start counts the scan AND issues a single-use scan token.
+// The client MUST pass that scanToken to whichever extraction call(s) follow
+// — requireScanToken on those routes rejects requests with no valid,
+// unconsumed scan token. This closes a prior gap where the extraction
+// endpoints trusted that /api/scan/start had been called first, with no
+// server-side enforcement of that ordering — see SECURITY.md "Known Gaps -
+// Scan Limit Bypassable" for the full writeup of what this fixes.
+//
+// Dual-model mode (background.js calling both /api/claude/extract and
+// /api/mistral/extract for one logical scan) reuses the SAME scanToken for
+// both calls — whichever reaches the server first consumes it via Redis
+// GETDEL and proceeds; the second finds it already gone and is rejected by
+// requireScanToken, NOT re-counted. This preserves the original no-double-
+// charge design intent while actually enforcing it server-side instead of
+// just hoping the client behaves.
 app.post("/api/scan/start", requireToken, countScan, wrap(async (req, res) => {
   res.json({
     allowed: req.scanAllowed,
     remaining: req.scanRemaining,
     warn: req.scanWarn,
+    scanToken: req.scanToken,
   });
 }));
 
-// ── LLM extraction (NOT counted here — see /api/scan/start above) ─────────────
+// ── LLM extraction (requires a valid scan token from /api/scan/start above,
+//    NOT counted again here — requireScanToken consumes the token issued
+//    there; see its doc comment in auth.js for the dual-model handling) ────
 
 // Strips Pro-only fields from a claude/mistral extraction result before it
 // reaches a free-tier client. `lookup_name` and `search_terms` always stay -
@@ -217,7 +235,7 @@ function gateExtractionResult(result, tier) {
 }
 
 // POST /api/claude/extract
-app.post("/api/claude/extract", requireToken, wrap(async (req, res) => {
+app.post("/api/claude/extract", requireToken, requireScanToken, wrap(async (req, res) => {
   const { articleText } = req.body;
   if (!articleText) return res.status(400).json({ error: "articleText required" });
   const result = await claude.extract(articleText);
@@ -225,7 +243,7 @@ app.post("/api/claude/extract", requireToken, wrap(async (req, res) => {
 }));
 
 // POST /api/mistral/extract
-app.post("/api/mistral/extract", requireToken, wrap(async (req, res) => {
+app.post("/api/mistral/extract", requireToken, requireScanToken, wrap(async (req, res) => {
   const { articleText } = req.body;
   if (!articleText) return res.status(400).json({ error: "articleText required" });
   const result = await mistral.extract(articleText);
@@ -401,7 +419,7 @@ app.post("/admin/reset-scans", express.json(), wrap(async (req, res) => {
 //
 // CORS note: called from liarsledger.com. ALLOWED_ORIGINS must include
 // https://liarsledger.com in Render env vars.
-app.post("/pricing/checkout", wrap(async (req, res) => {
+app.post("/pricing/checkout", checkoutLimiter, wrap(async (req, res) => {
   const { token } = req.body || {};
 
   if (!token || typeof token !== "string") {
@@ -718,6 +736,25 @@ const restoreTokenLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many restore attempts. Please wait 15 minutes and try again." },
+});
+
+// /pricing/checkout calls Square's CreatePaymentLink on every invocation —
+// previously had no dedicated limiter at all (only the general /api/* one,
+// which doesn't even apply here since this route isn't under /api/). Found
+// via security review: unbounded calls could exhaust Square API quotas and
+// clutter the dashboard with junk orders. Keyed by token rather than IP —
+// more precise for this route, since the meaningful identity here is the
+// token, not the network address. Falls back to IP if no token is present
+// in the body (e.g. a malformed request that requireToken/manual checks
+// below will reject anyway, but the limiter itself shouldn't error out
+// trying to build a key from undefined).
+const checkoutLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 3, // generous for any legitimate use — a handful of "Get Pro" clicks
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.body?.token || req.ip,
+  message: { error: "Too many checkout attempts. Please wait an hour and try again." },
 });
 
 app.post("/restore-token", restoreTokenLimiter, wrap(async (req, res) => {

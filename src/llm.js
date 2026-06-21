@@ -12,11 +12,18 @@
 //
 // Proxy mode (production):
 //   Set CLAUDE_API_ENDPOINT / MISTRAL_API_ENDPOINT to your backend URLs.
-//   The proxy accepts { articleText } and returns the parsed result directly.
-//   No client-side API keys needed.
+//   The proxy accepts { articleText, scanToken } and returns the parsed
+//   result directly. scanToken is required as of the scan-token hardening
+//   pass — obtained from POST /api/scan/start, threaded through via
+//   background.js -> extractArticleAnalysis's options.scanToken. The
+//   backend's requireScanToken middleware rejects requests with no valid,
+//   unconsumed scan token (see server/middleware/auth.js, SECURITY.md
+//   "Known Gaps - Scan Limit Bypassable"). No client-side API keys needed.
 //
 // Direct mode (local dev):
-//   Leave endpoints at defaults, set CLAUDE_API_KEY / MISTRAL_API_KEY in config.js.
+//   Leave endpoints at defaults, set CLAUDE_API_KEY / MISTRAL_API_KEY in
+//   config.js. scanToken is irrelevant here — there's no backend scan-limit
+//   check to satisfy when calling the provider APIs directly.
 
 // ---------------------------------------------------------------------------
 // Endpoints - override in config.js for proxy in production
@@ -118,7 +125,9 @@ async function extractArticleAnalysisViaMistral(articleText, options) {
         ? {
             method:  "POST",
             headers: { "Content-Type": "application/json", ...(await authHeaders()) },
-            body:    JSON.stringify({ articleText }),
+            // scanToken: see the matching comment in extractArticleAnalysisViaClaude
+            // above — same requirement, same reasoning.
+            body:    JSON.stringify({ articleText, scanToken: options.scanToken }),
           }
         : {
             method:  "POST",
@@ -188,7 +197,16 @@ async function extractArticleAnalysisViaClaude(articleText, options) {
         ? {
             method:  "POST",
             headers: { "Content-Type": "application/json", ...(await authHeaders()) },
-            body:    JSON.stringify({ articleText }),
+            // scanToken: required as of the scan-token hardening pass — the
+            // backend's requireScanToken middleware rejects extraction
+            // calls with no valid, unconsumed scan token (see auth.js /
+            // store.js / SECURITY.md "Known Gaps - Scan Limit Bypassable").
+            // options.scanToken is threaded through from background.js via
+            // extractArticleAnalysis -> extractArticleAnalysisDualVerified's
+            // {...options} spread above. Only meaningful in proxy mode —
+            // direct mode (local dev against Anthropic's real API) has no
+            // backend scan-limit check to satisfy.
+            body:    JSON.stringify({ articleText, scanToken: options.scanToken }),
           }
         : {
             method:  "POST",

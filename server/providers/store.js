@@ -12,6 +12,9 @@
 //   square:downgradereason:{tokenId}  → JSON { reason, at } (TTL 30d) — set only on
 //                                        failure-driven downgrade, lets the popup
 //                                        explain why Pro was lost (vs. never subscribed)
+//   scantoken:{scanToken}             → tokenId (TTL 60s, single-use via GETDEL) — server-
+//                                        issued authorization for extraction calls, closes
+//                                        the scan-limit bypass (see SECURITY.md)
 //
 // The square:* keys contain only opaque IDs — no PII. They exist to:
 //   - route tier upgrades/downgrades when subscription webhooks fire
@@ -29,6 +32,7 @@
 // the interface (exported functions) stays the same.
 
 import { Redis } from "@upstash/redis";
+import { randomUUID } from "node:crypto";
 
 const redis = new Redis({
   url:   process.env.UPSTASH_REDIS_REST_URL,
@@ -180,6 +184,89 @@ export async function incrementScans(tokenId, tier = "free") {
     allowed,
     warn,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Scan tokens — single-use, server-issued authorization for extraction calls
+// ---------------------------------------------------------------------------
+// Found via security review (June 2026): /api/claude/extract and
+// /api/mistral/extract never independently verified a scan had been counted
+// — a client holding any valid registered token could call them directly,
+// repeatedly, bypassing the daily limit entirely. See SECURITY.md "Known
+// Gaps - Scan Limit Bypassable" for the full writeup.
+//
+// Fix: incrementScans (above) now issues a short-lived, single-use scan
+// token alongside the count. Extraction endpoints REQUIRE a valid,
+// unconsumed scan token to proceed — there is no way to fabricate one
+// without Redis having issued it via a real, counted call to
+// POST /api/scan/start.
+//
+// Dual-model mode (background.js calling both /api/claude/extract and
+// /api/mistral/extract for one logical scan) is handled by reusing the SAME
+// scan token for both calls — whichever extraction request reaches the
+// server first atomically consumes it (GETDEL: get-and-delete in one round
+// trip, no race window between check and delete). The second call finds the
+// token already gone. countScan in auth.js treats "already consumed" as
+// "fine, proceed" rather than "reject" — the scan was already counted once
+// when the token was issued; consumption only gates extraction, it doesn't
+// re-count. This preserves the existing no-double-charge guarantee while
+// closing the actual bypass.
+//
+// Short TTL (60s) is a backstop, not the primary mechanism — a client that
+// requests a scan token and never uses it just lets it expire; this isn't a
+// timing-window security boundary, the single-use GETDEL is.
+
+const SCAN_TOKEN_TTL_SECONDS = 60;
+
+/**
+ * Issue a new single-use scan token. Called internally by incrementScans
+ * via incrementScansWithToken — not exported standalone, since a scan token
+ * should only ever be issued alongside an actual counted scan.
+ */
+async function issueScanToken(tokenId) {
+  const scanToken = `st_${tokenId.slice(0, 8)}_${randomUUID()}`;
+  await redis.set(`scantoken:${scanToken}`, tokenId, { ex: SCAN_TOKEN_TTL_SECONDS });
+  return scanToken;
+}
+
+/**
+ * Increment today's scan count AND issue a scan token in one call.
+ * This is what POST /api/scan/start should call instead of bare
+ * incrementScans — the returned scanToken is what background.js threads
+ * through to both extraction calls.
+ * Returns the same shape as incrementScans, plus { scanToken }.
+ * scanToken is null when !allowed — no point issuing a token for a scan
+ * that was just rejected for being over the daily limit.
+ */
+export async function incrementScansWithToken(tokenId, tier = "free") {
+  const result = await incrementScans(tokenId, tier);
+  if (!result.allowed) {
+    return { ...result, scanToken: null };
+  }
+  const scanToken = await issueScanToken(tokenId);
+  return { ...result, scanToken };
+}
+
+/**
+ * Atomically consume a scan token. Returns the tokenId it was issued for
+ * if the scan token was valid and unconsumed, or null if it was invalid,
+ * expired, or already consumed by a prior call (the dual-model second-call
+ * case — see module comment above).
+ *
+ * IMPORTANT: this does not throw or distinguish "never existed" from
+ * "already consumed" — both return null, and callers (see auth.js's
+ * requireScanToken) treat null as "no valid token for THIS call" rather
+ * than necessarily an error, since the dual-model second call legitimately
+ * expects this.
+ */
+export async function consumeScanToken(scanToken) {
+  if (!scanToken) return null;
+  const key = `scantoken:${scanToken}`;
+  // GETDEL: atomic get-and-delete in a single round trip. Two concurrent
+  // requests racing on the same scan token cannot both succeed — exactly
+  // the property dual-model mode's two near-simultaneous extract calls need.
+  const tokenId = await redis.getdel(key);
+  return tokenId || null;
 }
 
 /**
