@@ -101,6 +101,34 @@ const registerLimiter = rateLimit({
 });
 app.use("/register", registerLimiter);
 
+// /pricing/checkout calls Square's CreatePaymentLink on every invocation —
+// previously had no dedicated limiter at all (only the general /api/* one,
+// which doesn't even apply here since this route isn't under /api/). Found
+// via security review: unbounded calls could exhaust Square API quotas and
+// clutter the dashboard with junk orders. Keyed by token rather than IP —
+// more precise for this route, since the meaningful identity here is the
+// token, not the network address. Falls back to IP if no token is present
+// in the body (e.g. a malformed request that requireToken/manual checks
+// below will reject anyway, but the limiter itself shouldn't error out
+// trying to build a key from undefined).
+//
+// NOTE: defined here, early in the file alongside the other rate limiters,
+// rather than near the /pricing/checkout route itself further down — a
+// previous version of this file had it defined AFTER the route that uses
+// it, which threw "Cannot access 'checkoutLimiter' before initialization"
+// on startup (const hoisting puts the binding in an uninitialized state
+// until its declaration line actually executes top-to-bottom). Keep all
+// rate limiter definitions grouped here, before any route registrations,
+// to avoid this class of bug recurring.
+const checkoutLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 3, // generous for any legitimate use — a handful of "Get Pro" clicks
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.body?.token || req.ip,
+  message: { error: "Too many checkout attempts. Please wait an hour and try again." },
+});
+
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => {
   res.json({ status: "ok", version: process.env.npm_package_version || "0.14.2", ts: new Date().toISOString() });
@@ -736,25 +764,6 @@ const restoreTokenLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many restore attempts. Please wait 15 minutes and try again." },
-});
-
-// /pricing/checkout calls Square's CreatePaymentLink on every invocation —
-// previously had no dedicated limiter at all (only the general /api/* one,
-// which doesn't even apply here since this route isn't under /api/). Found
-// via security review: unbounded calls could exhaust Square API quotas and
-// clutter the dashboard with junk orders. Keyed by token rather than IP —
-// more precise for this route, since the meaningful identity here is the
-// token, not the network address. Falls back to IP if no token is present
-// in the body (e.g. a malformed request that requireToken/manual checks
-// below will reject anyway, but the limiter itself shouldn't error out
-// trying to build a key from undefined).
-const checkoutLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 3, // generous for any legitimate use — a handful of "Get Pro" clicks
-  standardHeaders: true,
-  legacyHeaders: false,
-  keyGenerator: (req) => req.body?.token || req.ip,
-  message: { error: "Too many checkout attempts. Please wait an hour and try again." },
 });
 
 app.post("/restore-token", restoreTokenLimiter, wrap(async (req, res) => {
