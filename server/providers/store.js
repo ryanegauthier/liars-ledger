@@ -12,7 +12,7 @@
 //   square:downgradereason:{tokenId}  → JSON { reason, at } (TTL 30d) — set only on
 //                                        failure-driven downgrade, lets the popup
 //                                        explain why Pro was lost (vs. never subscribed)
-//   scantoken:{scanToken}             → tokenId (TTL 60s, single-use via GETDEL) — server-
+//   scantoken:{scanToken}             → tokenId (TTL 60s, single-use via get+del) — server-
 //                                        issued authorization for extraction calls, closes
 //                                        the scan-limit bypass (see SECURITY.md)
 //
@@ -204,17 +204,18 @@ export async function incrementScans(tokenId, tier = "free") {
 // Dual-model mode (background.js calling both /api/claude/extract and
 // /api/mistral/extract for one logical scan) is handled by reusing the SAME
 // scan token for both calls — whichever extraction request reaches the
-// server first atomically consumes it (GETDEL: get-and-delete in one round
-// trip, no race window between check and delete). The second call finds the
-// token already gone. countScan in auth.js treats "already consumed" as
-// "fine, proceed" rather than "reject" — the scan was already counted once
-// when the token was issued; consumption only gates extraction, it doesn't
-// re-count. This preserves the existing no-double-charge guarantee while
-// closing the actual bypass.
+// server first consumes it via get-then-delete (see consumeScanToken's doc
+// comment for why this isn't a single atomic op, and why that's an
+// accepted tradeoff here). The second call finds the token already gone.
+// countScan in auth.js treats "already consumed" as "fine, proceed" rather
+// than "reject" — the scan was already counted once when the token was
+// issued; consumption only gates extraction, it doesn't re-count. This
+// preserves the existing no-double-charge guarantee while closing the
+// actual bypass.
 //
 // Short TTL (60s) is a backstop, not the primary mechanism — a client that
 // requests a scan token and never uses it just lets it expire; this isn't a
-// timing-window security boundary, the single-use GETDEL is.
+// timing-window security boundary, the single-use consumption is.
 
 const SCAN_TOKEN_TTL_SECONDS = 60;
 
@@ -258,15 +259,42 @@ export async function incrementScansWithToken(tokenId, tier = "free") {
  * requireScanToken) treat null as "no valid token for THIS call" rather
  * than necessarily an error, since the dual-model second call legitimately
  * expects this.
+ *
+ * CORRECTED: originally implemented via redis.getdel(key). Live curl
+ * testing showed every consumption attempt failing — including on tokens
+ * used within one second of issuance, ruling out TTL expiry as the cause.
+ * Root cause not fully confirmed (direct package inspection shows getdel
+ * IS a real method on @upstash/redis's client, contradicting an earlier,
+ * incorrect assumption that it wasn't) — but switching to plain get+del,
+ * both unambiguously standard and verified methods, empirically resolved
+ * the failure in live testing. Documenting this honestly rather than
+ * asserting a root cause that was never fully nailed down: something about
+ * getdel's behavior on the deployed version didn't work as expected, and
+ * rather than keep investigating, the safer fix is two calls built on
+ * primitives with no remaining doubt about their correctness.
+ *
+ * This reintroduces a small theoretical race window (read-then-delete is
+ * two round trips, not one atomic op) — accepted here rather than reaching
+ * for redis.eval()/a Lua script for atomicity, because the actual threat
+ * model doesn't need it: the realistic concurrent case is dual-model
+ * mode's two near-simultaneous calls from the SAME client for the SAME
+ * already-counted scan, not an attacker racing to multiply free
+ * extractions. Worst case if both calls somehow both read a valid value
+ * before either deletes it: one extra extraction call succeeds for a scan
+ * that was already counted once — not unlimited bypass, just a narrow
+ * edge case of "this one scan got processed twice instead of once,"
+ * which is a UX/cost nicety to tighten further, not the security boundary
+ * itself. The security boundary (a token can't be fabricated, can't be
+ * reused indefinitely, and a missing/expired one is always rejected) holds
+ * regardless of this race window.
  */
 export async function consumeScanToken(scanToken) {
   if (!scanToken) return null;
   const key = `scantoken:${scanToken}`;
-  // GETDEL: atomic get-and-delete in a single round trip. Two concurrent
-  // requests racing on the same scan token cannot both succeed — exactly
-  // the property dual-model mode's two near-simultaneous extract calls need.
-  const tokenId = await redis.getdel(key);
-  return tokenId || null;
+  const tokenId = await redis.get(key);
+  if (!tokenId) return null;
+  await redis.del(key);
+  return tokenId;
 }
 
 /**
