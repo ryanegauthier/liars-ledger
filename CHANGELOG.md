@@ -2,6 +2,52 @@
 
 > **Note:** [0.13.0] (Chrome Web Store launch) was submitted for review before [0.14.0]'s freemium work began, and was actually approved on 2026-06-16 — before any of 0.14.0–0.14.2 was built. The approval went unnoticed for several days (no email confirmation arrived; only found by checking the developer dashboard directly), which is why it's documented here after the fact rather than at the time. Listed below in its correct chronological position by approval date, not by when it was noticed or written up.
 
+## [0.16.0] - 2026-06-21
+
+### Security hardening — closes scan-limit bypass found in code review
+
+**Background**: a structured principal-engineer-style security review (June 2026) found a High-severity gap — `/api/claude/extract` and `/api/mistral/extract` never independently verified a scan had been counted, so any client holding a valid registered token could call them directly and bypass the daily scan limit entirely. Predates the Square work; tracked separately in `SECURITY.md` from the start rather than folded into the 0.15.x entries. See `SECURITY.md` "Known Gaps - Scan Limit Bypassable" for the full writeup.
+
+**`server/providers/store.js`**
+- New: `incrementScansWithToken(tokenId, tier)` — wraps the existing `incrementScans`, additionally issuing a short-lived (60s), single-use scan token (`scantoken:{token}` → `tokenId` in Redis) when the scan is allowed. No token is issued for a rejected (`!allowed`) scan.
+- New: `consumeScanToken(scanToken)` — validates and atomically consumes a scan token, returning the `tokenId` it was issued for, or `null` if invalid/expired/already consumed.
+- **Bug found via live testing, not code review**: originally implemented via `redis.getdel(key)`. Curl testing showed every consumption attempt failing, including on tokens consumed within ~1 second of issuance — ruling out TTL expiry as the cause. Root cause not fully confirmed: direct inspection of the installed `@upstash/redis` package showed `getdel` does exist as a method, contradicting an initial (incorrect) assumption that it didn't. Switched to plain `get` then `del` — both individually unambiguous and verified — which empirically resolved the failure. This reintroduces a small theoretical race window (two round trips instead of one atomic op), accepted because the realistic concurrent case is dual-model mode's two near-simultaneous calls for the same already-counted scan, not an attacker racing to multiply free extractions — see the function's doc comment for the full reasoning.
+
+**`server/middleware/auth.js`**
+- New: `requireScanToken` middleware — required on `/api/claude/extract` and `/api/mistral/extract`. Rejects with 403 if no valid, unconsumed scan token is presented. This is the actual fix for the bypass: there's no way to fabricate a valid scan token without Redis having issued it via a real, counted call to `/api/scan/start`.
+- `countScan` (used only on `/api/scan/start` now) updated to call `incrementScansWithToken` and attach the issued `scanToken` to the response.
+- **`requireToken` and `countScan` now fail CLOSED on Redis errors by default** (previously failed open — any Bearer token, including unregistered ones, passed as free-tier during an outage; functionally the same cost-abuse exposure as the bypass above, just reached via an outage rather than a direct call). New `AUTH_FAIL_OPEN` env var (default unset = fail closed) restores the old behavior for local dev only — never set in production.
+
+**`server/index.js`**
+- `/api/scan/start` response now includes `scanToken`.
+- `/api/claude/extract` and `/api/mistral/extract` now require `requireToken, requireScanToken` (was `requireToken` alone).
+- **Admin override endpoints removed**: `/admin/set-tier` and `/admin/reset-scans`, along with the `checkAdminAuth` helper, deleted entirely. These existed as temporary manual-override tools predating Square integration; their removal was conditioned on `/webhook/square` being verified live in production, which has now happened (see v0.15.0/v0.15.2 entries and `SECURITY.md`). `resetScans` removed from imports as it's no longer used anywhere in this file.
+- **Bug found via live testing, not code review**: the new `checkoutLimiter` (added in v0.15.2 for the `/pricing/checkout` rate limiter) was defined later in the file than the route that referenced it, throwing `ReferenceError: Cannot access 'checkoutLimiter' before initialization` on every server boot — a production outage until caught and fixed. `node --check` does not catch this class of bug, since `const`-before-use is a runtime initialization error, not a syntax error. Moved the definition up alongside the other rate limiters (`limiter`, `registerLimiter`), before any route registrations, with a comment explaining why they're grouped there specifically to prevent this recurring.
+
+**`extension/background.js`**
+- `handleAnalyze()` now captures `scanToken` from `/api/scan/start`'s response and passes it through to `extractArticleAnalysis`'s options object.
+
+**`src/llm.js`**
+- `extractArticleAnalysisViaClaude` and `extractArticleAnalysisViaMistral`'s proxy-mode request bodies now include `scanToken: options.scanToken` (previously only sent `{ articleText }`). This was the actual missing link — `extractArticleAnalysisDualVerified`'s `{ ...options }` spread already threaded `scanToken` correctly into each provider function's `options`, it just never made it into the two real `fetch()` call bodies.
+
+### Verification
+Real curl sequence against production, not just code review: confirmed a call with no `scanToken` returns 403; confirmed a freshly-issued `scanToken`, consumed within ~1 second of issuance, returns 200 with real extraction output; confirmed re-presenting that same `scanToken` a second time returns 403 (single-use property holds, not just "a token was accepted once").
+
+### Additional hardening — remaining Low/Medium findings from the same review
+
+**`server/index.js`**
+- **Admin endpoints removed** (covered above) closed the Medium finding on `/pricing/checkout`'s missing rate limiter and the admin-endpoint cleanup together.
+- **`/api/verify-claim` input validation**: `claim` and `member` were only checked for truthiness, with no length cap — a Pro user could send an arbitrarily large string, inflating per-call LLM cost (the blast radius is self-contained to that user's own result, not cross-user). Added `MAX_CLAIM_LENGTH` (500) and `MAX_MEMBER_LENGTH` (100) checks, returning 400 on violation.
+- **Congress.gov and GovTrack proxies now use a query-parameter allowlist** instead of forwarding `req.query` verbatim. Congress.gov's allowlist (`offset`, `limit`, `fromDateTime`, `toDateTime`, `sort`) is confirmed against Congress.gov's own published API parameter list; `limit` is additionally capped at 250 to match Congress.gov's own server-side cap. GovTrack's allowlist (`person`, `limit`, `order_by`) is scoped conservatively to parameters actually observed in use in `src/api.js`, since GovTrack's full parameter surface wasn't independently verified against live docs the way Congress.gov's was — capped at 100 as a conservative default, not a confirmed GovTrack-side maximum. **VoteSmart's proxy was deliberately left un-allowlisted in this pass** — its parameters (`lastName`, `candidateId`) don't follow the same pagination shape as the other two, and building an allowlist without confirmed VoteSmart API documentation in hand risked blocking a legitimate parameter; the original finding also rated VoteSmart's impact as more limited since it's Pro-gated. Revisit with VoteSmart's docs in hand.
+
+**`server/providers/verify.js`**
+- Added `signal: AbortSignal.timeout(30000)` to the Claude fetch call, matching the existing pattern in `server/providers/claude.js` and `src/verify.js`. This fetch had no timeout at all — a Pro user triggering verification during elevated Claude API latency would hold the request open indefinitely (until the OS socket timeout), and a hanging fetch doesn't reject, so `wrap()`'s promise-rejection catch never saw it. Low severity (requires Pro + unusual API conditions), but a real reliability gap.
+- **Correction to an earlier note in this same entry**: a previous pass of this changelog claimed this finding was a false positive, based on checking `src/verify.js` (the client-side file) and finding a timeout already present there. That check was real and correct for that file — but `server/providers/verify.js` (this one, the backend provider file the original review was actually about) is a separate file that happens to share the same name, and it genuinely was missing the timeout as described. Checking the wrong of two same-named files and concluding the finding was wrong was itself a mistake, now corrected with the actual fix above.
+
+**Not addressed in this pass, tracked in `SECURITY.md` instead**: the DOM-exposed-token finding (sidebar's injected upgrade link is readable by host-page JavaScript via `document.querySelector`) — a real, distinct exposure path from the already-documented URL-in-history/server-logs tradeoff, but requires a structural change to how `content.js` opens the upgrade link (e.g. routing through `chrome.tabs.create` from the background script instead of a DOM anchor) rather than a quick fix, so it's deferred rather than rushed.
+
+---
+
 ## [0.15.2] - 2026-06-20
 
 ### Fix — Square `CreatePaymentLink` rejecting subscription checkout requests

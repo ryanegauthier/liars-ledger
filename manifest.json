@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Liars Ledger",
-  "version": "0.14.2",
+  "version": "0.16.1",
   "description": "Surfaces voting records of politicians mentioned in news articles.",
 
   "permissions": [
@@ -35,19 +35,10 @@
     }
   },
 
-  "web_accessible_resources": [
-    {
-      "resources": [
-        "report.html",
-        "report.js"
-      ],
-      "matches": ["<all_urls>"]
-    }
-  ],
-
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   }
 }
+

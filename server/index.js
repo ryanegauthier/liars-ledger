@@ -18,8 +18,6 @@
 //                                 events: subscription.created, subscription.updated,
 //                                 invoice.payment_made, invoice.scheduled_charge_failed)
 //   POST /restore-token        - recover Pro access via Square order reference
-//   POST /admin/set-tier       - manual tier override (TEMPORARY - pre-Square only)
-//   POST /admin/reset-scans    - manual scan count reset (TEMPORARY - pre-Square only)
 
 import "dotenv/config";
 import express from "express";
@@ -31,7 +29,7 @@ import { congress }  from "./providers/congress.js";
 import { votesmart } from "./providers/votesmart.js";
 import { govtrack }  from "./providers/govtrack.js";
 import { verifyClaim } from "./providers/verify.js";
-import { createToken, getToken, getScans, incrementUserCount, getFreeTierLimit, upgradeTier, resetScans, storeOrderTemplateMapping, lookupTokenByOrderTemplate, storeSquareCustomerMapping, lookupTokenBySquareCustomer, storeSquareSubscriptionMapping, lookupTokenBySquareSubscription, recordFailedCharge, clearFailedCharges, setDowngradeReason, clearDowngradeReason, getDowngradeReason } from "./providers/store.js";
+import { createToken, getToken, getScans, incrementUserCount, getFreeTierLimit, upgradeTier, storeOrderTemplateMapping, lookupTokenByOrderTemplate, storeSquareCustomerMapping, lookupTokenBySquareCustomer, storeSquareSubscriptionMapping, lookupTokenBySquareSubscription, recordFailedCharge, clearFailedCharges, setDowngradeReason, clearDowngradeReason, getDowngradeReason } from "./providers/store.js";
 import { requireToken, countScan, requireScanToken } from "./middleware/auth.js";
 import * as square from "./providers/square.js";
 
@@ -131,7 +129,7 @@ const checkoutLimiter = rateLimit({
 
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => {
-  res.json({ status: "ok", version: process.env.npm_package_version || "0.14.2", ts: new Date().toISOString() });
+  res.json({ status: "ok", version: process.env.npm_package_version || "0.16.1", ts: new Date().toISOString() });
 });
 
 // ── Registration ──────────────────────────────────────────────────────────────
@@ -299,6 +297,18 @@ function requirePro(req, res, next) {
   next();
 }
 
+// /api/verify-claim input limits — found via security review: claim/member
+// were only checked for truthiness, with no length cap. A Pro user could
+// send an arbitrarily large claim/member string (bounded only by the 64KB
+// JSON body limit), inflating per-call LLM cost and opening a narrow,
+// self-contained prompt-injection surface (the blast radius is limited to
+// that same Pro user's own verification result — not a cross-user issue).
+// record's individual fields aren't capped here; server/providers/verify.js
+// already truncates the assembled prompt via MAX_RECORD_CHARS before it
+// reaches the LLM, so the existing truncation covers that side.
+const MAX_CLAIM_LENGTH  = 500;
+const MAX_MEMBER_LENGTH = 100;
+
 app.post("/api/verify-claim", requireToken, requirePro, wrap(async (req, res) => {
   const { claim, member, record } = req.body;
 
@@ -306,16 +316,59 @@ app.post("/api/verify-claim", requireToken, requirePro, wrap(async (req, res) =>
   if (!member) return res.status(400).json({ error: "member required" });
   if (!record) return res.status(400).json({ error: "record required" });
 
+  if (typeof claim !== "string" || claim.length > MAX_CLAIM_LENGTH) {
+    return res.status(400).json({ error: `claim must be a string of ${MAX_CLAIM_LENGTH} characters or fewer` });
+  }
+  if (typeof member !== "string" || member.length > MAX_MEMBER_LENGTH) {
+    return res.status(400).json({ error: `member must be a string of ${MAX_MEMBER_LENGTH} characters or fewer` });
+  }
+
   const result = await verifyClaim(claim, member, record);
   res.status(result.ok ? 200 : 502).json(result);
 }));
 
 // ── Congress.gov proxy ────────────────────────────────────────────────────────
+// Query-parameter allowlist for the Congress.gov and GovTrack proxies below.
+// Found via security review: both proxies previously forwarded req.query
+// verbatim, letting callers inject arbitrary parameters into the upstream
+// request. No SSRF risk (base URL is hardcoded, ../ in a path segment
+// doesn't change the host in a normalized HTTPS URL) — the actual concern
+// is unpredictable proxy behavior and requesting unnecessarily large
+// result sets.
+const CONGRESS_ALLOWED_PARAMS = new Set(["offset", "limit", "fromDateTime", "toDateTime", "sort"]);
+// Congress.gov's own docs confirm `limit` is capped at 250 server-side
+// regardless of what's requested, which already bounds the worst case on
+// their end — this allowlist is still worth having for predictability and
+// defense-in-depth, not because that cap alone was insufficient.
+// Source: https://github.com/LibraryOfCongress/api.congress.gov (confirmed
+// June 2026: offset, limit, fromDateTime, toDateTime, sort are the
+// documented list-endpoint parameters).
+const CONGRESS_MAX_LIMIT = 250;
+
+function buildAllowlistedQuery(reqQuery, allowedParams, { extraParams = {}, maxLimit = null } = {}) {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(reqQuery || {})) {
+    if (allowedParams.has(key)) {
+      if (key === "limit" && maxLimit != null) {
+        const n = parseInt(value, 10);
+        query.set("limit", String(Number.isFinite(n) && n > 0 ? Math.min(n, maxLimit) : maxLimit));
+      } else {
+        query.set(key, value);
+      }
+    }
+  }
+  for (const [key, value] of Object.entries(extraParams)) {
+    query.set(key, value);
+  }
+  return query;
+}
+
 app.get("/api/congress/*", requireToken, wrap(async (req, res) => {
   const path  = req.params[0];
-  const query = new URLSearchParams(req.query);
-  query.set("api_key", process.env.CONGRESS_API_KEY);
-  query.set("format", "json");
+  const query = buildAllowlistedQuery(req.query, CONGRESS_ALLOWED_PARAMS, {
+    extraParams: { api_key: process.env.CONGRESS_API_KEY, format: "json" },
+    maxLimit: CONGRESS_MAX_LIMIT,
+  });
 
   try {
     const result = await congress.fetch(`/${path}?${query.toString()}`);
@@ -326,6 +379,15 @@ app.get("/api/congress/*", requireToken, wrap(async (req, res) => {
 }));
 
 // ── VoteSmart proxy ───────────────────────────────────────────────────────────
+// NOTE: VoteSmart's query passthrough is intentionally NOT allowlisted in
+// this pass, unlike Congress.gov/GovTrack above. The security review that
+// flagged this rated VoteSmart's impact as more limited (Pro-gated, smaller
+// exposed surface), and the parameters actually in use (lastName,
+// candidateId — seen in src/votesmart.js) don't follow the same
+// offset/limit pagination shape as the other two, so building an allowlist
+// here without confirmed documentation of VoteSmart's full parameter
+// surface risks blocking a legitimate parameter rather than just closing a
+// gap. Revisit with VoteSmart's actual API docs in hand before allowlisting.
 app.get("/api/votesmart/*", requireToken, requirePro, wrap(async (req, res) => {
   const path  = req.params[0];
   const query = new URLSearchParams(req.query);
@@ -340,9 +402,23 @@ app.get("/api/votesmart/*", requireToken, requirePro, wrap(async (req, res) => {
 
 // ── GovTrack proxy ────────────────────────────────────────────────────────────
 // GET /api/govtrack/* → https://www.govtrack.us/api/v2/* (no key required)
+// GovTrack allowlist kept conservative — limited to parameters confirmed in
+// actual use by src/api.js's findMemberRollCallVotesOnTopics (person, limit,
+// order_by). GovTrack's full parameter surface and its own server-side limit
+// cap (if any) weren't independently verified against live docs the way
+// Congress.gov's were above — 100 here is a deliberately conservative cap
+// based on observed real usage (limit=50 seen in actual calls), not a
+// confirmed GovTrack-side maximum. If a legitimate need for a higher limit
+// or additional parameters comes up, verify against GovTrack's docs before
+// loosening this rather than reverting to unrestricted passthrough.
+const GOVTRACK_ALLOWED_PARAMS = new Set(["person", "limit", "order_by"]);
+const GOVTRACK_MAX_LIMIT = 100;
+
 app.get("/api/govtrack/*", requireToken, wrap(async (req, res) => {
   const path  = req.params[0];
-  const query = new URLSearchParams(req.query);
+  const query = buildAllowlistedQuery(req.query, GOVTRACK_ALLOWED_PARAMS, {
+    maxLimit: GOVTRACK_MAX_LIMIT,
+  });
 
   try {
     const result = await govtrack.fetch(`/${path}?${query.toString()}`);
@@ -359,77 +435,6 @@ app.get("/api/legislators", requireToken, wrap(async (req, res) => {
     res.json(await govtrack.legislators());
   } catch (e) {
     res.status(502).json({ error: e.message });
-  }
-}));
-
-// ── Admin endpoints (TEMPORARY — testing/manual-override only) ────────────────
-// Both routes below exist to unblock testing while Square integration doesn't
-// exist yet — there's no real way to become Pro or reset a count otherwise.
-// Once /webhook/square is live and handles this automatically, these routes
-// should be removed entirely; they're manual bypasses, not features.
-//
-// Auth: a shared secret via the x-admin-key header, set as ADMIN_SECRET in
-// Render's environment variables. Never the same value as any other secret in
-// this codebase. If ADMIN_SECRET isn't set, these routes always 403 — they do
-// NOT fail open, unlike requireToken elsewhere, since failing open here would
-// let anyone grant themselves Pro or unlimited scans for free.
-function checkAdminAuth(req, res) {
-  const adminSecret = process.env.ADMIN_SECRET;
-  const providedKey = req.headers["x-admin-key"];
-  if (!adminSecret || !providedKey || providedKey !== adminSecret) {
-    res.status(403).json({ error: "Forbidden" });
-    return false;
-  }
-  return true;
-}
-
-// POST /admin/set-tier
-// Body: { "tokenId": "...", "tier": "pro" }  (tier: "free" or "pro")
-app.post("/admin/set-tier", express.json(), wrap(async (req, res) => {
-  if (!checkAdminAuth(req, res)) return;
-
-  const { tokenId, tier } = req.body || {};
-  if (!tokenId || typeof tokenId !== "string") {
-    return res.status(400).json({ error: "tokenId required" });
-  }
-  if (tier !== "free" && tier !== "pro") {
-    return res.status(400).json({ error: 'tier must be "free" or "pro"' });
-  }
-
-  try {
-    let updated = await upgradeTier(tokenId, tier);
-    if (!updated) {
-      // Token didn't exist or was corrupted (getToken() returns null in both
-      // cases) — create it fresh rather than leaving the request stuck.
-      updated = await createToken(tokenId, tier);
-      console.log(`[admin] token ${tokenId.slice(0, 8)}... did not exist or was corrupted - created fresh as ${tier}`);
-    } else {
-      console.log(`[admin] token ${tokenId.slice(0, 8)}... set to ${tier}`);
-    }
-    res.json({ ok: true, tokenId, tier: updated.tier });
-  } catch (e) {
-    console.error("[admin] set-tier failed:", e.message);
-    res.status(500).json({ error: "Failed to update tier" });
-  }
-}));
-
-// POST /admin/reset-scans — testing convenience, skip waiting until midnight UTC
-// Body: { "tokenId": "..." }
-app.post("/admin/reset-scans", express.json(), wrap(async (req, res) => {
-  if (!checkAdminAuth(req, res)) return;
-
-  const { tokenId } = req.body || {};
-  if (!tokenId || typeof tokenId !== "string") {
-    return res.status(400).json({ error: "tokenId required" });
-  }
-
-  try {
-    await resetScans(tokenId);
-    console.log(`[admin] scan count reset for token ${tokenId.slice(0, 8)}...`);
-    res.json({ ok: true, tokenId, scansToday: 0 });
-  } catch (e) {
-    console.error("[admin] reset-scans failed:", e.message);
-    res.status(500).json({ error: "Failed to reset scan count" });
   }
 }));
 

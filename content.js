@@ -1,4 +1,4 @@
-// Liars Ledger - content.js v0.14.2
+// Liars Ledger - content.js v0.16.1
 const browser = window.browser || window.chrome;
 
 function escapeHtml(s) {
@@ -418,7 +418,7 @@ function initSidebar() {
       <div id="ll-footer-right">
         <span id="ll-pro-badge" style="display:none;color:#c8a96e;font-family:'Inter',sans-serif;font-size:0.5rem;letter-spacing:0.1em;text-transform:uppercase;margin-right:8px;">★ Pro</span>
         <span class="ll-ticker-dot"></span>
-        <span id="ll-version">v0.14.2</span>
+        <span id="ll-version">v0.16.1</span>
       </div>
     </div>
   `;
