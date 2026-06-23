@@ -1,4 +1,4 @@
-// Liars Ledger - content.js v0.16.1
+// Liars Ledger - content.js v0.14.2
 const browser = window.browser || window.chrome;
 
 function escapeHtml(s) {
@@ -418,7 +418,7 @@ function initSidebar() {
       <div id="ll-footer-right">
         <span id="ll-pro-badge" style="display:none;color:#c8a96e;font-family:'Inter',sans-serif;font-size:0.5rem;letter-spacing:0.1em;text-transform:uppercase;margin-right:8px;">★ Pro</span>
         <span class="ll-ticker-dot"></span>
-        <span id="ll-version">v0.16.1</span>
+        <span id="ll-version">v0.14.2</span>
       </div>
     </div>
   `;
@@ -728,13 +728,29 @@ function renderSidebar(results) {
     });
   });
 
-  // Report button - open standalone report page in new tab
+  // Report button - open standalone report page in new tab.
+  // Routed through background.js via chrome.tabs.create rather than calling
+  // window.open() directly here. Two reasons, found together:
+  //   1. Reliability — window.open() called from a content script (running
+  //      in the host page's context) is subject to that page's popup-
+  //      blocking behavior and Chrome's same heuristics, which can produce
+  //      ERR_BLOCKED_BY_CLIENT inconsistently depending on the host page
+  //      and the user's installed extensions, even though pasting the exact
+  //      same chrome-extension:// URL into a new tab directly works fine.
+  //      chrome.tabs.create() from the background script's own extension
+  //      context isn't subject to the host page's popup-blocking at all.
+  //   2. Security — this is the same fix already noted as deferred in
+  //      SECURITY.md's "Token in URL Query Parameters" section: opening via
+  //      window.open(browser.runtime.getURL(...)) meant the report URL
+  //      briefly existed as a value content.js's own code touched in the
+  //      host page's JS context. Routing the actual chrome.tabs.create()
+  //      call through background.js means content.js only ever sends an
+  //      index, never constructs or touches the report URL itself.
   cardsEl.querySelectorAll(".ll-report-btn").forEach(function(btn) {
     btn.addEventListener("click", function(e) {
       e.stopPropagation(); // don't trigger card expand
       const idx = btn.dataset.idx;
-      const url = browser.runtime.getURL(`report.html?idx=${idx}`);
-      window.open(url, "_blank");
+      browser.runtime.sendMessage({ action: "openReport", idx });
     });
   });
   _savedMargin = document.body.style.marginBottom || "";

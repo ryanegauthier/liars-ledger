@@ -56,6 +56,21 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  // Opens the standalone report page in a new tab via chrome.tabs.create —
+  // NOT window.open() from the content script that sent this message. See
+  // content.js's click handler comment for the full reasoning: this avoids
+  // both an inconsistent ERR_BLOCKED_BY_CLIENT failure mode (content-script
+  // window.open() is subject to the host page's popup-blocking context;
+  // chrome.tabs.create() from the background script isn't) and keeps the
+  // report URL from ever being constructed/touched inside the host page's
+  // JS context at all (content.js only ever sends an index, never the URL).
+  if (message.action === "openReport") {
+    const idx = message.idx;
+    const url = browser.runtime.getURL(`report.html${idx !== undefined ? `?idx=${idx}` : ""}`);
+    browser.tabs.create({ url });
+    return true;
+  }
+
   return true;
 });
 
@@ -353,7 +368,7 @@ async function handleAnalyze({ politicians, articleText }) {
   }
 }
 
-logger.info("background", "service worker loaded v0.16.1");
+logger.info("background", "service worker loaded v0.14.2");
 
 // Initialize token and sync tier
 getOrCreateToken().then((t) => {
