@@ -24,7 +24,7 @@
 // Production should never set this — see SECURITY.md "Known Gaps" history
 // for why fail-open on auth was identified as a real (Medium-severity) gap.
 
-import { getToken, incrementScansWithToken, consumeScanToken } from '../providers/store.js';
+import { getToken, reserveScan, consumeScanToken } from '../providers/store.js';
 
 const FAIL_OPEN = process.env.AUTH_FAIL_OPEN === "true";
 
@@ -94,12 +94,12 @@ export async function requireToken(req, res, next) {
  * dev only.
  */
 export async function countScan(req, res, next) {
-  // requireToken must run before this — req.tokenId and req.tier are set by it
+  // requireToken must run before this -- req.tokenId and req.tier are set by it
   const token = req.tokenId;
   if (!token) return next(); // shouldn't happen if requireToken ran; nothing to count
 
   try {
-    const result = await incrementScansWithToken(token, req.tier);
+    const result = await reserveScan(token, req.tier);
 
     if (!result.allowed) {
       return res.status(429).json({
@@ -110,10 +110,11 @@ export async function countScan(req, res, next) {
       });
     }
 
-    req.scanAllowed = true;
-    req.scanWarn = result.warn;
+    req.scanAllowed   = true;
+    req.scanWarn      = result.warn;
     req.scanRemaining = result.remaining;
-    req.scanToken = result.scanToken; // attached so the route handler can return it to the client
+    req.scanToken     = result.scanToken;   // gates extraction calls via requireScanToken
+    req.commitToken   = result.commitToken; // returned to client to finalize the count later
     next();
   } catch (err) {
     console.error("[auth] countScan error:", err);

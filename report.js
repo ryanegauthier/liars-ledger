@@ -102,18 +102,26 @@ function renderRecord(record, tier, upgradeUrl) {
           </div>`;
       }).join("");
 
-  // VoteSmart — gated behind Pro. Free tier sees a single upsell card
-  // instead of the real sections (or a broken-looking empty state).
+  // VoteSmart — free for everyone (sourced data, not AI-generated). Used to
+  // be Pro-gated; ungated as of the AI-vs-sourced-data tier split. See
+  // background.js's PRO-TIER GATING comment for the full reasoning.
   const isPro = tier === "pro";
 
-  // Combined pro-features upsell — shown once, replacing both VoteSmart
-  // sections, when the user is on free tier.
+  // Pro-features upsell — shown in the claim/verdict area below when those
+  // fields are absent (stripped server-side for free tier). NOT shown near
+  // VoteSmart anymore, since VoteSmart is no longer gated.
   //
   // KEEP THIS BULLET LIST IN SYNC WITH background.js's gating block
   // (search "PRO-TIER GATING" in handleAnalyze). Each bullet here should
   // correspond to a field that's actually being stripped there for free
   // tier — if you add/remove a gated field in background.js, update this
   // list too.
+  //
+  // NOTE: article summary is listed here as a Pro feature (it genuinely is
+  // one, per background.js's gating), but this page does not currently
+  // render the summary anywhere even for Pro users — that's a pre-existing
+  // gap in report.js unrelated to this tier-split change, flagged here but
+  // not fixed in this pass since it's outside what was asked for.
   const proFeaturesUpsellHtml = `
     <div style="
       background: rgba(200,169,110,0.07);
@@ -154,14 +162,12 @@ function renderRecord(record, tier, upgradeUrl) {
         color: #c4c9d7;
         line-height: 1.9;
       ">
-        <li>Full VoteSmart vote history for every politician</li>
-        <li>Interest group ratings and scorecards</li>
         <li>AI-generated article summary</li>
         <li>AI claim-vs-record analysis and verdicts</li>
       </ul>
     </div>`;
 
-  // VoteSmart votes (pro only — used in the pro-tier section below)
+  // VoteSmart votes — free for everyone now
   const vsVotes = record.voteSmartVotes || [];
   const vsVotesHtml = vsVotes.length === 0
     ? `<div class="ll-empty">No topic-matched votes found.</div>`
@@ -176,7 +182,7 @@ function renderRecord(record, tier, upgradeUrl) {
           </div>
         </div>`).join("");
 
-  // VoteSmart ratings (pro only — used in the pro-tier section below)
+  // VoteSmart ratings — free for everyone now
   const vsRatings = record.voteSmartRatings || [];
   const vsRatingsHtml = vsRatings.length === 0
     ? `<div class="ll-empty">No interest group ratings found.</div>`
@@ -199,15 +205,9 @@ function renderRecord(record, tier, upgradeUrl) {
           </div>`;
       }).join("");
 
-  // Combined VoteSmart section — split into two sub-sections for pro,
-  // single upsell card with section title for free.
-  const voteSmartSectionHtml = !isPro
-    ? `
-      <div class="ll-section">
-        <div class="ll-section-title">Vote History &amp; Interest Group Ratings <span class="ll-section-source">· votesmart</span></div>
-        ${proFeaturesUpsellHtml}
-      </div>`
-    : `
+  // VoteSmart section — always the real data now, no upsell substitution,
+  // same for every tier.
+  const voteSmartSectionHtml = `
       <div class="ll-section">
         <div class="ll-section-title">Vote History <span class="ll-section-source">· votesmart</span></div>
         ${vsVotesHtml}
@@ -234,7 +234,7 @@ function renderRecord(record, tier, upgradeUrl) {
         <span class="ll-party-pill ll-party-${partyCode}">${partyLabel}</span>
       </div>
       <div class="ll-party-meta">${congressLabel} · ${escapeHtml(p.bioguide_id || "")}</div>
-      ${claimHtml}
+      ${claimHtml || (!isPro ? proFeaturesUpsellHtml : "")}
     </div>
 
     <div class="ll-section">

@@ -1,4 +1,4 @@
-// Liars Ledger - content.js v0.14.2
+// Liars Ledger - content.js v0.17.0
 const browser = window.browser || window.chrome;
 
 function escapeHtml(s) {
@@ -418,7 +418,7 @@ function initSidebar() {
       <div id="ll-footer-right">
         <span id="ll-pro-badge" style="display:none;color:#c8a96e;font-family:'Inter',sans-serif;font-size:0.5rem;letter-spacing:0.1em;text-transform:uppercase;margin-right:8px;">★ Pro</span>
         <span class="ll-ticker-dot"></span>
-        <span id="ll-version">v0.14.2</span>
+        <span id="ll-version">v0.17.0</span>
       </div>
     </div>
   `;
@@ -589,6 +589,53 @@ function renderSidebar(results) {
           ${vLabel ? `<br><span style="color:${vColor};font-size:0.52rem;text-transform:uppercase;letter-spacing:0.08em">${vLabel}</span>` : ""}
           ${vExplanation ? `<br><span style="color:rgba(196,201,215,0.7);font-size:0.54rem;font-style:normal">${escapeHtml(vExplanation)}</span>` : ""}
         </div>`;
+      } else if (results.tier !== "pro") {
+        // Pro upsell for the AI claim-vs-record verdict specifically — NOT
+        // for VoteSmart, which is free for everyone now (see below). Shown
+        // only when there's genuinely no claim content (free tier, field
+        // stripped server-side) — a Pro user whose article simply made no
+        // claim about this politician sees nothing here, same as before.
+        //
+        // KEEP THIS CARD'S COPY IN SYNC WITH background.js's gating block
+        // (search "PRO-TIER GATING" in handleAnalyze) and with report.js's
+        // proFeaturesUpsellHtml. All should agree on what Pro unlocks.
+        html += `
+          <div style="
+            background: rgba(200,169,110,0.07);
+            border: 1px solid rgba(200,169,110,0.25);
+            border-radius: 3px;
+            padding: 14px 16px;
+            margin: 6px 0 4px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+          ">
+            <div style="
+              font-family: 'Inter', sans-serif;
+              font-size: 0.64rem;
+              color: #c8a96e;
+              text-transform: uppercase;
+              letter-spacing: 0.08em;
+              font-weight: 600;
+            ">★ Pro feature</div>
+            <div style="font-size: 0.72rem; color: #c4c9d7; line-height: 1.55;">
+              See an AI-generated summary and claim-vs-record verdict with Pro.
+            </div>
+            <a href="${escapeHtml(results.upgradeUrl || "https://liarsledger.com/pricing")}" target="_blank" style="
+              display: inline-block;
+              margin-top: 4px;
+              padding: 6px 14px;
+              background: #c8a96e;
+              color: #121f44;
+              font-family: 'Inter', sans-serif;
+              font-size: 0.64rem;
+              font-weight: 700;
+              letter-spacing: 0.08em;
+              text-transform: uppercase;
+              text-decoration: none;
+              width: fit-content;
+            ">Upgrade to Pro →</a>
+          </div>`;
       }
 
       if (rollVotes.length > 0) {
@@ -640,52 +687,10 @@ function renderSidebar(results) {
         html += `<div class="ll-empty">No sponsored or cosponsored bills found on these topics.</div>`;
       }
 
-      // VoteSmart — gated behind Pro. Show an upsell card for free tier
-      // instead of silently hiding the section or showing a broken empty state.
-      //
-      // KEEP THIS CARD'S COPY IN SYNC WITH background.js's gating block
-      // (search "PRO-TIER GATING" in handleAnalyze) and with report.js's
-      // proFeaturesUpsellHtml. All three should agree on what Pro unlocks.
-      if (results.tier !== "pro") {
-        html += `<div class="ll-detail-title" style="margin-top:10px">Vote History &amp; Interest Group Ratings <span style="color:#5a5f6e;font-size:0.48rem;text-transform:uppercase;letter-spacing:0.08em">&nbsp;· VoteSmart</span></div>`;
-        html += `
-          <div style="
-            background: rgba(200,169,110,0.07);
-            border: 1px solid rgba(200,169,110,0.25);
-            border-radius: 3px;
-            padding: 14px 16px;
-            margin: 6px 0 4px;
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-          ">
-            <div style="
-              font-family: 'Inter', sans-serif;
-              font-size: 0.64rem;
-              color: #c8a96e;
-              text-transform: uppercase;
-              letter-spacing: 0.08em;
-              font-weight: 600;
-            ">★ Pro feature</div>
-            <div style="font-size: 0.72rem; color: #c4c9d7; line-height: 1.55;">
-              See full VoteSmart vote history and interest group ratings for every politician with Pro.
-            </div>
-            <a href="${escapeHtml(results.upgradeUrl || "https://liarsledger.com/pricing")}" target="_blank" style="
-              display: inline-block;
-              margin-top: 4px;
-              padding: 6px 14px;
-              background: #c8a96e;
-              color: #121f44;
-              font-family: 'Inter', sans-serif;
-              font-size: 0.64rem;
-              font-weight: 700;
-              letter-spacing: 0.08em;
-              text-transform: uppercase;
-              text-decoration: none;
-              width: fit-content;
-            ">Upgrade to Pro →</a>
-          </div>`;
-      } else {
+      // VoteSmart — free for everyone now (sourced data, not AI-generated).
+      // Used to be Pro-gated; ungated as of the AI-vs-sourced-data tier
+      // split. See background.js's PRO-TIER GATING comment for the full
+      // reasoning. The claim/verdict upsell above is the real Pro pitch now.
 
       // VoteSmart vote history
       const vsVotes = record.voteSmartVotes || [];
@@ -721,7 +726,6 @@ function renderSidebar(results) {
             </div>`;
         });
       }
-      } // end pro-tier VoteSmart else block
 
       detailEl.innerHTML = html;
       detailEl.classList.add("ll-visible");

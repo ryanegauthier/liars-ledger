@@ -1,3 +1,4 @@
 node_modules/
 .env
-build_fake_webhook.mjs
+build_fake_webhook*.mjs
+webhook_payload.json

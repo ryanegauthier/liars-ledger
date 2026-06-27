@@ -4,12 +4,13 @@
 // Routes:
 //   POST /register             - anonymous token registration
 //   GET  /api/scan-status      - remaining scans for token
-//   POST /api/scan/start       - consume a scan (returns allowed/remaining)
+//   POST /api/scan/start       - reserve a scan slot (returns scanToken + commitToken)
+//   POST /api/scan/commit      - finalize a reserved scan (called when sources responded)
 //   POST /api/claude/extract   - Claude extraction (not counted here)
 //   POST /api/mistral/extract  - Mistral extraction (not counted here)
 //   POST /api/verify-claim     - claim verification (Pro only)
 //   GET  /api/congress/*       - Congress.gov proxy
-//   GET  /api/votesmart/*      - VoteSmart proxy (Pro only)
+//   GET  /api/votesmart/*      - VoteSmart proxy (free - sourced data, not AI-generated)
 //   GET  /api/govtrack/*       - GovTrack proxy (no key)
 //   GET  /api/legislators      - congress-legislators dataset (cached)
 //   GET  /health               - health check
@@ -29,7 +30,7 @@ import { congress }  from "./providers/congress.js";
 import { votesmart } from "./providers/votesmart.js";
 import { govtrack }  from "./providers/govtrack.js";
 import { verifyClaim } from "./providers/verify.js";
-import { createToken, getToken, getScans, incrementUserCount, getFreeTierLimit, upgradeTier, storeOrderTemplateMapping, lookupTokenByOrderTemplate, storeSquareCustomerMapping, lookupTokenBySquareCustomer, storeSquareSubscriptionMapping, lookupTokenBySquareSubscription, recordFailedCharge, clearFailedCharges, setDowngradeReason, clearDowngradeReason, getDowngradeReason } from "./providers/store.js";
+import { createToken, getToken, getScans, incrementUserCount, getScanLimit, upgradeTier, commitScan, storeOrderTemplateMapping, lookupTokenByOrderTemplate, storeSquareCustomerMapping, lookupTokenBySquareCustomer, storeSquareSubscriptionMapping, lookupTokenBySquareSubscription, recordFailedCharge, clearFailedCharges, setDowngradeReason, clearDowngradeReason, getDowngradeReason } from "./providers/store.js";
 import { requireToken, countScan, requireScanToken } from "./middleware/auth.js";
 import * as square from "./providers/square.js";
 
@@ -129,7 +130,7 @@ const checkoutLimiter = rateLimit({
 
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => {
-  res.json({ status: "ok", version: process.env.npm_package_version || "0.16.1", ts: new Date().toISOString() });
+  res.json({ status: "ok", version: process.env.npm_package_version || "0.17.0", ts: new Date().toISOString() });
 });
 
 // ── Registration ──────────────────────────────────────────────────────────────
@@ -143,11 +144,11 @@ app.post("/register", wrap(async (req, res) => {
 
   const existing = await getToken(tokenId);
   if (existing) {
-    // Scans are pooled across all users regardless of tier — pro changes
-    // what data the extension shows, not how many scans are available.
+    // Scan limit now depends on tier - free scales down as the user base
+    // grows, pro gets a flat daily allowance. See store.js's getScanLimit.
     const [scans, { limit, warn }] = await Promise.all([
       getScans(tokenId),
-      getFreeTierLimit(),
+      getScanLimit(existing.tier),
     ]);
     return res.json({
       status: "existing",
@@ -160,7 +161,7 @@ app.post("/register", wrap(async (req, res) => {
 
   const [tokenData, { limit, warn }] = await Promise.all([
     createToken(tokenId, "free"),
-    getFreeTierLimit(),
+    getScanLimit("free"), // new tokens always start free
   ]);
   await incrementUserCount();
   console.log(`[register] new token: ${tokenId.slice(0, 8)}...`);
@@ -176,11 +177,11 @@ app.post("/register", wrap(async (req, res) => {
 
 // ── Scan status ───────────────────────────────────────────────────────────────
 app.get("/api/scan-status", requireToken, wrap(async (req, res) => {
-  // Scans are pooled across all users regardless of tier — pro changes
-  // what data the extension shows (AI summary, VoteSmart), not scan count.
+  // Scan limit now depends on tier - free scales down as the user base
+  // grows, pro gets a flat daily allowance separate from free's pool.
   const [scans, { limit, warn, userCount }, downgrade] = await Promise.all([
     getScans(req.tokenId),
-    getFreeTierLimit(),
+    getScanLimit(req.tier),
     // Only meaningful for free tier — a pro user obviously hasn't been
     // downgraded, and any stale marker would already have been cleared on
     // their last successful payment/resubscribe anyway. Skipping the
@@ -205,36 +206,49 @@ app.get("/api/scan-status", requireToken, wrap(async (req, res) => {
   });
 }));
 
-// ── Scan counting ─────────────────────────────────────────────────────────────
-// Single source of truth for "did this user use up a scan today."
-// Call this ONCE per page-scan, before kicking off LLM extraction — regardless
-// of how many providers run underneath (dual-model Claude+Mistral, single-model
-// fallback, etc.) or how many politicians the article ends up returning.
-// /api/claude/extract and /api/mistral/extract are pure extraction endpoints
-// below — they do NOT count against the limit, by design, so dual-model mode
-// never double-charges a single scan.
-// POST /api/scan/start counts the scan AND issues a single-use scan token.
-// The client MUST pass that scanToken to whichever extraction call(s) follow
-// — requireScanToken on those routes rejects requests with no valid,
-// unconsumed scan token. This closes a prior gap where the extraction
-// endpoints trusted that /api/scan/start had been called first, with no
-// server-side enforcement of that ordering — see SECURITY.md "Known Gaps -
-// Scan Limit Bypassable" for the full writeup of what this fixes.
+// ── Scan counting (two-phase: reserve then commit) ───────────────────────────
+// POST /api/scan/start  -- reserves a scan slot and issues two tokens:
+//   scanToken   (single-use, required by /api/claude|mistral/extract)
+//   commitToken (passed to POST /api/scan/commit when results are useful)
 //
-// Dual-model mode (background.js calling both /api/claude/extract and
-// /api/mistral/extract for one logical scan) reuses the SAME scanToken for
-// both calls — whichever reaches the server first consumes it via Redis
-// GETDEL and proceeds; the second finds it already gone and is rejected by
-// requireScanToken, NOT re-counted. This preserves the original no-double-
-// charge design intent while actually enforcing it server-side instead of
-// just hoping the client behaves.
+// The scan is not counted against the daily limit until /api/scan/commit is
+// called. If the client never commits -- because congress.gov and govtrack
+// both timed out and returned nothing -- the pending reservation expires after
+// 3 minutes and the slot is returned to the user for free.
+//
+// Pending reservations count toward the limit at reserve time, so a client
+// cannot accumulate unlimited free reservations to bypass the cap.
+//
+// Dual-model mode: the same scanToken is passed to both /api/claude/extract
+// and /api/mistral/extract; the first call to arrive consumes it, the second
+// is rejected by requireScanToken (not re-counted). One commitToken per scan.
 app.post("/api/scan/start", requireToken, countScan, wrap(async (req, res) => {
   res.json({
-    allowed: req.scanAllowed,
-    remaining: req.scanRemaining,
-    warn: req.scanWarn,
-    scanToken: req.scanToken,
+    allowed:     req.scanAllowed,
+    remaining:   req.scanRemaining,
+    warn:        req.scanWarn,
+    scanToken:   req.scanToken,
+    commitToken: req.commitToken,
   });
+}));
+
+// POST /api/scan/commit -- finalizes a reserved scan, converting it from
+// pending to counted. Called by background.js after lookupAll confirms at
+// least one external source (congress.gov or govtrack) responded successfully.
+// If all sources timed out, background.js skips this call and the reservation
+// expires on its own.
+app.post("/api/scan/commit", requireToken, wrap(async (req, res) => {
+  const { commitToken } = req.body || {};
+  if (!commitToken) {
+    return res.status(400).json({ error: "commitToken required" });
+  }
+  const result = await commitScan(commitToken);
+  if (!result.committed) {
+    // Expired, already committed, or never issued -- not an error worth
+    // surfacing to the user; the reservation just lapsed.
+    return res.status(200).json({ committed: false });
+  }
+  res.json({ committed: true });
 }));
 
 // ── LLM extraction (requires a valid scan token from /api/scan/start above,
@@ -379,16 +393,28 @@ app.get("/api/congress/*", requireToken, wrap(async (req, res) => {
 }));
 
 // ── VoteSmart proxy ───────────────────────────────────────────────────────────
+// Free tier as of the AI-vs-sourced-data tier split: VoteSmart ratings and
+// vote history are sourced facts (same category as roll-call votes and bill
+// links, both already free), not AI-generated content — only the AI article
+// summary and AI claim-vs-record verdict are Pro. requirePro removed below.
+//
+// IMPORTANT — revisit the allowlist decision: the note below about leaving
+// query-parameter passthrough un-allowlisted was written when this route
+// was Pro-gated, on the reasoning that a smaller, paying caller pool bounded
+// the risk. That assumption no longer holds now that any registered token
+// (the entire free tier, not just Pro subscribers) can reach this route —
+// the un-allowlisted passthrough is now exposed to a much larger pool than
+// when this was last assessed. Worth allowlisting properly (lastName,
+// candidateId, confirmed against VoteSmart's actual API docs) rather than
+// carrying the old, now-stale risk assessment forward.
+//
 // NOTE: VoteSmart's query passthrough is intentionally NOT allowlisted in
-// this pass, unlike Congress.gov/GovTrack above. The security review that
-// flagged this rated VoteSmart's impact as more limited (Pro-gated, smaller
-// exposed surface), and the parameters actually in use (lastName,
-// candidateId — seen in src/votesmart.js) don't follow the same
-// offset/limit pagination shape as the other two, so building an allowlist
-// here without confirmed documentation of VoteSmart's full parameter
-// surface risks blocking a legitimate parameter rather than just closing a
-// gap. Revisit with VoteSmart's actual API docs in hand before allowlisting.
-app.get("/api/votesmart/*", requireToken, requirePro, wrap(async (req, res) => {
+// this pass — the parameters actually in use (lastName, candidateId — seen
+// in src/votesmart.js) don't follow the same offset/limit pagination shape
+// as Congress.gov/GovTrack above, and building an allowlist without
+// confirmed documentation of VoteSmart's full parameter surface risks
+// blocking a legitimate parameter rather than just closing a gap.
+app.get("/api/votesmart/*", requireToken, wrap(async (req, res) => {
   const path  = req.params[0];
   const query = new URLSearchParams(req.query);
 
@@ -501,7 +527,7 @@ app.post("/pricing/checkout", checkoutLimiter, wrap(async (req, res) => {
       planVariationId,
       priceCents:      proPriceCents,
       priceName:       proPriceName,
-      redirectUrl:     `${process.env.PRICING_SITE_URL || "https://liarsledger.com"}/pricing/success`,
+      redirectUrl:     `${process.env.PRICING_SITE_URL || "https://liarsledger.com"}/pro/success`,
     });
 
     const checkoutUrl = result.payment_link?.url;

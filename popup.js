@@ -1,4 +1,4 @@
-// Liar's Ledger - popup.js v0.16.1
+// Liar's Ledger - popup.js v0.17.0
 
 const browser = window.browser || window.chrome;
 const toggle         = document.getElementById("enableToggle");
@@ -287,7 +287,8 @@ const accountToggle = document.getElementById("accountToggle");
 const accountPanel  = document.getElementById("accountPanel");
 const tokenDisplay  = document.getElementById("tokenDisplay");
 const copyTokenBtn  = document.getElementById("copyTokenBtn");
-const pricingLink   = document.getElementById("pricingLink");
+const upgradeProBtn = document.getElementById("upgradeProBtn");
+const upgradeProMsg = document.getElementById("upgradeProMsg");
 const restoreInput  = document.getElementById("restoreInput");
 const restoreBtn    = document.getElementById("restoreBtn");
 const restoreStatus = document.getElementById("restoreStatus");
@@ -309,12 +310,7 @@ browser.storage.sync.get("ll_auth_token", (data) => {
   if (tokenDisplay) tokenDisplay.textContent = `${id.slice(0, 8)}…${id.slice(-8)}`;
   if (tokenDisplay) tokenDisplay.title = id; // full value on hover
 
-  // Pre-fill token in the pricing link query param so the form auto-populates.
-  // The ?token= param is read by JS on the pricing page, then removed from the
-  // URL bar and sent only in the POST body — never in a GET to our server.
-  if (pricingLink) {
-    pricingLink.href = `https://liarsledger.com/pricing?token=${encodeURIComponent(id)}`;
-  }
+
 });
 
 // Copy token to clipboard
@@ -339,6 +335,50 @@ copyTokenBtn?.addEventListener("click", () => {
         window.getSelection().addRange(range);
       }
     });
+  });
+});
+
+// Upgrade to Pro: POSTs token directly to /pricing/checkout, opens Square URL
+upgradeProBtn?.addEventListener("click", () => {
+  browser.storage.sync.get("ll_auth_token", async (stored) => {
+    const tokenId = stored.ll_auth_token?.tokenId;
+    if (!tokenId) return;
+
+    const proxyUrl = (typeof CONFIG !== "undefined" && CONFIG.PROXY_URL)
+      || "https://api.liarsledger.com";
+
+    upgradeProBtn.disabled = true;
+    upgradeProBtn.textContent = "Creating checkout…";
+    if (upgradeProMsg) { upgradeProMsg.textContent = ""; upgradeProMsg.className = "upgrade-pro-msg"; }
+
+    try {
+      const res  = await fetch(`${proxyUrl}/pricing/checkout`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ token: tokenId }),
+      });
+      const data = await res.json();
+
+      if (res.status === 409) {
+        if (upgradeProMsg) { upgradeProMsg.textContent = "This token already has Pro access."; upgradeProMsg.className = "upgrade-pro-msg ok"; }
+        upgradeProBtn.disabled    = false;
+        upgradeProBtn.textContent = "Subscribe to Pro";
+        return;
+      }
+
+      if (!res.ok || !data.url) {
+        if (upgradeProMsg) { upgradeProMsg.textContent = data.error || "Something went wrong. Try again."; upgradeProMsg.className = "upgrade-pro-msg error"; }
+        upgradeProBtn.disabled    = false;
+        upgradeProBtn.textContent = "Subscribe to Pro";
+        return;
+      }
+
+      browser.tabs.create({ url: data.url });
+    } catch (_) {
+      if (upgradeProMsg) { upgradeProMsg.textContent = "Network error. Check your connection."; upgradeProMsg.className = "upgrade-pro-msg error"; }
+      upgradeProBtn.disabled    = false;
+      upgradeProBtn.textContent = "Subscribe to Pro";
+    }
   });
 });
 
@@ -402,9 +442,7 @@ restoreBtn?.addEventListener("click", () => {
             tokenDisplay.textContent = `${restoredTokenId.slice(0, 8)}…${restoredTokenId.slice(-8)}`;
             tokenDisplay.title = restoredTokenId;
           }
-          if (pricingLink) {
-            pricingLink.href = `https://liarsledger.com/pricing?token=${encodeURIComponent(restoredTokenId)}`;
-          }
+
           restoreInput.value = "";
         });
       });

@@ -68,10 +68,10 @@ async function getMemberSponsoredBills(bioguideId, limit = 250) {
   const path = `/member/${bioguideId}/sponsored-legislation?limit=${limit}`;
   try {
     const data = await apiFetch(path);
-    return data.sponsoredLegislation || [];
+    return { data: data.sponsoredLegislation || [], errored: false };
   } catch (e) {
     logger.warn("api", `sponsored bills fetch failed: ${e.message}`);
-    return [];
+    return { data: [], errored: true };
   }
 }
 
@@ -80,10 +80,10 @@ async function getMemberCosponsoredBills(bioguideId, limit = 250) {
   const path = `/member/${bioguideId}/cosponsored-legislation?limit=${limit}`;
   try {
     const data = await apiFetch(path);
-    return data.cosponsoredLegislation || [];
+    return { data: data.cosponsoredLegislation || [], errored: false };
   } catch (e) {
     logger.warn("api", `cosponsored bills fetch failed: ${e.message}`);
-    return [];
+    return { data: [], errored: true };
   }
 }
 
@@ -121,10 +121,13 @@ async function lookupPoliticianOnTopics(member, topics, options = {}) {
   }
 
   // Fetch sponsored + cosponsored in parallel
-  const [sponsored, cosponsored] = await Promise.all([
+  const [sponsoredResult, cosponsoredResult] = await Promise.all([
     getMemberSponsoredBills(member.bioguide_id),
     getMemberCosponsoredBills(member.bioguide_id),
   ]);
+  const sponsored   = sponsoredResult.data;
+  const cosponsored = cosponsoredResult.data;
+  const congressErrored = sponsoredResult.errored && cosponsoredResult.errored;
 
   // --- Bill relevance check ---
   // Two-pass matching:
@@ -205,7 +208,7 @@ async function lookupPoliticianOnTopics(member, topics, options = {}) {
     typeof CONFIG !== "undefined" &&
     CONFIG.PROXY_URL;
 
-  const [rollCallVotes, vsData] = await Promise.all([
+  const [rollCallResult, vsData] = await Promise.all([
     findMemberRollCallVotesOnTopics(member, topics),
     vsEnabled
       ? lookupVoteSmart(member, [
@@ -214,7 +217,8 @@ async function lookupPoliticianOnTopics(member, topics, options = {}) {
       : Promise.resolve(null),
   ]);
 
-  result.rollCallVotes = rollCallVotes;
+  result.rollCallVotes    = rollCallResult.data;
+  result._sources_errored = congressErrored && rollCallResult.errored;
 
   if (vsData) {
     result.voteSmartId = vsData.candidateId;
@@ -235,12 +239,12 @@ async function lookupPoliticianOnTopics(member, topics, options = {}) {
 }
 
 async function findMemberRollCallVotesOnTopics(member, topics) {
-  if (!topics.length) return [];
+  if (!topics.length) return { data: [], errored: false };
 
   const govtrackId = await resolveGovTrackId(member.bioguide_id);
   if (!govtrackId) {
     logger.warn("api", `GovTrack ID not found for ${member.bioguide_id}`);
-    return [];
+    return { data: [], errored: true };
   }
 
   const cacheKey = `govtrack:voter:${govtrackId}`;
@@ -250,19 +254,19 @@ async function findMemberRollCallVotesOnTopics(member, topics) {
       const url = `${govtrackProxyBase()}/vote_voter?person=${govtrackId}&limit=50&order_by=-created`;
       const auth = await authHeaders();
       const res = await fetch(url, { headers: auth });
-    if (!res.ok) throw new Error(`GovTrack HTTP ${res.status}`);
+      if (!res.ok) throw new Error(`GovTrack HTTP ${res.status}`);
       voterData = await res.json();
       await cacheSet(cacheKey, voterData);
     } catch (e) {
       logger.warn("api", `GovTrack voter fetch failed: ${e.message}`);
-      return [];
+      return { data: [], errored: true };
     }
   }
 
   const voteEntries = voterData?.objects || [];
-  if (!voteEntries.length) return [];
+  if (!voteEntries.length) return { data: [], errored: false };
 
-  // Step 3: filter to topic-relevant votes
+  // Filter to topic-relevant votes
   const topicsLower = topics.map((t) => t.toLowerCase());
 
   const matched = voteEntries.filter((entry) => {
@@ -285,17 +289,14 @@ async function findMemberRollCallVotesOnTopics(member, topics) {
     });
   });
 
-  // Step 4: shape to match existing rollCallVotes format used by content.js
-  return matched.slice(0, 8).map((entry) => {
+  // Shape to match rollCallVotes format used by content.js
+  const data = matched.slice(0, 8).map((entry) => {
     const vote = entry.vote || {};
     const pos = entry.option?.value || entry.vote_type || "-";
-    const chamber = vote.chamber === "s" ? "senate" : "house";
     const congress = vote.congress || CURRENT_CONGRESS;
     const session = vote.session || 1;
     const rollNum = vote.number || null;
-
     const chamberPrefix = vote.chamber === "s" ? "s" : "h";
-
     const voteUrl = rollNum
       ? `https://www.govtrack.us/congress/votes/${congress}-${session}/${chamberPrefix}${rollNum}`
       : null;
@@ -312,6 +313,8 @@ async function findMemberRollCallVotesOnTopics(member, topics) {
       voteUrl,
     };
   });
+
+  return { data, errored: false };
 }
 
 function normalizeVotePosition(raw) {
@@ -342,7 +345,16 @@ async function resolveGovTrackId(bioguideId) {
     let map = await cacheGet(cacheKeyAll);
 
     if (!map) {
-      const res = await fetch(url);
+      // Found via live testing: this fetch had no Authorization header at
+      // all, unlike apiFetch() and findMemberRollCallVotesOnTopics' GovTrack
+      // call above, both of which correctly attach authHeaders(). If
+      // /api/legislators requires requireToken server-side (confirmed via
+      // direct curl test — unauthenticated request 401s, authenticated
+      // succeeds), this call has been silently failing this whole time,
+      // independent of any scan-token/hardening work this session — it's a
+      // pre-existing gap, not a regression from anything recent.
+      const auth = await authHeaders();
+      const res = await fetch(url, { headers: auth });
       if (!res.ok) throw new Error(`legislators fetch HTTP ${res.status}`);
       const data = await res.json();
       map = {};
