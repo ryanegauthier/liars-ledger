@@ -322,8 +322,8 @@
       width: 100%;
       margin-top: 8px;
       padding: 0.72rem 1.42rem;
-      background: var(--alert);
-      color: #fff6ef;
+      background: var(--accent);
+      color: var(--navy);
       border: none;
       border-top: 3px solid transparent;
       border-bottom: 3px solid transparent;
@@ -337,8 +337,8 @@
       cursor: pointer;
       transition: background 0.18s ease;
     }
-    .upgrade-to-pro-btn:hover:not(:disabled) { background: #d3482f; }
-    .upgrade-to-pro-btn:disabled { background: rgba(199,58,37,0.45); cursor: not-allowed; }
+    .upgrade-to-pro-btn:hover:not(:disabled) { background: var(--accent-dim); }
+    .upgrade-to-pro-btn:disabled { background: rgba(200,169,110,0.45); cursor: not-allowed; }
 
     .upgrade-pro-msg {
       font-size: 0.62rem;
@@ -536,7 +536,7 @@
 
   <div class="popup-footer">
     <span class="footer-source">congress.gov · official record</span>
-    <span class="footer-version" id="versionLabel">v0.17.0</span>
+    <span class="footer-version" id="versionLabel">v0.17.3</span>
   </div>
 
   <script src="src/config.js"></script>
