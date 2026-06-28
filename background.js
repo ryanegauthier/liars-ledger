@@ -312,13 +312,34 @@ async function handleAnalyze({ politicians, articleText }) {
     // VoteSmart API usage/cost now that it's unconditional.
     const records = await lookupAll(memberJobs, { skipVoteSmart: false });
 
-    // Commit the scan only when at least one external source responded
-    // (even with empty results). If every member's congress.gov AND govtrack
-    // calls all errored/timed out, skip commit -- the reservation expires and
-    // the user keeps their scan to retry.
+    // Commit the scan only when the result is fully complete for every
+    // politician. Skip commit (reservation expires, user keeps the scan to
+    // retry) if EITHER:
+    //   - every external source failed for every member (original rule,
+    //     v0.16.0-era) - the .every() case below, OR
+    //   - ANY member's VoteSmart lookup had to salvage a partial,
+    //     pagination-degraded result, OR ANY member's GovTrack roll-call
+    //     lookup failed on its own (even if congress.gov succeeded for
+    //     that member) (both v0.17.2+, this session) - the .some() cases
+    //     below. Deliberately looser than the original all-or-nothing
+    //     rule: a single politician's incomplete data from EITHER source
+    //     is enough to skip the charge, even if every other politician in
+    //     the same scan resolved cleanly. See votesmart.js's
+    //     fetchAllVsPages / resolveVoteSmartId for _votesmart_partial, and
+    //     api.js's findMemberRollCallVotesOnTopics for _govtrack_errored.
     const allSourcesFailed = records.every((r) => r._sources_errored);
-    if (allSourcesFailed) {
-      logger.warn("background", "all external sources failed for all members - scan not counted, reservation will expire");
+    const anyVoteSmartPartial = records.some((r) => r._votesmart_partial);
+    const anyGovTrackErrored = records.some((r) => r._govtrack_errored);
+    const skipCommit = allSourcesFailed || anyVoteSmartPartial || anyGovTrackErrored;
+
+    if (skipCommit) {
+      if (allSourcesFailed) {
+        logger.warn("background", "all external sources failed for all members - scan not counted, reservation will expire");
+      } else if (anyVoteSmartPartial) {
+        logger.warn("background", "VoteSmart returned a partial result for at least one member - scan not counted, reservation will expire");
+      } else {
+        logger.warn("background", "GovTrack failed for at least one member - scan not counted, reservation will expire");
+      }
     } else {
       await doCommitScan(proxyUrl, commitToken);
     }
@@ -440,7 +461,7 @@ async function doCommitScan(proxyUrl, commitToken) {
   }
 }
 
-logger.info("background", "service worker loaded v0.17.2");
+logger.info("background", "service worker loaded v0.17.1");
 
 // Initialize token and sync tier
 getOrCreateToken().then((t) => {

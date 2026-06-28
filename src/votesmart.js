@@ -3,10 +3,19 @@
 // All calls go through the backend proxy - VoteSmart is CORS-blocked from browsers.
 //
 // Exports:
-//   resolveVoteSmartId(member)             → candidateId or null
-//   getVoteSmartRatings(candidateId)       → [{ sigId, sigName, rating, ratingText, year, categories }]
-//   getVoteSmartVotes(candidateId, topics) → [{ billNumber, title, vote, date, stage, categories }]
-//   lookupVoteSmart(member, topics)        → { candidateId, ratings, votes }
+//   resolveVoteSmartId(member)             → { id, partial }
+//   getVoteSmartRatings(candidateId)       → { ratings: [{ sigId, sigName, rating, ratingText, year, categories }], errored }
+//   getVoteSmartVotes(candidateId, topics) → { votes: [{ billNumber, title, vote, date, stage, categories }], errored }
+//   lookupVoteSmart(member, topics)        → { candidateId, ratings, votes, partial }
+//
+// `partial` (added v0.17.2+): true if id resolution had to salvage a
+// pagination failure (429/502 even after retries - see fetchAllVsPages),
+// OR if the ratings or votes fetch failed outright after candidateId
+// resolved successfully. Either way, the data returned may be incomplete
+// for a reason that isn't "this politician genuinely has no ratings/votes."
+// Threaded up to api.js/background.js so an incomplete scan doesn't get
+// charged against the user's daily limit - see background.js's
+// skipCommit check.
 
 // --- State name → abbreviation map ---
 const STATE_ABBR = {
@@ -175,23 +184,84 @@ async function vsFetch(path) {
 // envelope with { total, lastPage, currentPage, next } via live testing) ---
 const VS_MAX_PAGES_SAFETY_CAP = 10; // circuit-breaker, not an expected ceiling
 
+// Per-page resilience (v0.17.2+, same session): confirmed live that a
+// single 429/502 on ANY page - even after vsFetch's own VS_MAX_RETRIES (2)
+// are exhausted - previously threw and discarded every page already
+// successfully accumulated before it. Confirmed live: Hill and Scott both
+// failed entirely on a single bad page (page 1 of N, page 2 of N) despite
+// earlier pages presumably having succeeded.
+//
+// Fix has two layers:
+//   1. Retry the SPECIFIC failing page up to VS_PAGE_EXTRA_RETRIES more
+//      times (beyond vsFetch's own retries) before giving up on it -
+//      vsFetch's 2 retries may simply not be enough during a real
+//      multi-second outage window, which is what tonight's 502s look like
+//      (GovTrack 502ing in the same few seconds on an unrelated endpoint
+//      suggests broader third-party flakiness, not something specific to
+//      one VoteSmart request).
+//   2. If the page still fails after that, SALVAGE whatever pages
+//      succeeded rather than discarding them - returns a `partial: true`
+//      result instead of throwing, so the caller can proceed with
+//      possibly-incomplete data instead of nothing at all.
+//
+// IMPORTANT correctness tradeoff, deliberate: if the real match was on the
+// specific page that failed, a partial result will silently report "no
+// match" instead of "lookup failed" - the same silent-failure shape as the
+// original truncation bug this session opened with. Mitigated, not
+// eliminated, by always logging partial:true loudly (see resolveVoteSmartId
+// debug log) so a degraded result is at least diagnosable from console
+// output rather than indistinguishable from a clean not-found.
+const VS_PAGE_EXTRA_RETRIES = 3;
+const VS_PAGE_RETRY_BASE_MS = 400;
+const VS_PAGE_RETRY_JITTER_MS = 250;
+
+async function fetchPageWithExtraRetries(pagePath) {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await vsFetch(pagePath);
+    } catch (e) {
+      if (attempt >= VS_PAGE_EXTRA_RETRIES) throw e;
+      attempt += 1;
+      const delay = VS_PAGE_RETRY_BASE_MS * attempt + Math.floor(Math.random() * VS_PAGE_RETRY_JITTER_MS);
+      console.warn(`[Liars Ledger] VoteSmart page retry ${attempt}/${VS_PAGE_EXTRA_RETRIES} for ${pagePath}: ${e.message}`);
+      await sleep(delay);
+    }
+  }
+}
+
+/**
+ * Returns { officials, partial, failedAtPage }.
+ *   officials   - accumulated results from every page fetched successfully
+ *   partial     - true if pagination stopped early due to a page that
+ *                 failed even after all retries (officials may be
+ *                 incomplete - some matches could be on the missing page)
+ *   failedAtPage - the page number that ultimately failed, or null
+ */
 async function fetchAllVsPages(basePath) {
   let page = 1;
   let allData = [];
 
   while (page <= VS_MAX_PAGES_SAFETY_CAP) {
-    const data = await vsFetch(`${basePath}&page=${page}`);
+    let data;
+    try {
+      data = await fetchPageWithExtraRetries(`${basePath}&page=${page}`);
+    } catch (e) {
+      console.warn(`[Liars Ledger] VoteSmart pagination: page ${page} failed after all retries, salvaging ${allData.length} result(s) from earlier pages: ${e.message}`);
+      return { officials: allData, partial: true, failedAtPage: page };
+    }
+
     const pageData = Array.isArray(data?.data) ? data.data : [];
     allData = allData.concat(pageData);
 
     const meta = data?.meta;
     if (!meta || typeof meta.lastPage !== "number" || page >= meta.lastPage) {
-      break;
+      return { officials: allData, partial: false, failedAtPage: null };
     }
     page += 1;
   }
 
-  return allData;
+  return { officials: allData, partial: false, failedAtPage: null };
 }
 
 // --- Resolve member → VoteSmart candidateId ---
@@ -200,11 +270,11 @@ function normalizeVoteSmartOfficeId(officeId) {
 }
 
 async function resolveVoteSmartId(member) {
-  if (!member?.last_name) return null;
+  if (!member?.last_name) return { id: null, partial: false };
 
   const cacheKey = `vs:id:${member.bioguide_id}`;
   const cached = await vsGet(cacheKey);
-  if (cached) return cached;
+  if (cached) return { id: cached, partial: false };
 
   try {
     const targetOffice = member.chamber === "senate" ? VS_SENATE_OFFICE : VS_HOUSE_OFFICE;
@@ -231,6 +301,7 @@ async function resolveVoteSmartId(member) {
 
     let officials = [];
     let pathTried = "lastname-only";
+    let isPartialResult = false; // true if any pagination step had to salvage a partial page set - see fetchAllVsPages
 
     /* ----------------------------------------------------------------------
      * OPTION B - office+state-scoped lookup (DISABLED, see CHANGELOG/notes)
@@ -272,32 +343,29 @@ async function resolveVoteSmartId(member) {
       // Gluesenkamp Perez) when their record sorted past page 1, causing a
       // false "no candidate found" with no error surfaced anywhere.
       //
-      // perPage raised 10 -> 50 (v0.17.1+, same session): confirmed live
-      // that VoteSmart's 429/502 errors during this debugging session hit
-      // a SPECIFIC page mid-sequence (e.g. page 3 of 4 for Warren), and a
-      // single failed page currently discards every page successfully
-      // fetched before it - see TODO below. Fewer pages per lookup directly
-      // lowers how often any single lookup is exposed to a transient
-      // failure landing mid-sequence. Does not eliminate multi-page lookups
-      // (a surname with 50+ nationwide matches still chains pages), and
-      // does not fix VoteSmart's underlying reliability - it only reduces
-      // how often the gap below gets triggered.
+      // perPage raised 10 -> 50 (v0.17.1+, same session): reduces how many
+      // pages a typical lookup needs, lowering exposure to a mid-sequence
+      // failure (see fetchAllVsPages below for the actual resilience fix).
       //
-      // TODO(reliability): fetchAllVsPages has no per-page resilience - one
-      // bad page (429/502, even after vsFetch's own retries are exhausted)
-      // throws and discards every page already successfully accumulated.
-      // Confirmed live: Warren's lookup failed entirely on page 3/4 despite
-      // pages 1-2 having presumably succeeded. Proper fix: catch a single
-      // page's failure inside the loop, retry that page a few extra times
-      // before giving up, and/or return whatever pages DID succeed rather
-      // than losing all of them. Not built tonight - perPage=50 above is a
-      // mitigation (fewer pages = less exposure), not the actual fix.
-      officials = await fetchAllVsPages(
+      // Per-page resilience (v0.17.2+, same session): confirmed live that
+      // Hill and Scott's lookups both failed entirely on a single bad page
+      // despite earlier pages having succeeded. fetchAllVsPages now retries
+      // a failing page (VS_PAGE_EXTRA_RETRIES) before giving up on it, and
+      // salvages whatever pages DID succeed (partial: true) instead of
+      // discarding everything. See fetchAllVsPages's own comment for the
+      // correctness tradeoff this introduces (a partial result can
+      // silently miss a match that was on the failed page).
+      const lastnameResult = await fetchAllVsPages(
         `/v1/officials/by-lastname?lastName=${encodeURIComponent(member.last_name)}&perPage=50`
       );
+      officials = lastnameResult.officials;
+      isPartialResult = lastnameResult.partial;
 
       // TEMP DEBUG - remove after diagnosing name-resolution mismatch
-      console.log(`[LL DEBUG] fell back to by-lastname="${member.last_name}", returned ${officials.length} officials across all pages (path=${pathTried})`);
+      console.log(`[LL DEBUG] fell back to by-lastname="${member.last_name}", returned ${officials.length} officials across all pages (path=${pathTried}, partial=${isPartialResult}${isPartialResult ? `, failedAtPage=${lastnameResult.failedAtPage}` : ""})`);
+      if (isPartialResult) {
+        console.warn(`[Liars Ledger] VoteSmart: PARTIAL pagination result for "${member.full_name}" - page ${lastnameResult.failedAtPage} failed after all retries. A real match may exist on the missing page and be silently absent here.`);
+      }
       // END TEMP DEBUG
     }
 
@@ -332,12 +400,17 @@ async function resolveVoteSmartId(member) {
       const compoundLastNameGuess = `${firstNameParts[firstNameParts.length - 1]} ${member.last_name}`;
       pathTried = `${pathTried}-then-compound-surname-retry`;
 
-      const compoundOfficials = await fetchAllVsPages(
+      const compoundResult = await fetchAllVsPages(
         `/v1/officials/by-lastname?lastName=${encodeURIComponent(compoundLastNameGuess)}&perPage=50`
       );
+      const compoundOfficials = compoundResult.officials;
+      if (compoundResult.partial) isPartialResult = true;
 
       // TEMP DEBUG - remove after diagnosing name-resolution mismatch
-      console.log(`[LL DEBUG] compound-surname retry lastName="${compoundLastNameGuess}", returned ${compoundOfficials.length} officials`);
+      console.log(`[LL DEBUG] compound-surname retry lastName="${compoundLastNameGuess}", returned ${compoundOfficials.length} officials (partial=${compoundResult.partial})`);
+      if (compoundResult.partial) {
+        console.warn(`[Liars Ledger] VoteSmart: PARTIAL pagination result for compound-surname retry on "${member.full_name}" - page ${compoundResult.failedAtPage} failed after all retries.`);
+      }
       // END TEMP DEBUG
 
       match = compoundOfficials.find(o =>
@@ -357,7 +430,7 @@ async function resolveVoteSmartId(member) {
     }
 
     // TEMP DEBUG - remove after diagnosing name-resolution mismatch
-    console.log(`[LL DEBUG] match result for "${member.full_name}" (pathTried=${pathTried}):`, {
+    console.log(`[LL DEBUG] match result for "${member.full_name}" (pathTried=${pathTried}, partial=${isPartialResult}):`, {
       targetOffice,
       state,
       firstNameCandidates: [...firstNameCandidates],
@@ -369,16 +442,27 @@ async function resolveVoteSmartId(member) {
 
     const id = match?.id || null;
     if (id) await vsSet(cacheKey, id);
-    return id;
+    return { id, partial: isPartialResult };
   } catch (e) {
     console.warn("[Liars Ledger] VoteSmart ID resolution failed:", e.message);
-    return null;
+    return { id: null, partial: false };
   }
 }
 
 // --- Get interest group ratings ---
+// Returns { ratings, errored }. errored=true means the fetch itself failed
+// (network error, non-retryable status, etc.) - distinct from a genuine,
+// successful "this candidate has zero ratings" result, which is
+// errored=false with an empty array. Previously these were indistinguishable
+// (both returned []), so a fetch failure looked identical to "no data
+// exists" - silently undercounting a politician's record with no signal
+// anywhere that something went wrong. Threaded up through lookupVoteSmart
+// so background.js's scan-charging check can treat a ratings/votes fetch
+// failure the same way it treats a partial pagination result - skip the
+// charge rather than charging for data that's missing due to an upstream
+// failure, not a genuine absence of ratings.
 async function getVoteSmartRatings(candidateId) {
-  if (!candidateId) return [];
+  if (!candidateId) return { ratings: [], errored: false };
 
   try {
     const data    = await vsFetch(`/v1/ratings/by-candidate?candidateId=${candidateId}`);
@@ -401,16 +485,18 @@ async function getVoteSmartRatings(candidateId) {
       }
     }
 
-    return [...bySig.values()].sort((a, b) => a.sigName.localeCompare(b.sigName));
+    return { ratings: [...bySig.values()].sort((a, b) => a.sigName.localeCompare(b.sigName)), errored: false };
   } catch (e) {
     console.warn("[Liars Ledger] VoteSmart ratings failed:", e.message);
-    return [];
+    return { ratings: [], errored: true };
   }
 }
 
 // --- Get vote history filtered by topics ---
+// Returns { votes, errored } - see getVoteSmartRatings's comment above for
+// why errored is tracked separately from a genuine empty result.
 async function getVoteSmartVotes(candidateId, topics) {
-  if (!candidateId || !topics?.length) return [];
+  if (!candidateId || !topics?.length) return { votes: [], errored: false };
   console.log(`[VS votes] candidateId=${candidateId}, topics=`, topics);
   try {
     const data  = await vsFetch(`/v2/votes/bills/by-official?candidateId=${candidateId}`);
@@ -434,7 +520,7 @@ async function getVoteSmartVotes(candidateId, topics) {
       return false;
     });
 
-    return matched.slice(0, 10).map(v => ({
+    const mapped = matched.slice(0, 10).map(v => ({
       billNumber: v.billNumber || "",
       title:      v.title || "",
       vote:       normalizeVsVote(v.vote),
@@ -442,9 +528,10 @@ async function getVoteSmartVotes(candidateId, topics) {
       stage:      v.stage || "",
       categories: (v.categories || []).map(c => c.name),
     }));
+    return { votes: mapped, errored: false };
   } catch (e) {
     console.warn("[Liars Ledger] VoteSmart votes failed:", e.message);
-    return [];
+    return { votes: [], errored: true };
   }
 }
 
@@ -455,19 +542,26 @@ function normalizeVsVote(raw) {
 
 // --- Main entry point ---
 async function lookupVoteSmart(member, topics) {
-  const candidateId = await resolveVoteSmartId(member);
+  const { id: candidateId, partial: idPartial } = await resolveVoteSmartId(member);
   if (!candidateId) {
     console.warn("[Liars Ledger] VoteSmart: no candidate ID for", member.full_name);
-    return { candidateId: null, ratings: [], votes: [] };
+    return { candidateId: null, ratings: [], votes: [], partial: idPartial };
   }
 
   console.log(`[Liars Ledger] VoteSmart: resolved ${member.full_name} → candidateId=${candidateId}`);
 
-  const [ratings, votes] = await Promise.all([
+  const [ratingsResult, votesResult] = await Promise.all([
     getVoteSmartRatings(candidateId),
     getVoteSmartVotes(candidateId, topics),
   ]);
 
-  console.log(`[Liars Ledger] VoteSmart: ${member.full_name} - ${ratings.length} ratings, ${votes.length} votes`);
-  return { candidateId, ratings, votes };
+  // Overall partial = true if id resolution was degraded OR either the
+  // ratings or votes fetch failed outright. From the caller's perspective
+  // these are all the same kind of problem: this politician's VoteSmart
+  // data is incomplete, for a reason that isn't "they genuinely have no
+  // ratings/votes" - see getVoteSmartRatings/getVoteSmartVotes's comments.
+  const partial = idPartial || ratingsResult.errored || votesResult.errored;
+
+  console.log(`[Liars Ledger] VoteSmart: ${member.full_name} - ${ratingsResult.ratings.length} ratings, ${votesResult.votes.length} votes${partial ? " (PARTIAL - see above for which part failed)" : ""}`);
+  return { candidateId, ratings: ratingsResult.ratings, votes: votesResult.votes, partial };
 }

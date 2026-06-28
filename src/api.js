@@ -220,6 +220,33 @@ async function lookupPoliticianOnTopics(member, topics, options = {}) {
   result.rollCallVotes    = rollCallResult.data;
   result._sources_errored = congressErrored && rollCallResult.errored;
 
+  // _govtrack_errored (v0.17.2+): true when GovTrack alone failed for this
+  // member, regardless of whether congress.gov succeeded. The existing
+  // _sources_errored above is an AND of both - it only trips when BOTH
+  // congress.gov AND GovTrack fail for a member, so a lone GovTrack 502
+  // (congress.gov succeeding fine) previously produced an incomplete
+  // report - a whole missing "Roll-Call Votes" section - with no skip-
+  // commit signal at all. Kept separate from _sources_errored rather than
+  // loosening that AND to an OR, since _sources_errored's stricter
+  // all-members-fully-failed meaning is used elsewhere (background.js's
+  // allSourcesFailed check) and shouldn't change shape. This field stands
+  // on its own and is checked alongside _votesmart_partial in
+  // background.js's "any politician had a degraded result" rule.
+  result._govtrack_errored = rollCallResult.errored;
+
+  // _votesmart_partial (v0.17.2+): true when VoteSmart's lookup had to
+  // salvage results from a pagination failure (429/502 even after retries)
+  // - see votesmart.js's fetchAllVsPages and resolveVoteSmartId. A partial
+  // result may be silently missing a real match. Kept as its own field
+  // rather than folded into _sources_errored, since the two represent
+  // different severities (errored = nothing came back at all; partial =
+  // some data is missing but the lookup didn't fully fail) - but
+  // background.js's scan-charging check treats either one as a reason not
+  // to charge the user. false (not undefined) when VoteSmart was skipped
+  // entirely (vsEnabled=false) - skipping isn't a failure, so it shouldn't
+  // trigger a free rescan on its own.
+  result._votesmart_partial = vsData?.partial || false;
+
   if (vsData) {
     result.voteSmartId = vsData.candidateId;
     result.voteSmartRatings = vsData.ratings || [];
