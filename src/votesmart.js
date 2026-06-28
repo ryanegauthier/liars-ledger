@@ -217,7 +217,16 @@ async function resolveVoteSmartId(member) {
     function firstNameMatches(candidate) {
       const candidateFirst = (candidate.firstName || "").toLowerCase();
       const candidateNick  = (candidate.nickName || "").toLowerCase();
-      return firstNameCandidates.has(candidateFirst) || firstNameCandidates.has(candidateNick);
+      const candidatePreferred = (candidate.preferredName || "").toLowerCase();
+      // preferredName added v0.17.1+: confirmed live that VoteSmart's
+      // legal firstName can differ entirely from the name a politician
+      // actually goes by (e.g. Marie Gluesenkamp Perez's VoteSmart record
+      // has firstName="Kristina", middleName="Marie", preferredName="Marie"
+      // - "Marie" never appeared in firstName or nickName at all, so this
+      // member would fail Pass 1 even with a correct lastname match).
+      return firstNameCandidates.has(candidateFirst) ||
+             firstNameCandidates.has(candidateNick) ||
+             firstNameCandidates.has(candidatePreferred);
     }
 
     let officials = [];
@@ -262,8 +271,29 @@ async function resolveVoteSmartId(member) {
       // default perPage=10 was silently truncating common surnames (Warren,
       // Gluesenkamp Perez) when their record sorted past page 1, causing a
       // false "no candidate found" with no error surfaced anywhere.
+      //
+      // perPage raised 10 -> 50 (v0.17.1+, same session): confirmed live
+      // that VoteSmart's 429/502 errors during this debugging session hit
+      // a SPECIFIC page mid-sequence (e.g. page 3 of 4 for Warren), and a
+      // single failed page currently discards every page successfully
+      // fetched before it - see TODO below. Fewer pages per lookup directly
+      // lowers how often any single lookup is exposed to a transient
+      // failure landing mid-sequence. Does not eliminate multi-page lookups
+      // (a surname with 50+ nationwide matches still chains pages), and
+      // does not fix VoteSmart's underlying reliability - it only reduces
+      // how often the gap below gets triggered.
+      //
+      // TODO(reliability): fetchAllVsPages has no per-page resilience - one
+      // bad page (429/502, even after vsFetch's own retries are exhausted)
+      // throws and discards every page already successfully accumulated.
+      // Confirmed live: Warren's lookup failed entirely on page 3/4 despite
+      // pages 1-2 having presumably succeeded. Proper fix: catch a single
+      // page's failure inside the loop, retry that page a few extra times
+      // before giving up, and/or return whatever pages DID succeed rather
+      // than losing all of them. Not built tonight - perPage=50 above is a
+      // mitigation (fewer pages = less exposure), not the actual fix.
       officials = await fetchAllVsPages(
-        `/v1/officials/by-lastname?lastName=${encodeURIComponent(member.last_name)}&perPage=10`
+        `/v1/officials/by-lastname?lastName=${encodeURIComponent(member.last_name)}&perPage=50`
       );
 
       // TEMP DEBUG - remove after diagnosing name-resolution mismatch
@@ -271,7 +301,7 @@ async function resolveVoteSmartId(member) {
       // END TEMP DEBUG
     }
 
-    // Pass 1: office + state + first/nick name
+    // Pass 1: office + state + first/nick/preferred name
     let match = officials.find(o =>
       normalizeVoteSmartOfficeId(o.officeId) === targetOffice &&
       o.officeStateId?.toUpperCase() === state &&
@@ -284,6 +314,46 @@ async function resolveVoteSmartId(member) {
         normalizeVoteSmartOfficeId(o.officeId) === targetOffice &&
         o.officeStateId?.toUpperCase() === state
       );
+    }
+
+    // Compound-surname retry (v0.17.1+, confirmed live): if no match yet
+    // AND member.first_name has multiple words, VoteSmart may file this
+    // person under a multi-word lastName that our dictionary's first/last
+    // split doesn't match. Confirmed live: Marie Gluesenkamp Perez is
+    // dictionary-split as first_name="Marie Gluesenkamp", last_name="Perez",
+    // but VoteSmart's actual record has lastName="Gluesenkamp Perez" as one
+    // field - searching lastName="Perez" alone never finds her, no matter
+    // how much of that result set gets paginated through. Guess: the last
+    // word of first_name + last_name, joined, as a second lastname query.
+    // Only attempted when the simple lastname search already failed to
+    // produce a match, so single-word-surname members (the common case)
+    // pay no extra request cost.
+    if (!match && firstNameParts.length > 1) {
+      const compoundLastNameGuess = `${firstNameParts[firstNameParts.length - 1]} ${member.last_name}`;
+      pathTried = `${pathTried}-then-compound-surname-retry`;
+
+      const compoundOfficials = await fetchAllVsPages(
+        `/v1/officials/by-lastname?lastName=${encodeURIComponent(compoundLastNameGuess)}&perPage=50`
+      );
+
+      // TEMP DEBUG - remove after diagnosing name-resolution mismatch
+      console.log(`[LL DEBUG] compound-surname retry lastName="${compoundLastNameGuess}", returned ${compoundOfficials.length} officials`);
+      // END TEMP DEBUG
+
+      match = compoundOfficials.find(o =>
+        normalizeVoteSmartOfficeId(o.officeId) === targetOffice &&
+        o.officeStateId?.toUpperCase() === state &&
+        firstNameMatches(o)
+      );
+
+      if (!match) {
+        match = compoundOfficials.find(o =>
+          normalizeVoteSmartOfficeId(o.officeId) === targetOffice &&
+          o.officeStateId?.toUpperCase() === state
+        );
+      }
+
+      if (match) officials = compoundOfficials; // for the debug log below
     }
 
     // TEMP DEBUG - remove after diagnosing name-resolution mismatch

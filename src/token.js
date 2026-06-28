@@ -52,6 +52,26 @@ async function getOrCreateToken() {
 
     if (!res.ok) {
       console.warn("[token] registration failed:", res.status);
+      // TODO(reliability - confirmed live, not just theoretical): this
+      // fallback masks a registration failure completely. Reproduced once
+      // live (2026-06-27, fresh Chrome profile): /register failed/non-OK,
+      // this fallback wrote a fully-formed-looking token object to
+      // storage.sync (tier="free", scansToday=0, limit=30 - the HARDCODED
+      // values below, not real server data), the popup displayed it as a
+      // normal working token, and every subsequent scan 401'd with "Token
+      // not recognized" because the tokenId was never actually written to
+      // Redis (confirmed via direct `GET token:<id>` -> nil). No error was
+      // ever shown to the user. The comment below ("syncTier() will correct
+      // limit on next startup") is NOT TRUE for this failure mode - see the
+      // matching TODO on syncTier()'s catch block, which has the same blind
+      // spot and never retries registration. Original trigger not
+      // confirmed (stopped reproducing before root cause was found - may be
+      // a Render cold-start, a transient CORS/network issue, or a real race
+      // condition); the masking behavior itself is real and confirmed
+      // regardless of what caused this specific instance. Needs: surface a
+      // visible error/retry state in the popup when registration fails, and
+      // a real re-registration path - not just hoping a later scan-status
+      // call happens to fix it.
       // Store locally anyway - backend might be down; syncTier() will correct limit on next startup
       const fallback = { tokenId, tier: "free", scansToday: 0, limit: 30 };
       await storeToken(fallback);
@@ -144,5 +164,15 @@ async function syncTier() {
       }
       await updateScanInfo(status);
     }
+    // TODO(reliability - see matching TODO in getOrCreateToken's !res.ok
+    // branch above): if tokenData.tokenId was never actually registered
+    // (e.g. the original /register call failed and the caller is running
+    // on the storeToken() fallback), this call 401s here too - same
+    // tokenId, same unregistered state. !res.ok falls through silently;
+    // nothing here distinguishes "tier unchanged" from "this token doesn't
+    // exist server-side and never will until something re-registers it."
+    // There is currently no code path that re-attempts /register for an
+    // already-locally-stored-but-never-actually-registered token. Confirmed
+    // live 2026-06-27 - see other TODO for the full incident.
   } catch (e) {}
 }

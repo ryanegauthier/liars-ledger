@@ -2,6 +2,32 @@
 
 > **Note:** [0.13.0] (Chrome Web Store launch) was submitted for review before [0.14.0]'s freemium work began, and was actually approved on 2026-06-16 — before any of 0.14.0–0.14.2 was built. The approval went unnoticed for several days (no email confirmation arrived; only found by checking the developer dashboard directly), which is why it's documented here after the fact rather than at the time. Listed below in its correct chronological position by approval date, not by when it was noticed or written up.
 
+## [0.17.1] - 2026-06-27
+
+### VoteSmart silent resolution failures — pagination fix + office-state lookup disabled
+
+**Background**: free-tier users started seeing `VoteSmart: no candidate ID for X` warnings for politicians with common surnames (first caught on Marie Gluesenkamp Perez and Elizabeth Warren). Root cause took a full debugging session to pin down because two unrelated bugs were producing the identical symptom, plus VoteSmart itself was actively rate-limiting (`429`) and erroring (`502`) on parts of the investigation, which repeatedly obscured which failure was real.
+
+**`src/votesmart.js`**
+- **Root cause (Warren and similar)**: `resolveVoteSmartId`'s `/v1/officials/by-lastname` call never paginated. VoteSmart defaults to `perPage=10`; any politician whose record didn't sort into the first page was silently treated as unresolvable, with no error surfaced anywhere — the call returned 200 with a valid-but-incomplete array, so nothing caught it. Confirmed via live testing: capturing the raw response showed Hill (10 results) and Thune (1 result) "working" by luck of alphabetical/internal sort order, while Warren's record simply wasn't in the first 10 of 31 total "Warren" results nationwide.
+- **Fix**: new `fetchAllVsPages(basePath)` helper loops `page=1..meta.lastPage`, accumulating `data` across every page, using the `meta.lastPage`/`meta.next` envelope confirmed present on `by-lastname` via direct API testing (not present/checked on other endpoints). 10-page safety cap as a circuit-breaker, not an expected ceiling. Replaces an earlier same-session stopgap (`perPage=50`, a guess at "probably enough") with a fix that doesn't depend on guessing a magic number.
+- **Known gap, NOT fixed by this change**: Marie Gluesenkamp Perez still fails after pagination. Confirmed via live testing that VoteSmart files her under the single compound `lastName: "Gluesenkamp Perez"` — querying `lastName=Perez` alone returns 28 real results across all 3 pages, correctly paginated, and still never includes her, because she isn't filed under "Perez" at all. A second, independent issue was found in the same response: her VoteSmart `firstName` is `"Kristina"` (legal first name), with `"Marie"` only appearing in `middleName`/`preferredName` — neither of which `firstNameMatches()` currently checks (only `firstName` and `nickName`). Both the compound-lastname query and the `preferredName` match gap need fixing together; pagination alone cannot resolve this case. Tracked as a follow-up, not fixed here.
+- **`by-office-state` lookup (added same session, now disabled)**: an attempt to resolve via `/v1/officials/by-office-state?officeId=X&stateId=Y` directly, sidestepping lastname pagination entirely. Block-commented out after confirming via live testing it 502s on `app.votesmart-api.org` for every `officeId`/`stateId` combination tried (Warren/MA, Hill/AR, Thune/SD — 100% failure rate, ruled out as rate-limiting since failures were immediate and consistent, not intermittent). Suspected cause: `getByOfficeState(officeId, stateId)` is documented against the classic `api.votesmart.org` SOAP-era API and the official `votesmartjs` wrapper, but `app.votesmart-api.org` (a different host entirely) may not implement the same method/shape, or may expect `officeTypeId` (letter code: `"C"`/`"N"`/`"L"`, observed in raw `by-lastname` responses) rather than the numeric `officeId` being sent. Left in place as a block comment with full context rather than deleted, since the code path is real work that may just need correct params once `app.votesmart-api.org`'s actual spec is confirmed.
+
+**`server/index.js`**
+- `VOTESMART_ALLOWED_PARAMS` now includes `page` and `perPage` (previously `lastName`, `candidateId`, `officeId`, `stateId` only), so the client's pagination requests aren't rejected by the existing query-parameter allowlist (added in v0.16.0, see that entry — VoteSmart was deliberately left unallowlisted at the time pending docs; the allowlist itself was added since, ahead of this session, but didn't yet include pagination params since pagination didn't exist yet).
+
+### Verification
+Warren confirmed resolving correctly (`candidateId=141272`) against live VoteSmart data after the pagination fix, client-side. **Server-side allowlist change for `page` not yet confirmed live post-deploy** — needs a real end-to-end pass against the deployed Render instance, not just local/client-side testing, before this is considered fully verified.
+
+### Not included in this release
+- Gluesenkamp Perez compound-surname + `preferredName` matching (see above — separate fix, not yet built)
+- `by-office-state` endpoint/param mismatch (disabled, not resolved)
+- Social media handle verification (carried over from v0.17.0, still unconfirmed)
+- `server/test/free/tier-gating.test.js` asserts `/api/votesmart/*` returns 403 for free tier — stale as of the v0.17.0 tier restructure (VoteSmart is free-tier now, gated by `requireToken` not `requirePro`); test not yet updated to match.
+
+---
+
 ## [0.17.0] - 2026-06-27
 
 ### Two-phase scan counting + direct Pro checkout from popup

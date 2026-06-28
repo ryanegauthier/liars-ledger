@@ -440,7 +440,7 @@ async function doCommitScan(proxyUrl, commitToken) {
   }
 }
 
-logger.info("background", "service worker loaded v0.17.0");
+logger.info("background", "service worker loaded v0.17.2");
 
 // Initialize token and sync tier
 getOrCreateToken().then((t) => {
