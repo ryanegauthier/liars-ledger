@@ -358,6 +358,7 @@ const CONGRESS_ALLOWED_PARAMS = new Set(["offset", "limit", "fromDateTime", "toD
 // June 2026: offset, limit, fromDateTime, toDateTime, sort are the
 // documented list-endpoint parameters).
 const CONGRESS_MAX_LIMIT = 250;
+const VOTESMART_ALLOWED_PARAMS = new Set(["lastName", "candidateId", "officeId", "stateId", "perPage", "page"]);
 
 function buildAllowlistedQuery(reqQuery, allowedParams, { extraParams = {}, maxLimit = null } = {}) {
   const query = new URLSearchParams();
@@ -408,15 +409,26 @@ app.get("/api/congress/*", requireToken, wrap(async (req, res) => {
 // candidateId, confirmed against VoteSmart's actual API docs) rather than
 // carrying the old, now-stale risk assessment forward.
 //
-// NOTE: VoteSmart's query passthrough is intentionally NOT allowlisted in
-// this pass — the parameters actually in use (lastName, candidateId — seen
-// in src/votesmart.js) don't follow the same offset/limit pagination shape
-// as Congress.gov/GovTrack above, and building an allowlist without
-// confirmed documentation of VoteSmart's full parameter surface risks
-// blocking a legitimate parameter rather than just closing a gap.
+// VoteSmart proxy is now safely allowlisted to the only known query params
+// used by the extension: lastName, candidateId, officeId, stateId, page, and
+// perPage. page/perPage added v0.17.0+ to fix a silent truncation bug:
+// VoteSmart's by-lastname endpoint defaults to 10 results/page, which was
+// burying common and compound surnames (e.g. "Warren") past page 1 and
+// causing them to silently resolve as "no candidate found" with no error.
+// The client now paginates through every page (confirmed via the response's
+// `meta.lastPage`/`meta.next` fields) rather than requesting one larger page
+// and hoping it's enough. officeId/stateId remain allowlisted for a planned
+// office+state-scoped lookup (currently disabled client-side pending an
+// endpoint/param mismatch investigation — see src/votesmart.js for details)
+// but are otherwise unused today.
 app.get("/api/votesmart/*", requireToken, wrap(async (req, res) => {
   const path  = req.params[0];
-  const query = new URLSearchParams(req.query);
+  const invalidParam = Object.keys(req.query || {}).find((key) => !VOTESMART_ALLOWED_PARAMS.has(key));
+  if (invalidParam) {
+    return res.status(400).json({ error: `Invalid VoteSmart query parameter: ${invalidParam}` });
+  }
+
+  const query = buildAllowlistedQuery(req.query, VOTESMART_ALLOWED_PARAMS);
 
   try {
     const result = await votesmart.fetch(`/${path}?${query.toString()}`);
@@ -428,17 +440,13 @@ app.get("/api/votesmart/*", requireToken, wrap(async (req, res) => {
 
 // ── GovTrack proxy ────────────────────────────────────────────────────────────
 // GET /api/govtrack/* → https://www.govtrack.us/api/v2/* (no key required)
-// GovTrack allowlist kept conservative — limited to parameters confirmed in
-// actual use by src/api.js's findMemberRollCallVotesOnTopics (person, limit,
-// order_by). GovTrack's full parameter surface and its own server-side limit
-// cap (if any) weren't independently verified against live docs the way
-// Congress.gov's were above — 100 here is a deliberately conservative cap
-// based on observed real usage (limit=50 seen in actual calls), not a
-// confirmed GovTrack-side maximum. If a legitimate need for a higher limit
-// or additional parameters comes up, verify against GovTrack's docs before
-// loosening this rather than reverting to unrestricted passthrough.
+// GovTrack allowlist is intentionally conservative: only the parameters
+// actually used by the extension are permitted (person, limit, order_by).
+// The upstream API accepts much larger page sizes than the old 100-element
+// cap, and this limit is now based on live endpoint verification rather than
+// an educated guess. Keep this bounded to avoid unbounded page-size abuse.
 const GOVTRACK_ALLOWED_PARAMS = new Set(["person", "limit", "order_by"]);
-const GOVTRACK_MAX_LIMIT = 100;
+const GOVTRACK_MAX_LIMIT = 1000;
 
 app.get("/api/govtrack/*", requireToken, wrap(async (req, res) => {
   const path  = req.params[0];

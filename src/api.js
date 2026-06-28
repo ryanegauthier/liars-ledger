@@ -232,7 +232,7 @@ async function lookupPoliticianOnTopics(member, topics, options = {}) {
   logger.info(
     "api",
     `${member.full_name}: ${result.sponsored.length} sponsored, ` +
-      `${result.cosponsored.length} cosponsored, ${rollCallVotes.length} roll-call hits, ` +
+      `${result.cosponsored.length} cosponsored, ${result.rollCallVotes.length} roll-call hits, ` +
       `${result.voteSmartRatings.length} VS ratings, ${result.voteSmartVotes.length} VS votes`,
   );
   return result;

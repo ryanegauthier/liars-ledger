@@ -120,7 +120,7 @@ try {
   // Windows fallback
   try {
     execSync(
-      `powershell Compress-Archive -Path "build/liars-ledger-v${version}" -DestinationPath "${zipName}" -Force`,
+      `powershell -NoProfile -ExecutionPolicy Bypass -Command "Import-Module Microsoft.PowerShell.Archive; Compress-Archive -Path '${buildDir}' -DestinationPath '${zipName}' -Force"`,
       { stdio: "inherit" }
     );
     console.log(`\n✅ Built: ${zipName}`);

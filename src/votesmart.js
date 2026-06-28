@@ -91,22 +91,114 @@ async function vsSet(key, value) {
   catch {}
 }
 
+async function vsRemove(key) {
+  try {
+    if (browser.storage.session.remove) {
+      return await browser.storage.session.remove(key);
+    }
+    return await vsSet(key, null);
+  } catch {}
+}
+
+function isValidVsFetchResponse(path, data) {
+  if (data == null || typeof data !== "object") return false;
+  if (data.error || data.errors) return false;
+  if (path.startsWith("/v1/officials/by-lastname")) {
+    return Array.isArray(data.data);
+  }
+  return data.data !== undefined && data.data !== null;
+}
+
 // --- Fetch wrapper with caching ---
+const VS_RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
+const VS_MAX_RETRIES = 2;
+const VS_RETRY_BASE_MS = 250;
+const VS_RETRY_JITTER_MS = 150;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function retryDelay(attempt) {
+  const base = VS_RETRY_BASE_MS * attempt;
+  const jitter = Math.floor(Math.random() * VS_RETRY_JITTER_MS);
+  return base + jitter;
+}
+
 async function vsFetch(path) {
   const cacheKey = `vs:${path}`;
-  const cached = await vsGet(cacheKey);
-  if (cached) return cached;
+  let cached = await vsGet(cacheKey);
+  if (cached) {
+    if (isValidVsFetchResponse(path, cached)) return cached;
+    await vsRemove(cacheKey);
+    cached = null;
+  }
 
   const url = `${proxyBase()}${path}`;
   const auth = await authHeaders();
-  const res = await fetch(url, { headers: auth });
-  if (!res.ok) throw new Error(`VoteSmart proxy ${res.status} on ${path}`);
-  const data = await res.json();
-  await vsSet(cacheKey, data);
-  return data;
+
+  let attempt = 0;
+  while (true) {
+    try {
+      const res = await fetch(url, { headers: auth });
+      if (!res.ok) {
+        const err = new Error(`VoteSmart proxy ${res.status} on ${path}`);
+        err.status = res.status;
+        if (VS_RETRYABLE_STATUSES.has(res.status) && attempt < VS_MAX_RETRIES) {
+          attempt += 1;
+          await sleep(retryDelay(attempt));
+          continue;
+        }
+        throw err;
+      }
+
+      const data = await res.json();
+      if (!isValidVsFetchResponse(path, data)) {
+        throw new Error(`VoteSmart proxy invalid response on ${path}`);
+      }
+
+      await vsSet(cacheKey, data);
+      return data;
+    } catch (e) {
+      const isRetryable = e.status && VS_RETRYABLE_STATUSES.has(e.status);
+      if (attempt < VS_MAX_RETRIES && isRetryable) {
+        attempt += 1;
+        await sleep(retryDelay(attempt));
+        continue;
+      }
+      throw e;
+    }
+  }
+}
+
+// --- Paginated fetch (by-lastname only - confirmed to return a `meta`
+// envelope with { total, lastPage, currentPage, next } via live testing) ---
+const VS_MAX_PAGES_SAFETY_CAP = 10; // circuit-breaker, not an expected ceiling
+
+async function fetchAllVsPages(basePath) {
+  let page = 1;
+  let allData = [];
+
+  while (page <= VS_MAX_PAGES_SAFETY_CAP) {
+    const data = await vsFetch(`${basePath}&page=${page}`);
+    const pageData = Array.isArray(data?.data) ? data.data : [];
+    allData = allData.concat(pageData);
+
+    const meta = data?.meta;
+    if (!meta || typeof meta.lastPage !== "number" || page >= meta.lastPage) {
+      break;
+    }
+    page += 1;
+  }
+
+  return allData;
 }
 
 // --- Resolve member → VoteSmart candidateId ---
+function normalizeVoteSmartOfficeId(officeId) {
+  return Number(officeId);
+}
+
 async function resolveVoteSmartId(member) {
   if (!member?.last_name) return null;
 
@@ -115,28 +207,95 @@ async function resolveVoteSmartId(member) {
   if (cached) return cached;
 
   try {
-    const data = await vsFetch(`/v1/officials/by-lastname?lastName=${encodeURIComponent(member.last_name)}`);
-    const officials = data?.data || [];
-
     const targetOffice = member.chamber === "senate" ? VS_SENATE_OFFICE : VS_HOUSE_OFFICE;
     const firstName    = (member.first_name || "").toLowerCase();
+    const firstNameParts = firstName.split(/\s+/).filter(Boolean);
+    const firstNameCandidates = new Set([firstName, ...firstNameParts]);
     const rawState     = member.state_id || member.state || "";
     const state        = STATE_ABBR[rawState] || rawState.toUpperCase();
 
+    function firstNameMatches(candidate) {
+      const candidateFirst = (candidate.firstName || "").toLowerCase();
+      const candidateNick  = (candidate.nickName || "").toLowerCase();
+      return firstNameCandidates.has(candidateFirst) || firstNameCandidates.has(candidateNick);
+    }
+
+    let officials = [];
+    let pathTried = "lastname-only";
+
+    /* ----------------------------------------------------------------------
+     * OPTION B - office+state-scoped lookup (DISABLED, see CHANGELOG/notes)
+     *
+     * /v1/officials/by-office-state consistently 502s on app.votesmart-api.org
+     * for every officeId/stateId combo tested (confirmed across Warren/MA,
+     * Hill/AR, Thune/SD - 100% failure rate, not transient/rate-limit related).
+     * Root cause suspected to be a host/endpoint mismatch: the classic
+     * api.votesmart.org SOAP-era docs and the votesmartjs wrapper both
+     * document getByOfficeState(officeId, stateId), but app.votesmart-api.org
+     * may not implement the same method/shape, or may require different
+     * params (e.g. officeTypeId letter code instead of numeric officeId -
+     * see "C"/"N"/"L" values observed in raw by-lastname responses).
+     *
+     * Re-enable once the correct endpoint/params are confirmed against
+     * app.votesmart-api.org's actual Swagger spec (not the legacy docs).
+     * Until then, this falls straight through to the lastname lookup below,
+     * which now requests a larger perPage to avoid the page-1-of-10
+     * truncation bug that silently dropped common surnames (Warren,
+     * Gluesenkamp Perez) when results sorted outside the default page.
+     *
+    if (state) {
+      pathTried = "by-office-state";
+      try {
+        const stateData = await vsFetch(`/v1/officials/by-office-state?officeId=${targetOffice}&stateId=${encodeURIComponent(state)}`);
+        officials = Array.isArray(stateData?.data) ? stateData.data : [];
+      } catch (e) {
+        officials = [];
+      }
+    }
+    ---------------------------------------------------------------------- */
+
+    if (!officials.length) {
+      pathTried = officials.length === 0 && state ? "by-office-state-empty-then-lastname" : "lastname-only";
+
+      // Paginates through every page of by-lastname results rather than
+      // trusting a single arbitrary perPage value. Fixed v0.17.0+: the
+      // default perPage=10 was silently truncating common surnames (Warren,
+      // Gluesenkamp Perez) when their record sorted past page 1, causing a
+      // false "no candidate found" with no error surfaced anywhere.
+      officials = await fetchAllVsPages(
+        `/v1/officials/by-lastname?lastName=${encodeURIComponent(member.last_name)}&perPage=10`
+      );
+
+      // TEMP DEBUG - remove after diagnosing name-resolution mismatch
+      console.log(`[LL DEBUG] fell back to by-lastname="${member.last_name}", returned ${officials.length} officials across all pages (path=${pathTried})`);
+      // END TEMP DEBUG
+    }
+
     // Pass 1: office + state + first/nick name
     let match = officials.find(o =>
-      o.officeId === targetOffice &&
+      normalizeVoteSmartOfficeId(o.officeId) === targetOffice &&
       o.officeStateId?.toUpperCase() === state &&
-      (o.firstName?.toLowerCase() === firstName || o.nickName?.toLowerCase() === firstName)
+      firstNameMatches(o)
     );
 
     // Pass 2: office + state only
     if (!match) {
       match = officials.find(o =>
-        o.officeId === targetOffice &&
+        normalizeVoteSmartOfficeId(o.officeId) === targetOffice &&
         o.officeStateId?.toUpperCase() === state
       );
     }
+
+    // TEMP DEBUG - remove after diagnosing name-resolution mismatch
+    console.log(`[LL DEBUG] match result for "${member.full_name}" (pathTried=${pathTried}):`, {
+      targetOffice,
+      state,
+      firstNameCandidates: [...firstNameCandidates],
+      officialsConsidered: officials.length,
+      matchFound: !!match,
+      match: match || null,
+    });
+    // END TEMP DEBUG
 
     const id = match?.id || null;
     if (id) await vsSet(cacheKey, id);

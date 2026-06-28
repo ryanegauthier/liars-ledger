@@ -2,6 +2,43 @@
 
 > **Note:** [0.13.0] (Chrome Web Store launch) was submitted for review before [0.14.0]'s freemium work began, and was actually approved on 2026-06-16 — before any of 0.14.0–0.14.2 was built. The approval went unnoticed for several days (no email confirmation arrived; only found by checking the developer dashboard directly), which is why it's documented here after the fact rather than at the time. Listed below in its correct chronological position by approval date, not by when it was noticed or written up.
 
+## [0.17.0] - 2026-06-27
+
+### Two-phase scan counting + direct Pro checkout from popup
+
+**Background**: congress.gov and GovTrack occasionally time out and return no data. Previously this consumed a scan anyway. This release makes those silent-failure rescans free by splitting scan counting into a reserve-then-commit model: the scan slot is held as a pending reservation at `/api/scan/start` time (anti-abuse: pending reservations still count toward the daily limit), and only finalized when the extension confirms at least one source responded with real data.
+
+**`server/providers/store.js`**
+- New: `reserveScan(tokenId, tier)` — replaces `incrementScansWithToken`. Issues both a `scanToken` (gates extraction as before) and a `commitToken` (new; finalizes the count). Pending reservations tracked in a Redis sorted set (`scans:pending:{tokenId}:{date}`, scored by expiry timestamp); expired members pruned via `ZREMRANGEBYSCORE` on each check.
+- New: `commitScan(commitToken)` — looks up and deletes `scancommit:{commitToken}` (3-minute TTL key), increments the daily count, removes the member from the pending set. Returns `{ committed: false }` if expired or already consumed.
+
+**`server/middleware/auth.js`**
+- `countScan` calls `reserveScan` instead of `incrementScansWithToken`. Attaches `req.commitToken` alongside the existing `req.scanToken`.
+
+**`server/index.js`**
+- `POST /api/scan/start` response includes `commitToken`.
+- New: `POST /api/scan/commit` — accepts `{ commitToken }`, returns `{ committed }`. Guarded by `requireToken`.
+
+**`src/api.js`**
+- `getMemberSponsoredBills`, `getMemberCosponsoredBills`, and `findMemberRollCallVotesOnTopics` now return `{ data, errored }` instead of a bare array, so callers can distinguish "no results because the source timed out" from "no results because there's nothing relevant."
+- `lookupPoliticianOnTopics` sets `result._sources_errored = true` only when both congress.gov sources AND GovTrack all error — a partial failure is not treated as a free-scan trigger.
+
+**`background.js`**
+- `proxyUrl` and `let commitToken = null` hoisted before the `llmOn` block so both are in scope at every exit path.
+- New helper `doCommitScan(proxyUrl, commitToken)` — fires `POST /api/scan/commit`, then `syncTier()` to refresh the popup's displayed count. Fails silently (the reservation expires naturally in 3 minutes if the commit never lands).
+- `doCommitScan` called at every normal exit path (no members, no topics, successful result). Deliberately skipped when `records.every(r => r._sources_errored)` — all external sources failed for every member — leaving the pending reservation to expire and giving the user a free retry.
+
+**`popup.html`** / **`popup.js`**
+- Account panel: "You need this token to subscribe to Pro at liarsledger.com/pricing..." text blurb replaced with a full-width red Subscribe to Pro button (same `.scan-btn` visual style).
+- Button fires `POST /pricing/checkout` directly with the install token, then opens the returned Square checkout URL in a new tab via `browser.tabs.create` — no longer sends the user to the pricing page as an intermediate step.
+- Error and 409 (already Pro) states shown inline below the button. `pricingLink` element and its `href`-injection removed.
+
+**`LiarsLedger/pricing.html`** / **`pricing.css`**
+- Pro tier card: token input form and submit button replaced with a screenshot CTA (`img/popup-subscribe.png`) and caption. `pricing-page.js` removed from the page.
+- Upgrade note rewritten to match the new flow: "Open the extension popup, expand the Account panel, and click Subscribe to Pro."
+
+---
+
 ## [0.16.0] - 2026-06-21
 
 ### Security hardening — closes scan-limit bypass found in code review
@@ -446,17 +483,17 @@ Three things worth confirming directly in the Upstash console once this is live 
 
 ## Planned
 
-### [0.16.0] - API cost optimization
-- Prompt caching on Claude extraction and verification calls - static instruction prefix cached, only article text varies
-- Usage monitoring via Claude Console - cost per endpoint tracking
-- Evaluate Mistral prompt caching equivalent
-
-### [0.17.0] - GovTrack extended data
+### [0.18.0] - GovTrack extended data
 - Ideology scores (0.0 = most liberal, 1.0 = most conservative)
 - Missed vote rates and committee assignments
 - Historical roll-call votes back to 1990s
 
-### [0.18.0] - Social media scanning (X / Facebook)
+### [Future] - API cost optimization
+- Prompt caching on Claude extraction and verification calls - static instruction prefix cached, only article text varies
+- Usage monitoring via Claude Console - cost per endpoint tracking
+- Evaluate Mistral prompt caching equivalent
+
+### [0.19.0] - Social media scanning (X / Facebook)
 - **X (Twitter)** — extract claims from individual tweet pages and thread views
   - Platform-specific content extractor targeting tweet text containers
   - Looser name extraction — last-name-only references ("Trump", "Pelosi") without title prefix
@@ -470,7 +507,7 @@ Three things worth confirming directly in the Upstash console once this is live 
   - Fallback for sites with no supported extractor
   - Context menu registered via `chrome.contextMenus`
 
-### [0.19.0] - Creator shareable graphics
+### [0.20.0] - Creator shareable graphics
 - One-click image card: politician name, claim, voting record
 - Twitter/X (1200×628) and Instagram (1080×1080) formats
 - Canvas API, no server render, Creator tier feature

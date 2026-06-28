@@ -91,6 +91,17 @@ describe("Pro tier — gated routes and fields are NOT stripped", () => {
     expect(status).not.toBe(403);
   }, 15000);
 
+  it("rejects /api/votesmart/* requests with unsupported query parameters", async () => {
+    const { status, body } = await api(
+      "/api/votesmart/v1/officials/by-lastname?lastName=Smith&unexpected=1",
+      {
+        headers: authHeaders(),
+      },
+    );
+    expect(status).toBe(400);
+    expect(body.error).toMatch(/Invalid VoteSmart query parameter/);
+  }, 15000);
+
   it("does not strip claim/summary from /api/claude/extract for pro tier", async () => {
     const { status, body } = await api("/api/claude/extract", {
       method: "POST",
