@@ -105,12 +105,48 @@ browser.runtime.onMessageExternal.addListener((message, sender, sendResponse) =>
 // --- Main analysis pipeline ---
 async function handleAnalyze({ politicians, articleText }) {
   try {
-    // Fetch tier once, up front - used to gate VoteSmart lookups below
-    // (cost-saving: free tier never calls VoteSmart at all) and to strip
-    // claim/verdict/VoteSmart fields from the final response further down.
-    // See the "PRO-TIER GATING" comment near the end of this function for
-    // the full list of what's gated and why.
-    const { tier, tokenId } = await getOrCreateToken();
+    // Hoisted up from further down so the fresh tier-check below can use it.
+    const proxyUrl = (typeof CONFIG !== "undefined" && CONFIG.PROXY_URL)
+      || "https://api.liarsledger.com";
+
+    // tokenId itself doesn't go stale - it's stable for the life of the
+    // install - so getOrCreateToken() is still the right source for it.
+    const { tokenId } = await getOrCreateToken();
+
+    // Fetch tier FRESH from the server rather than trusting
+    // getOrCreateToken()'s cached storage value for this. Confirmed live
+    // (2026-06-28): getOrCreateToken() returns whatever tier was cached in
+    // chrome.storage.sync at some point in the past - it only re-syncs
+    // from the server here in handleAnalyze via syncTier(), which is
+    // called fire-and-forget (no await, see further down) specifically to
+    // refresh the POPUP's display, not to update the isPro decision this
+    // function is about to make. Result: a user correctly upgraded to Pro
+    // server-side (Redis) and even showing "Pro" in the popup (which gets
+    // refreshed by its own load-time sync) could still get gated as free
+    // tier on every scan indefinitely, because this function never asked
+    // the server itself before deciding. Falls back to the cached value
+    // only if this fresh check fails, so a transient network hiccup
+    // degrades to the OLD (stale-but-functional) behavior rather than
+    // breaking the scan outright.
+    let tier;
+    try {
+      const tierAuth = { "Authorization": `Bearer ${tokenId}` };
+      const statusRes = await fetch(`${proxyUrl}/api/scan-status`, { headers: tierAuth });
+      if (statusRes.ok) {
+        const status = await statusRes.json();
+        tier = status.tier;
+        // Piggyback on the same response to keep storage (and therefore
+        // the popup) in sync too, instead of leaving that to a separate
+        // later syncTier() call that's redundant with the fetch above.
+        await updateScanInfo(status);
+      } else {
+        throw new Error(`scan-status HTTP ${statusRes.status}`);
+      }
+    } catch (e) {
+      logger.warn("background", `fresh tier check failed (${e.message}) - falling back to cached tier`);
+      const cached = await getOrCreateToken();
+      tier = cached.tier;
+    }
     const isPro = tier === "pro";
 
     // Pricing URL with the install token attached as a query param, so
@@ -131,10 +167,6 @@ async function handleAnalyze({ politicians, articleText }) {
     const llmProvider = (typeof CONFIG !== "undefined" && CONFIG.LLM_PROVIDER) || "dual";
     const llmOn       = !!(articleText?.trim());
 
-    // Hoisted so commitScan() and the no_members/no_topics early returns
-    // below can all reach them without being inside the llmOn block.
-    const proxyUrl = (typeof CONFIG !== "undefined" && CONFIG.PROXY_URL)
-      || "https://api.liarsledger.com";
     let commitToken = null;
 
     if (llmOn) {
@@ -312,34 +344,13 @@ async function handleAnalyze({ politicians, articleText }) {
     // VoteSmart API usage/cost now that it's unconditional.
     const records = await lookupAll(memberJobs, { skipVoteSmart: false });
 
-    // Commit the scan only when the result is fully complete for every
-    // politician. Skip commit (reservation expires, user keeps the scan to
-    // retry) if EITHER:
-    //   - every external source failed for every member (original rule,
-    //     v0.16.0-era) - the .every() case below, OR
-    //   - ANY member's VoteSmart lookup had to salvage a partial,
-    //     pagination-degraded result, OR ANY member's GovTrack roll-call
-    //     lookup failed on its own (even if congress.gov succeeded for
-    //     that member) (both v0.17.2+, this session) - the .some() cases
-    //     below. Deliberately looser than the original all-or-nothing
-    //     rule: a single politician's incomplete data from EITHER source
-    //     is enough to skip the charge, even if every other politician in
-    //     the same scan resolved cleanly. See votesmart.js's
-    //     fetchAllVsPages / resolveVoteSmartId for _votesmart_partial, and
-    //     api.js's findMemberRollCallVotesOnTopics for _govtrack_errored.
+    // Commit the scan only when at least one external source responded
+    // (even with empty results). If every member's congress.gov AND govtrack
+    // calls all errored/timed out, skip commit -- the reservation expires and
+    // the user keeps their scan to retry.
     const allSourcesFailed = records.every((r) => r._sources_errored);
-    const anyVoteSmartPartial = records.some((r) => r._votesmart_partial);
-    const anyGovTrackErrored = records.some((r) => r._govtrack_errored);
-    const skipCommit = allSourcesFailed || anyVoteSmartPartial || anyGovTrackErrored;
-
-    if (skipCommit) {
-      if (allSourcesFailed) {
-        logger.warn("background", "all external sources failed for all members - scan not counted, reservation will expire");
-      } else if (anyVoteSmartPartial) {
-        logger.warn("background", "VoteSmart returned a partial result for at least one member - scan not counted, reservation will expire");
-      } else {
-        logger.warn("background", "GovTrack failed for at least one member - scan not counted, reservation will expire");
-      }
+    if (allSourcesFailed) {
+      logger.warn("background", "all external sources failed for all members - scan not counted, reservation will expire");
     } else {
       await doCommitScan(proxyUrl, commitToken);
     }

@@ -443,9 +443,174 @@ what identifier appears on a buyer's Square receipt/confirmation email, and
 whether `RetrieveOrder` on that identifier reliably has a usable
 `customer_id`. Will check before writing real code for this endpoint.
 
+> **UPDATE — 2026-06-28, verified live (bad news, see §4a below for the
+> proposed fix):** This question went unanswered through implementation —
+> `/restore-token` shipped asking for "your order number from the receipt,"
+> but a real subscription receipt (Square invoice PDF, checked directly)
+> contains no order ID at all. The only identifier-shaped thing on it is a
+> "View online" link that resolves to a URL containing an `invtmp:...` ID —
+> an invoice **template** ID, which Square's own docs list under
+> "Invoice templates" as an *unsupported* Invoices API feature. So even if
+> `RetrieveOrder`/`GetInvoice` works perfectly, there is currently no path
+> from "what the customer actually has" to "an ID our backend can resolve."
+> Discovered while investigating a real Pro subscriber stuck on free tier —
+> see §4a for why, and a proposed redesign.
+
 ---
 
-## 5. `privacy.html` Disclosure Addition
+## 4a. Proposed redesign — `resolveTokenFromOrderTemplate` fallback + `/restore-token` input
+
+**Status: design only, not yet implemented or verified against live Square
+docs. Same caveat as the rest of this document — confirm against current
+API behavior before writing real code, especially the Subscriptions API
+calls below, which haven't been checked the way §0's CreatePaymentLink
+behavior was.**
+
+### Why both halves below have to ship together
+
+Fixing `/restore-token`'s input alone doesn't help if the Redis mapping it
+queries was never written. `/restore-token` and the webhook's slow path both
+depend on the same `"square:customer:" + customerId` key, which currently
+only gets written as a side effect of `resolveTokenFromOrderTemplate`'s
+`RetrieveOrder` call succeeding (§3, original webhook design) — and that's
+the exact call that fails when `order_template_id` is missing from the
+event (confirmed happening live — see §3's webhook handler in production:
+`"subscription event has no order_template_id — cannot resolve token"`).
+So Layer 1 below has to land before Layer 2 can actually help anyone.
+
+### Layer 1 — independent fallback in `resolveTokenFromOrderTemplate`
+
+`subscriptionId` is present on every `subscription.created`/`updated` event,
+unconditionally — unlike `order_template_id`. If Square's Subscriptions API
+exposes enough on the subscription object itself to recover the order or
+customer without needing `order_template_id` at all, that becomes a real,
+independent second path rather than the current "last resort" that's
+actually just the same cache, checked first.
+
+```
+NEEDS VERIFICATION before implementing: does RetrieveSubscription return
+an order_id, or a customer_id, directly on the subscription object? (Not
+checked yet — this entire layer's design depends on the answer.)
+
+FUNCTION resolveTokenFromOrderTemplate(orderTemplateId, subscriptionId, customerId):
+  # Fast path 1: subscription already resolved on a prior event (unchanged)
+  token = redis.get("square:subscription:" + subscriptionId)
+  IF token: return token
+
+  # Fast path 2: order template already resolved (unchanged)
+  IF orderTemplateId:
+    token = redis.get("square:ordertemplate:" + orderTemplateId)
+    IF token:
+      redis.set("square:subscription:" + subscriptionId, token)
+      return token
+
+    TRY:
+      order = squareClient.orders.retrieveOrder(orderTemplateId)
+      token = order.referenceId
+      IF token: cache all three mappings (unchanged), return token
+    CATCH: fall through
+
+  # NEW — independent fallback, doesn't require orderTemplateId at all:
+  TRY:
+    subscription = squareClient.subscriptions.retrieveSubscription(subscriptionId)
+    # whichever of these Square's API actually returns -- confirm against
+    # live docs, this is a guess at the shape:
+    IF subscription.customerId:
+      token = redis.get("square:customer:" + subscription.customerId)
+      IF token:
+        redis.set("square:subscription:" + subscriptionId, token)
+        LOG "resolved via subscription.customerId fallback - order_template_id was missing"
+        return token
+  CATCH:
+    LOG error, fall through
+
+  # Genuinely exhausted every path -- this is the case that currently
+  # fails silently. At minimum, this should fire an alert/flag for manual
+  # follow-up rather than just a console.error nobody sees until a
+  # customer complains:
+  LOG/ALERT "could not resolve token for sub=" + subscriptionId +
+            " after all fallbacks - needs manual resolution"
+  return null
+```
+
+**Also worth considering, separate from the fallback above:** if
+`subscription.customerId` itself isn't yet mapped (e.g. this really is the
+very first event for a brand-new customer and NOTHING has been cached
+yet), the fallback above still returns null. For that specific case, the
+only remaining option is re-deriving from the order at checkout time
+differently — e.g. writing `"square:customer:" + customerId -> token`
+proactively if/when Square's checkout flow ever exposes the customer it's
+about to create before the webhook fires. Not designed here; flagging it
+as the residual gap even after Layer 1 ships, so it doesn't look like
+Layer 1 claims to solve 100% of cases when it doesn't.
+
+### Layer 2 — redesign `/restore-token`'s input around what customers actually have
+
+Checked a real subscription receipt directly: no order ID, no customer ID,
+nothing the current input field can use. The one thing every subscriber
+definitely has, unambiguously, is **the email address they paid with**.
+
+```
+ROUTE: POST /restore-token   (revised)
+  BODY: { email: string }
+
+  FUNCTION handleRestoreToken(req, res):
+    email = req.body.email
+
+    VALIDATE email is a syntactically plausible email address
+      IF NOT valid: return 400
+
+    # NEEDS VERIFICATION: exact SearchCustomers filter shape for matching
+    # by email - confirm against live Customers API docs before
+    # implementing, same as everything else in this document.
+    customers = squareClient.customers.searchCustomers({
+      filter: { emailAddress: { exact: email } }
+    })
+
+    IF customers.length == 0:
+      return res.status(404).json({
+        error: "No subscription found for that email. Double check the " +
+               "email you used at checkout, or contact support."
+      })
+
+    # A given email could in principle match more than one Square customer
+    # record over time (e.g. resubscribed after canceling, used a different
+    # card later under a re-created profile) - check ALL matches, not just
+    # customers[0], and prefer one with an active token->pro mapping if
+    # multiple exist:
+    FOR customer IN customers:
+      token = redis.get("square:customer:" + customer.id)
+      IF token:
+        return res.status(200).json({ token: token })
+
+    # Customer record(s) exist in Square but no token mapping was ever
+    # written for any of them - this is exactly the Layer-1 gap. Distinct
+    # error message from "no customer found at all," since the underlying
+    # problem and the support response differ:
+    return res.status(404).json({
+      error: "We found your account but couldn't link it to a token " +
+             "automatically. Contact support with your email and we'll " +
+             "fix it manually."
+    })
+```
+
+**Rate limiting note**: the existing 5-attempts/15-min limit (per the
+original `/restore-token` design) becomes more important here, not less —
+searching by email is a softer input than an opaque order ID, so it's
+worth confirming the rate limit is keyed on something that can't be
+trivially worked around (IP + email pair, not just IP alone, so someone
+can't brute-force-guess emails by rotating IPs, and a legitimate user
+retrying isn't blocked by someone else's attempts on a shared IP).
+
+**Privacy note**: this surfaces a behavior difference between "no Square
+customer matches this email" and "matches, but no token" — worth a quick
+gut-check on whether that distinction lets someone probe whether an email
+address has ever paid for this product. Likely low-stakes for this
+product, but worth a deliberate yes/no rather than an unexamined default.
+
+---
+
+
 
 ```
 New section, placed near existing token-handling language:
@@ -552,13 +717,35 @@ SECURITY.md — new note:
 ## Summary of what still needs live-doc verification before real code
 
 1. Exact Invoices API webhook event type names (payment succeeded / failed)
-2. Whether a billed-cycle order (vs. the order template) carries `reference_id`
-   reliably, or whether `/restore-token` must key off `customer_id` only
-   (current pseudocode already defaults to the safer `customer_id` path)
-3. What identifier actually appears on a Square buyer receipt, to design the
-   `/restore-token` input field's label/placeholder/validation correctly
+   — still open, not addressed by this update.
+2. ~~Whether a billed-cycle order (vs. the order template) carries `reference_id`
+   reliably, or whether `/restore-token` must key off `customer_id` only~~
+   — **superseded.** Confirmed live (2026-06-28) that the bigger problem is
+   upstream of this: `order_template_id` itself is sometimes absent from
+   the webhook event entirely, so neither path is reachable. See §4a Layer 1.
+3. ~~What identifier actually appears on a Square buyer receipt~~ —
+   **verified live (2026-06-28):** no order ID, no customer ID; only an
+   `invtmp:...` template-ID link, which Square's docs suggest the
+   Invoices API doesn't support directly. See §4a Layer 2 for the proposed
+   redesign around email instead.
 4. Square's dunning/retry window for failed subscription payments, to decide
-   grace-period policy in `handlePaymentFailed`
+   grace-period policy in `handlePaymentFailed` — still open, not addressed
+   by this update. (Note: production code as of v0.17.x already implements
+   a 3-failure/day-3-6-9 retry-window heuristic for this — worth checking
+   whether that resolves this open item or just predates this doc being
+   updated to reflect it.)
+
+### New open items from §4a (none yet verified against live Square docs)
+
+5. Does `RetrieveSubscription` return `order_id` or `customer_id` directly
+   on the subscription object? §4a Layer 1's entire fallback design depends
+   on the answer and is unverified.
+6. Exact `SearchCustomers` filter shape for an exact-match email lookup —
+   §4a Layer 2 pseudocode is a guess at the shape, not confirmed.
+7. What happens for a customer whose `square:customer:{id}` mapping was
+   never written by ANY path (true first-event failure, nothing cached
+   yet anywhere) — §4a Layer 1 explicitly does not solve this residual
+   case; flagged there, not designed.
 
 Once you confirm this overall shape looks right, next step is verifying item
 1–4 above, then implementing in this order: Catalog setup script → webhook

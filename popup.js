@@ -1,4 +1,4 @@
-// Liar's Ledger - popup.js v0.17.2
+// Liar's Ledger - popup.js v0.17.4
 
 const browser = window.browser || window.chrome;
 const toggle         = document.getElementById("enableToggle");
@@ -276,6 +276,19 @@ function loadScanInfo() {
 
     scanInfoEl.textContent = `${tierLabel} · ${remaining} scan${remaining !== 1 ? "s" : ""} remaining today`;
     scanInfoEl.className = "scan-info" + (token.tier === "pro" ? " pro" : "") + (remaining === 0 ? " exhausted" : remaining <= 1 ? " low" : "");
+
+    // Hide the upgrade button entirely once the user is already Pro —
+    // showing "Subscribe to Pro" to someone who already subscribed reads
+    // as broken/confusing, not just redundant. Re-evaluated on every
+    // loadScanInfo() call (initial popup load, post-scan refresh, and
+    // post-restore refresh - see call sites), so this stays correct live
+    // if tier changes mid-session rather than only updating on next open.
+    if (upgradeProBtn) {
+      upgradeProBtn.style.display = token.tier === "pro" ? "none" : "";
+    }
+    if (upgradeProMsg) {
+      upgradeProMsg.style.display = token.tier === "pro" ? "none" : "";
+    }
   });
 }
 
