@@ -12,6 +12,7 @@ importScripts(
   "src/api.js",
   "src/votesmart.js",
   "src/verify.js",
+  "src/cache-maintenance.js",
 );
 
 const browser = globalThis.browser || globalThis.chrome;
@@ -35,7 +36,7 @@ function figureForMember(figures, member) {
 // --- Message listener ---
 browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "ping") {
-    sendResponse({ status: "ok", version: "0.16.1" });
+    sendResponse({ status: "ok", version: "0.17.5" });
     return true;
   }
 
@@ -147,6 +148,13 @@ async function handleAnalyze({ politicians, articleText }) {
       const cached = await getOrCreateToken();
       tier = cached.tier;
     }
+
+    // Run before any vsFetch/apiFetch calls for this scan, so a clear (if
+    // triggered) frees headroom for THIS scan's own caching rather than
+    // only benefiting some future scan. See cache-maintenance.js for full
+    // design rationale - this is what keeps storage.session from
+    // accumulating without bound and eventually exceeding its quota.
+    await maybeRunCacheMaintenance();
     const isPro = tier === "pro";
 
     // Pricing URL with the install token attached as a query param, so
@@ -472,7 +480,7 @@ async function doCommitScan(proxyUrl, commitToken) {
   }
 }
 
-logger.info("background", "service worker loaded v0.17.1");
+logger.info("background", "service worker loaded v0.17.5");
 
 // Initialize token and sync tier
 getOrCreateToken().then((t) => {
