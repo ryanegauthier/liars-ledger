@@ -4,7 +4,7 @@
 
 ## Known Issues (Unresolved)
 
-### Session storage quota exhausts cumulatively over normal use, not just on unusually large scans; popup mislabels the failure as a timeout
+### Session storage quota exhausts cumulatively over normal use, not just on unusually large scans; popup mislabeled the failure as a timeout (partially mitigated in v0.17.6 -- root cause not fixed)
 
 **Discovered**: 2026-06-28, first seen on a real Pro-tier scan covering 12 senators (12 names × ~20-22 topics each, full VoteSmart ratings/votes per member). Originally suspected to be specific to that scan's unusual size — **confirmed otherwise the next day**: the same user hit the identical error again hours later, on what was not an unusually large scan, after the quota had been manually cleared and had been working fine in between. That recurrence is the important data point — see "Confirmed pattern" below.
 
@@ -22,7 +22,7 @@ The scan did not time out — it ran to completion. The storage-quota failure ha
 
 **Real fix, not yet built**: needs either (a) actively evicting old `vs:`/`api:` cache entries once they age out or once total size approaches the quota, (b) moving large/long-lived cached data to a different storage mechanism with a higher or no quota (e.g. `storage.local` with explicit key expiry), or (c) reducing what gets cached per request in the first place. Manual `chrome.storage.session.clear()` is the only known mitigation today, and it requires DevTools access a typical end user won't have — so until a real fix ships, any non-technical user who hits this has no recourse beyond reinstalling the extension (which would also clear session storage as a side effect, untested but plausible) or contacting support for the same manual-clear step done on their behalf.
 
-**Not done as part of this**: no eviction/expiry logic built; no fix to the popup's misleading error message; payload size and actual quota limit still not measured; rate of accumulation (how many scans/how much data before hitting the ceiling) not measured. Deferred — needs dedicated investigation, not a same-session fix. [Jira ticket pending — Atlassian connector authorized but ticket-creation tooling wasn't reachable this session; create manually and cross-reference here once filed.]
+**Partially mitigated in v0.17.6**: `safeSessionSet` added to `cache-maintenance.js` -- pre-write eviction check at 50% usage, quota error catch with evict-and-retry rather than unhandled rejection. `USAGE_THRESHOLD_RATIO` lowered 0.65 -> 0.50. `cacheSet` (api.js) and `vsSet` (votesmart.js) both updated to call `safeSessionSet` directly. Popup error codes added: quota failures now surface as `[ERR-CACHE]` rather than "Timed out. Try again.", and a genuine 45-second hang surfaces as `[ERR-HANG]`. **Root cause still not fixed**: unbounded cache growth continues; eviction is reactive, not preventive. Payload size and accumulation rate still not measured. [Jira ticket pending -- Atlassian connector authorized but ticket-creation tooling was not reachable this session; create manually and cross-reference here once filed.]
 
 ---
 
@@ -41,6 +41,44 @@ The Account panel's "Restore Pro after reinstalling" flow asks users to paste a 
 **Immediate mitigation (not a fix)**: the one known affected customer was upgraded manually via a direct `upgradeTier(tokenId, "pro")` call / Redis write, bypassing both broken paths entirely.
 
 **Not done as part of this**: no fix to `resolveTokenFromOrderTemplate`'s missing fallback; no fix or redesign of `restore-token`'s required input; no live test confirming whether `invtmp:` IDs are convertible to something usable. No way yet to know how many other subscribers (if any) have silently hit Issue 1. Deferred — needs dedicated investigation time, not a same-night fix.
+
+---
+
+## [0.17.6] - 2026-07-01
+
+### Session storage quota: proactive eviction, write guard, and accurate error codes
+
+Addresses the quota exhaustion issue documented in Known Issues above. Three changes together -- none is sufficient alone.
+
+**`src/cache-maintenance.js`**
+- `USAGE_THRESHOLD_RATIO` lowered from `0.65` to `0.50`. A single heavy scan (e.g. 12-senator batch) can write ~1MB in one pass; 65% left only 3.5MB headroom, which is not enough for several such scans in sequence. 50% leaves ~5MB.
+- New `safeSessionSet(key, value)` global function -- drop-in replacement for `browser.storage.session.set({key: value})` with two layers of defense:
+  1. Pre-write check: if usage is at or above `USAGE_THRESHOLD_RATIO`, evicts all evictable keys before writing. Catches the case where `maybeRunCacheMaintenance()` already ran for this scan but usage has grown further during the scan's own fetches.
+  2. Quota error recovery: if the write still throws a quota error (value too large, or usage spiked between check and write), clears all evictable keys and retries once. If the retry also fails, logs and swallows rather than throwing an unhandled rejection. A cache miss on next read is acceptable; a crash is not.
+- `safeSessionSet` is a global (not an ES module export) -- available to `api.js` and `votesmart.js` via `importScripts` load order in `background.js`. No `export` statement; adding one would be a syntax error in the classic-script service worker context.
+- Comment header updated: "Exports:" corrected to "Globals (available to all scripts loaded after this one via importScripts):" to match the actual load model.
+
+**`src/api.js`**
+- `cacheSet(key, value)` now calls `safeSessionSet` directly (no `typeof` guard, no fallback). Load order in `background.js` guarantees `safeSessionSet` is defined when this file loads.
+
+**`src/votesmart.js`**
+- `vsSet(key, value)` updated to match -- direct call to `safeSessionSet`, guard and fallback removed.
+
+**`background.js`**
+- New `classifyError(err)` helper near the bottom of the file (not inside `handleAnalyze`) maps known error message substrings to structured error codes: `ERR-CACHE` (quota), `ERR-NET` (network), `ERR-TIMEOUT` (abort/timeout), `ERR-AUTH` (401/403), `ERR-UNKNOWN` (anything else).
+- `handleAnalyze`'s outer catch now attaches `code: classifyError(err)` alongside `message` on the returned error object, so the popup can show a human-readable message keyed to the code rather than the raw exception string.
+- `ll_results` writes in the `analyze` message handler simplified from `if (typeof globalThis.safeSessionSet === "function") { ... } else { browser.storage.session.set(...) }` to direct `safeSessionSet(...)` calls. The guard was unnecessary here -- `cache-maintenance.js` is guaranteed loaded before the first `analyze` message can fire. The fallback was the last remaining direct `browser.storage.session.set` call in the file and the specific write path that produced the original uncaught rejection.
+
+**`src/logger.js`**
+- `storageSet(key, value)` routes through `safeSessionSet` when available via `typeof globalThis.safeSessionSet === "function"` check. Unlike `api.js` and `votesmart.js`, `logger.js` loads before `cache-maintenance.js` in `importScripts` order, so the guard is correct and intentional here -- not a candidate for simplification.
+
+**`popup.js`**
+- `handleResult` for `status: "error"` replaced raw `result.message` display with a user-facing message looked up from `result.code`, with the code appended in brackets (e.g. "Browser storage full. Try closing and reopening Chrome, then scan again. [ERR-CACHE]"). The bracketed code is intentionally readable without DevTools -- a user can report it directly.
+- Timeout branch (the 45-second poll expiry where `ll_results` never left `"working"`) now shows "Scan did not complete. Please try again. [ERR-HANG]" instead of "Timed out. Try again." `ERR-HANG` is intentionally separate from the `classifyError` codes: it means the worker never returned anything at all (crashed before writing to `ll_results`), not that it returned a classified error. A user reporting `[ERR-HANG]` tells you immediately the crash happened before `browser.storage.session.set` was ever reached, which is a different debugging starting point than `[ERR-CACHE]`.
+
+### What this does not fix
+- The root cause (unbounded cache growth) is still present. `safeSessionSet` and `maybeRunCacheMaintenance` together make quota exhaustion much less likely and non-crashing when it does occur, but do not bound total cache size. A sufficiently long browser session with enough scans will still eventually fill the quota and trigger eviction cycles.
+- The pre-write check and the actual write in `safeSessionSet` are not atomic. Two concurrent `safeSessionSet` calls from `lookupAll`'s `Promise.all` can both read usage below threshold, both skip eviction, and both write -- potentially crossing the limit. The quota error catch handles this as a recovery path (evict + retry) rather than a crash, so the behavior degrades gracefully. A true write lock or queue would be over-engineering for this workload.
 
 ---
 

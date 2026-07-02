@@ -96,8 +96,13 @@ async function vsGet(key) {
 }
 
 async function vsSet(key, value) {
-  try { await browser.storage.session.set({ [key]: value }); }
-  catch {}
+  // safeSessionSet is defined in cache-maintenance.js, which loads before
+  // this file via importScripts in background.js.
+  if (typeof globalThis.safeSessionSet === "function") {
+    await globalThis.safeSessionSet(key, value);
+  } else {
+    await browser.storage.session.set({ [key]: value });
+  }
 }
 
 async function vsRemove(key) {

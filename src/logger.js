@@ -56,8 +56,14 @@ function storageGet(key) {
 }
 
 function storageSet(key, value) {
-  return new Promise((resolve) => {
-    browser.storage.session.set({ [key]: value }, resolve);
+  return new Promise((resolve, reject) => {
+    const write = typeof globalThis.safeSessionSet === "function"
+      ? globalThis.safeSessionSet(key, value)
+      : browser.storage.session.set({ [key]: value });
+
+    Promise.resolve(write)
+      .then(() => resolve())
+      .catch(reject);
   });
 }
 
@@ -69,3 +75,8 @@ const logger = {
   clear: clearLog,
   getAll: getLog,
 };
+
+globalThis.logger = logger;
+
+export { logger };
+export default logger;

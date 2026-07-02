@@ -37,9 +37,9 @@ async function cacheGet(key) {
 }
 
 async function cacheSet(key, value) {
-  try {
-    await browser.storage.session.set({ [key]: value });
-  } catch {}
+  // safeSessionSet is defined in cache-maintenance.js, which loads before
+  // this file via importScripts in background.js.
+  await safeSessionSet(key, value);
 }
 
 async function apiFetch(path) {
@@ -64,7 +64,7 @@ async function apiFetch(path) {
 
 
 // --- Get sponsored legislation for a member ---
-async function getMemberSponsoredBills(bioguideId, limit = 250) {
+async function getMemberSponsoredBills(bioguideId, limit = 100) {
   const path = `/member/${bioguideId}/sponsored-legislation?limit=${limit}`;
   try {
     const data = await apiFetch(path);
@@ -76,7 +76,7 @@ async function getMemberSponsoredBills(bioguideId, limit = 250) {
 }
 
 // --- Get cosponsored legislation for a member ---
-async function getMemberCosponsoredBills(bioguideId, limit = 250) {
+async function getMemberCosponsoredBills(bioguideId, limit = 100) {
   const path = `/member/${bioguideId}/cosponsored-legislation?limit=${limit}`;
   try {
     const data = await apiFetch(path);
@@ -274,7 +274,7 @@ async function findMemberRollCallVotesOnTopics(member, topics) {
     return { data: [], errored: true };
   }
 
-  const cacheKey = `govtrack:voter:${govtrackId}`;
+  const cacheKey = `api:govtrack:voter:${govtrackId}`;
   let voterData = await cacheGet(cacheKey);
   if (!voterData) {
     try {
@@ -362,13 +362,13 @@ function normalizeVotePosition(raw) {
 async function resolveGovTrackId(bioguideId) {
   if (!bioguideId) return null;
 
-  const cacheKey = `govtrack:id:${bioguideId}`;
+  const cacheKey = `api:govtrack:id:${bioguideId}`;
   const cached = await cacheGet(cacheKey);
   if (cached) return cached;
 
   try {
     const url = legislatorsProxyUrl();
-    const cacheKeyAll = "govtrack:legislators_map";
+    const cacheKeyAll = "api:govtrack:legislators_map";
     let map = await cacheGet(cacheKeyAll);
 
     if (!map) {

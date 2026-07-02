@@ -9,10 +9,10 @@ importScripts(
   "src/keywords.js",
   "src/llm.js",
   "src/topic-match.js",
+  "src/cache-maintenance.js",
   "src/api.js",
   "src/votesmart.js",
   "src/verify.js",
-  "src/cache-maintenance.js",
 );
 
 const browser = globalThis.browser || globalThis.chrome;
@@ -36,15 +36,15 @@ function figureForMember(figures, member) {
 // --- Message listener ---
 browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "ping") {
-    sendResponse({ status: "ok", version: "0.17.5" });
+    sendResponse({ status: "ok", version: "0.17.6" });
     return true;
   }
 
   if (message.action === "analyze") {
     logger.info("background", "received analyze request");
-    browser.storage.session.set({ ll_results: { status: "working" } });
+    safeSessionSet("ll_results", { status: "working" });
     handleAnalyze(message.payload).then((result) => {
-      browser.storage.session.set({ ll_results: result });
+      safeSessionSet("ll_results", result);
     });
     sendResponse({ status: "accepted" });
     return true;
@@ -458,7 +458,7 @@ async function handleAnalyze({ politicians, articleText }) {
     };
   } catch (err) {
     logger.error("background", `analysis failed: ${err.message}`);
-    return { status: "error", message: err.message };
+    return { status: "error", message: err.message, code: classifyError(err) };
   }
 }
 
@@ -480,7 +480,16 @@ async function doCommitScan(proxyUrl, commitToken) {
   }
 }
 
-logger.info("background", "service worker loaded v0.17.5");
+function classifyError(err) {
+  const m = err.message || "";
+  if (m.includes("quota"))                                    return "ERR-CACHE";
+  if (m.includes("NetworkError") || m.includes("Failed to fetch")) return "ERR-NET";
+  if (m.includes("AbortError") || m.includes("timed out"))   return "ERR-TIMEOUT";
+  if (m.includes("401") || m.includes("403"))                return "ERR-AUTH";
+  return "ERR-UNKNOWN";
+}
+
+logger.info("background", "service worker loaded v0.17.6");
 
 // Initialize token and sync tier
 getOrCreateToken().then((t) => {

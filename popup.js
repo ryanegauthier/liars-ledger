@@ -1,8 +1,9 @@
-// Liar's Ledger - popup.js v0.17.5
+// Liar's Ledger - popup.js v0.17.6
 
 const browser = window.browser || window.chrome;
 const toggle         = document.getElementById("enableToggle");
 const scanBtn        = document.getElementById("scanBtn");
+const supportBtn     = document.getElementById("supportBtn");
 const statusEl       = document.getElementById("status");
 const cardsContainer = document.getElementById("cardsContainer");
 const tickerText     = document.getElementById("tickerText");
@@ -45,6 +46,18 @@ function getProxyUrl() {
 function setStatus(text, type = "") {
   statusEl.textContent = text;
   statusEl.className = "status" + (type ? " " + type : "");
+}
+
+function getSessionStorage(key) {
+  return new Promise((resolve) => {
+    browser.storage.session.get(key, (data) => resolve(data[key] || null));
+  });
+}
+
+function getSyncStorage(key) {
+  return new Promise((resolve) => {
+    browser.storage.sync.get(key, (data) => resolve(data[key] || null));
+  });
 }
 
 // ── Card rendering ─────────────────────────────────────────────────────────────
@@ -127,6 +140,40 @@ function renderCards(result) {
   }
 }
 
+supportBtn?.addEventListener("click", async () => {
+  setStatus("Sending debug log…", "working");
+  supportBtn.disabled = true;
+
+  try {
+    const [logs, auth] = await Promise.all([
+      getSessionStorage("ll_debug_log"),
+      getSyncStorage("ll_auth_token"),
+    ]);
+
+    const payload = {
+      tokenId: auth?.tokenId || null,
+      logs: Array.isArray(logs) ? logs : [],
+      version: browser.runtime.getManifest().version,
+    };
+
+    const res = await fetch(`${CONFIG?.PROXY_URL || "https://api.liarsledger.com"}/api/support/debug-log`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      throw new Error(`support upload failed: ${res.status}`);
+    }
+
+    setStatus("Debug log sent. Thanks for reporting this issue.", "success");
+  } catch (e) {
+    setStatus(`Could not send debug log: ${e.message}`, "error");
+  } finally {
+    supportBtn.disabled = false;
+  }
+});
+
 // ── Scan ──────────────────────────────────────────────────────────────────────
 scanBtn.addEventListener("click", async () => {
   cardsContainer.innerHTML = "";
@@ -198,7 +245,9 @@ scanBtn.addEventListener("click", async () => {
               } else if (result && result.status !== "working") {
                 handleResult(result);
               } else {
-                setStatus("Timed out. Try again.", "error");
+                // ll_results is still "working" after 45s — worker likely
+                // crashed before writing a result (e.g. unhandled rejection).
+                setStatus("Scan did not complete. Please try again. [ERR-HANG]", "error");
               }
             });
           }, analyzeTimeoutMs);
@@ -215,7 +264,15 @@ function handleResult(result) {
   loadScanInfo();
 
   if (result.status === "error") {
-    setStatus("Error: " + result.message, "error");
+    const code = result.code || "ERR-UNKNOWN";
+    const userMsg = {
+      "ERR-CACHE":   "Browser storage full. Try closing and reopening Chrome, then scan again.",
+      "ERR-NET":     "Network error. Check your connection and try again.",
+      "ERR-TIMEOUT": "Request timed out. Try again.",
+      "ERR-AUTH":    "Authentication error. Try reinstalling the extension.",
+      "ERR-UNKNOWN": "Something went wrong. Try again.",
+    }[code] || "Something went wrong. Try again.";
+    setStatus(`${userMsg} [${code}]`, "error");
   } else if (result.status === "no_members") {
     setStatus(result.message || "No current Congress members found.", "");
   } else if (result.status === "no_topics") {

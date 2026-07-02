@@ -13,9 +13,9 @@
 // cleared once already.
 //
 // Two triggers, either one fires a selective clear:
-//   1. Count-based: every COUNT_THRESHOLD scans (default 30 - chosen to
-//      land roughly once/day for a free-tier user at their daily limit,
-//      ~3x/day for Pro's higher limit).
+//   1. Count-based: every COUNT_THRESHOLD scans (default 10 - chosen to
+//      land roughly once every 1-2 days for a free-tier user at their
+//      daily limit, several times/day for Pro's higher limit).
 //   2. Usage-based safety net: if storage.session is already above
 //      USAGE_THRESHOLD_RATIO of its quota when a scan starts, clear
 //      immediately regardless of count - covers the case where an
@@ -37,10 +37,22 @@
 //                                the caller depends on) but awaited anyway
 //                                so a clear-in-progress can't race a fresh
 //                                write from this same scan.
+//   safeSessionSet(key, value) - drop-in replacement for
+//                                browser.storage.session.set({key: value}).
+//                                Checks usage before writing and evicts if
+//                                above USAGE_THRESHOLD_RATIO. On quota error
+//                                (write would exceed hard limit anyway), clears
+//                                all evictable keys and retries once rather
+//                                than throwing an unhandled rejection. Use this
+//                                in vsFetch() and apiFetch() instead of calling
+//                                browser.storage.session.set() directly.
 
 const CACHE_MAINTENANCE_COUNT_KEY = "ll_scan_count_since_maintenance";
-const COUNT_THRESHOLD = 30;
-const USAGE_THRESHOLD_RATIO = 0.85; // trigger at 85% of quota, not 100% - leave headroom for the scan about to run
+const COUNT_THRESHOLD = 10;
+// Trigger at 50%: a single heavy scan (e.g. 12-senator batch) can write
+// ~1MB in one pass. 50% leaves ~5MB headroom, enough for several such
+// scans before the hard quota is hit. 65% was too tight.
+const USAGE_THRESHOLD_RATIO = 0.50;
 
 // Keys eligible for eviction. Deliberately a prefix allowlist (not a
 // denylist of what to KEEP) - safer default if a new cache prefix gets
@@ -94,6 +106,43 @@ async function getSessionUsageRatio() {
   }
 }
 
+// safeSessionSet: write guard for browser.storage.session.
+// Replaces direct browser.storage.session.set({key: value}) calls in
+// vsFetch() and apiFetch(). Two layers of defense:
+//   1. Pre-write check: if usage is already above USAGE_THRESHOLD_RATIO,
+//      evict before writing. Catches the case where maintenance didn't
+//      run yet this scan but we're already near the limit.
+//   2. Quota error recovery: if the write still throws a quota error
+//      (e.g. the value itself is very large, or usage spiked between
+//      the check and the write), clear all evictable keys and retry
+//      once. If the retry also fails, log and swallow - a cache miss
+//      on the next read is acceptable, an unhandled rejection is not.
+async function safeSessionSet(key, value) {
+  try {
+    const usageRatio = await getSessionUsageRatio();
+    if (usageRatio >= USAGE_THRESHOLD_RATIO) {
+      const removed = await clearEvictableCacheKeys();
+      console.log(`[Liars Ledger] cache-maintenance: pre-write eviction cleared ${removed} key(s) (usage was ${(usageRatio * 100).toFixed(0)}%)`);
+    }
+    await browser.storage.session.set({ [key]: value });
+  } catch (err) {
+    if (err.message?.includes("quota")) {
+      console.warn("[Liars Ledger] cache-maintenance: quota hit on write, evicting and retrying:", key);
+      try {
+        await clearEvictableCacheKeys();
+        await browser.storage.session.set({ [key]: value });
+      } catch (retryErr) {
+        // Retry also failed (value may be individually too large, or
+        // eviction left nothing to remove). Log and continue - the
+        // scan proceeds without this cache entry, which is safe.
+        console.warn("[Liars Ledger] cache-maintenance: retry after eviction also failed, skipping cache write:", key, retryErr.message);
+      }
+    } else {
+      throw err;
+    }
+  }
+}
+
 async function maybeRunCacheMaintenance() {
   try {
     const usageRatio = await getSessionUsageRatio();
@@ -121,3 +170,8 @@ async function maybeRunCacheMaintenance() {
     console.warn("[Liars Ledger] cache-maintenance failed (scan proceeding anyway):", e.message);
   }
 }
+
+// maybeRunCacheMaintenance and safeSessionSet are globals available to
+// api.js and votesmart.js via importScripts load order in background.js.
+globalThis.safeSessionSet = safeSessionSet;
+globalThis.maybeRunCacheMaintenance = maybeRunCacheMaintenance;
