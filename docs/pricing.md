@@ -11,21 +11,32 @@ nav_order: 8
 
 ## Tiers
 
-| | Free | Pro | Creator |
-|---|---|---|---|
-| **Price** | $0 / forever | $5 / month | $19 / month |
-| **Daily scans** | Dynamic — scales with user base | Same as Free | Same as Free |
-| **Politician detection** | ✓ | ✓ | ✓ |
-| **Roll-call votes** | ✓ | ✓ | ✓ |
-| **AI claim extraction** | ✓ | ✓ | ✓ |
-| **Claim verdict (supports / contradicts / mixed)** | — | ✓ | ✓ |
-| **VoteSmart interest group ratings** | — | ✓ | ✓ |
-| **Embeddable record cards** | — | — | ✓ |
-| **API access** | — | — | ✓ |
+| | Free | Pro |
+|---|---|---|
+| **Price** | $0 / forever | $5 / month |
+| **Daily scans** | Dynamic — scales with user base | 100 scans/day (separate pool) |
+| **Politician detection** | ✓ | ✓ |
+| **Sponsored + cosponsored bills** | ✓ | ✓ |
+| **Roll-call votes (GovTrack)** | ✓ | ✓ |
+| **VoteSmart interest group ratings** | ✓ | ✓ |
+| **VoteSmart key vote history** | ✓ | ✓ |
+| **AI article summary** | — | ✓ |
+| **AI claim extraction** | — | ✓ |
+| **Claim verdict (supported / contradicted / mixed)** | — | ✓ |
 
-The free daily scan limit is dynamic — it starts at 30 scans/day and adjusts as the user base grows to keep server costs sustainable. The current limit is always shown in the extension popup. Upgrading to Pro removes the limit entirely.
+The free daily scan limit is dynamic — it starts at 30 scans/day and adjusts as the user base grows to keep server costs sustainable. The current limit is always shown in the extension popup.
+
+Pro gets a flat 100 scans/day from a separate pool, independent of the free tier limit.
 
 → **[Subscribe or upgrade at liarsledger.com/pricing](https://liarsledger.com/pricing)**
+
+---
+
+## How subscriptions work
+
+Pro subscriptions are processed through Square. No account is required — your existing anonymous install token is linked to the subscription at checkout. There is nothing to log into.
+
+If you reinstall the extension or switch devices, use the **Restore Pro Access** option in the extension's Account panel and enter your Square order reference from your receipt email.
 
 ---
 

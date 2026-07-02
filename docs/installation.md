@@ -5,7 +5,15 @@ nav_order: 6
 
 # Installation
 
-## From GitHub Releases (recommended)
+## From the Chrome Web Store (recommended)
+
+Liar's Ledger is available on the Chrome Web Store. Install directly from there — no developer mode or manual setup required.
+
+→ **[Install from the Chrome Web Store](https://liarsledger.com)**
+
+## From GitHub Releases (manual install)
+
+If you prefer not to install from the Web Store:
 
 1. Go to [github.com/ryanegauthier/liars-ledger/releases](https://github.com/ryanegauthier/liars-ledger/releases)
 2. Download the latest `liars-ledger-vX.X.X.zip`
@@ -16,7 +24,9 @@ nav_order: 6
 7. Click **Load unpacked** and select the unzipped folder
 8. The Liar's Ledger icon will appear in your toolbar
 
-No API keys needed - everything runs through `api.liarsledger.com`.
+No API keys needed — everything runs through `api.liarsledger.com`.
+
+**Note:** Manual installs use a different extension ID than the Web Store version. If your extension ID is not listed in the server's `ALLOWED_ORIGINS`, API calls will be rejected. Contact the maintainer to get your ID added, or run the backend proxy locally.
 
 ## From source
 
@@ -40,7 +50,7 @@ Register for a free key at [api.congress.gov/sign-up](https://api.congress.gov/s
 
 ### Running the backend proxy locally
 
-See [Backend Proxy - Local development](backend-proxy#local-development).
+See [Backend Proxy — Local development](backend-proxy#local-development).
 
 ## Building a release zip
 
@@ -57,4 +67,4 @@ Produces `liars-ledger-vX.X.X.zip` in the project root. The GitHub Actions workf
 3. Click **Scan This Page**
 4. Results appear in the bottom bar within a few seconds
 
-Click any politician card to expand their full record. Click **↗ Full Report** to open a standalone report page with all available data.
+Click any politician card to expand their full record. Click **Full Report** to open a standalone report page with all available data.

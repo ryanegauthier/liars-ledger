@@ -9,14 +9,14 @@ Liar's Ledger is open source. Contributions are welcome, especially in these are
 
 ## Politician dictionary
 
-The dictionary covers the 119th Congress. It needs updating when:
+The dictionary covers the 110th through 119th Congress (3,606 entries). It needs updating when:
 - New members are sworn in mid-session
 - Members change their preferred names
 - Nicknames are missing (the LLM returns a name the dictionary doesn't resolve)
 
 To rebuild: `node build-dictionary.js YOUR_CONGRESS_API_KEY`
 
-To add a nickname manually, edit `src/lookup.js` - find `FULL_NAME_OVERRIDES` (for full name substitutions) or `NICKNAME_FIRST` (for first-name substitutions).
+To add a nickname manually, edit `src/lookup.js` — find `FULL_NAME_OVERRIDES` (for full name substitutions) or `NICKNAME_FIRST` (for first-name substitutions).
 
 ## News site compatibility
 
@@ -28,9 +28,10 @@ The `browser.*` / `chrome.*` shim is already in place throughout the codebase. F
 
 ## What we're not looking for
 
-- Changes to the AI prompt or Jaccard threshold without data supporting the change
+- Changes to the AI extraction prompt or Jaccard threshold without data supporting the change
 - New data sources without a corresponding proxy provider in `server/providers/`
 - Any change that puts API keys in the extension bundle
+- Changes to the Pro tier gating without updating the matching server-side middleware
 
 ## Development setup
 
@@ -40,7 +41,7 @@ cd liars-ledger
 cp src/config.example.js src/config.js
 ```
 
-Load the extension in Chrome developer mode. Run the backend proxy locally for full functionality - see [Installation](installation).
+Load the extension in Chrome developer mode. Run the backend proxy locally for full functionality — see [Backend Proxy — Local development](backend-proxy#local-development).
 
 ## Submitting changes
 
@@ -56,5 +57,6 @@ Open a GitHub issue at [github.com/ryanegauthier/liars-ledger/issues](https://gi
 
 Include:
 - The URL of the article you were scanning (if applicable)
+- The error code shown in the popup (e.g. `[ERR-CACHE]`, `[ERR-NET]`) if any
 - The debug log output (copy from the popup's Debug Log panel)
 - Chrome version and OS
