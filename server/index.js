@@ -282,18 +282,31 @@ app.post("/api/support/debug-log", wrap(async (req, res) => {
   console.log(`[support] token=${payload.tokenId || "unknown"} version=${payload.version || "unknown"}`);
   console.log(`[support] logs:\n${preview}`);
 
-  try {
-    if (mailTransport) {
+  const delivery = {
+    email: { attempted: false, success: false, error: null },
+    webhook: { attempted: false, success: false, error: null },
+  };
+
+  if (mailTransport) {
+    delivery.email.attempted = true;
+    try {
       await mailTransport.sendMail({
         from: process.env.SMTP_FROM || supportEmail,
         to: supportEmail,
         subject: `Liars Ledger support request (${payload.version || "unknown"})`,
         text: bodyText,
       });
+      delivery.email.success = true;
+    } catch (e) {
+      delivery.email.error = e.message;
+      console.error(`[support] email delivery failed: ${e.message}`);
     }
+  }
 
-    if (supportWebhookUrl) {
-      await fetch(supportWebhookUrl, {
+  if (supportWebhookUrl) {
+    delivery.webhook.attempted = true;
+    try {
+      const webhookRes = await fetch(supportWebhookUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -302,12 +315,29 @@ app.post("/api/support/debug-log", wrap(async (req, res) => {
           logs,
         }),
       });
+      if (!webhookRes.ok) {
+        throw new Error(`webhook responded ${webhookRes.status}`);
+      }
+      delivery.webhook.success = true;
+    } catch (e) {
+      delivery.webhook.error = e.message;
+      console.error(`[support] webhook delivery failed: ${e.message}`);
     }
-  } catch (e) {
-    console.error(`[support] delivery failed: ${e.message}`);
   }
 
-  res.json({ ok: true, received: logs.length });
+  const deliveryOk = (delivery.email.attempted ? delivery.email.success : false)
+    || (delivery.webhook.attempted ? delivery.webhook.success : false)
+    || (!delivery.email.attempted && !delivery.webhook.attempted);
+
+  if (!deliveryOk) {
+    return res.status(502).json({
+      ok: false,
+      received: logs.length,
+      delivery,
+    });
+  }
+
+  res.json({ ok: true, received: logs.length, delivery });
 }));
 
 // ── LLM extraction (requires a valid scan token from /api/scan/start above,
