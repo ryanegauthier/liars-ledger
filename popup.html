@@ -142,6 +142,21 @@
       cursor: not-allowed;
     }
 
+    .support-btn {
+      width: 100%;
+      padding: 0.72rem 1rem;
+      margin-top: 8px;
+      border: 1px solid rgba(200,169,110,0.35);
+      background: rgba(200,169,110,0.12);
+      color: var(--accent);
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      cursor: pointer;
+    }
+    .support-btn:hover { background: rgba(200,169,110,0.2); }
+
     /* Status */
     .status {
       font-size: 0.72rem;
@@ -504,6 +519,7 @@
 
   <div class="body">
     <button class="scan-btn" id="scanBtn">Scan This Page</button>
+    <button class="support-btn" id="supportBtn">Send Debug Log</button>
     <div class="scan-info" id="scanInfo"></div>
     <div class="status" id="status">Ready.</div>
     <div class="cards" id="cardsContainer"></div>
@@ -536,7 +552,7 @@
 
   <div class="popup-footer">
     <span class="footer-source">congress.gov · official record</span>
-    <span class="footer-version" id="versionLabel">v0.17.5</span>
+    <span class="footer-version" id="versionLabel">v0.17.6</span>
   </div>
 
   <script src="src/config.js"></script>

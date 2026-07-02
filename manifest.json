@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Liars Ledger",
-  "version": "0.17.5",
+  "version": "0.17.6",
   "description": "Surfaces voting records of politicians mentioned in news articles.",
 
   "permissions": [

@@ -1,6 +1,6 @@
 {
   "name": "liars-ledger",
-  "version": "0.17.5",
+  "version": "0.17.6",
   "private": true,
   "type": "module",
   "description": "Browser extension: surface congressional records for politicians in news articles",
@@ -10,5 +10,8 @@
   },
   "engines": {
     "node": ">=18"
+  },
+  "dependencies": {
+    "nodemailer": "^9.0.3"
   }
 }

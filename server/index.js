@@ -24,6 +24,7 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import { rateLimit } from "express-rate-limit";
+import nodemailer from "nodemailer";
 import { claude }    from "./providers/claude.js";
 import { mistral }   from "./providers/mistral.js";
 import { congress }  from "./providers/congress.js";
@@ -36,6 +37,20 @@ import * as square from "./providers/square.js";
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
+const supportEmail = process.env.SUPPORT_EMAIL || "support@liars-ledger.com";
+const supportWebhookUrl = process.env.SUPPORT_WEBHOOK_URL || null;
+
+const mailTransport = process.env.SMTP_HOST
+  ? nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: Number(process.env.SMTP_PORT || 587),
+      secure: process.env.SMTP_SECURE === "true",
+      auth: process.env.SMTP_USER && process.env.SMTP_PASS ? {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS,
+      } : undefined,
+    })
+  : null;
 
 // Render sits behind a single reverse proxy hop, which sets X-Forwarded-For
 // on every incoming request. Express's default (trust proxy: false) ignores
@@ -249,6 +264,50 @@ app.post("/api/scan/commit", requireToken, wrap(async (req, res) => {
     return res.status(200).json({ committed: false });
   }
   res.json({ committed: true });
+}));
+
+app.post("/api/support/debug-log", wrap(async (req, res) => {
+  const payload = req.body || {};
+  const logs = Array.isArray(payload.logs) ? payload.logs : [];
+  const preview = logs.slice(-20).join("\n") || "(no logs)";
+  const bodyText = [
+    `Support request from Liars Ledger`,
+    `Version: ${payload.version || "unknown"}`,
+    `Token: ${payload.tokenId || "unknown"}`,
+    "",
+    "Recent logs:",
+    preview,
+  ].join("\n");
+
+  console.log(`[support] token=${payload.tokenId || "unknown"} version=${payload.version || "unknown"}`);
+  console.log(`[support] logs:\n${preview}`);
+
+  try {
+    if (mailTransport) {
+      await mailTransport.sendMail({
+        from: process.env.SMTP_FROM || supportEmail,
+        to: supportEmail,
+        subject: `Liars Ledger support request (${payload.version || "unknown"})`,
+        text: bodyText,
+      });
+    }
+
+    if (supportWebhookUrl) {
+      await fetch(supportWebhookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tokenId: payload.tokenId || null,
+          version: payload.version || null,
+          logs,
+        }),
+      });
+    }
+  } catch (e) {
+    console.error(`[support] delivery failed: ${e.message}`);
+  }
+
+  res.json({ ok: true, received: logs.length });
 }));
 
 // ── LLM extraction (requires a valid scan token from /api/scan/start above,
@@ -868,11 +927,15 @@ app.use((err, req, res, next) => {
 });
 
 // ── Start ─────────────────────────────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`[Liar's Ledger API] listening on port ${PORT}`);
-  console.log(`[Liar's Ledger API] Claude:    ${process.env.CLAUDE_API_KEY   ? "✓" : "✗ missing"}`);
-  console.log(`[Liar's Ledger API] Mistral:   ${process.env.MISTRAL_API_KEY  ? "✓" : "✗ missing"}`);
-  console.log(`[Liar's Ledger API] Congress:  ${process.env.CONGRESS_API_KEY ? "✓" : "✗ missing"}`);
-  console.log(`[Liar's Ledger API] VoteSmart: ${process.env.VOTESMART_EMAIL  ? "✓" : "✗ missing"}`);
-  console.log(`[Liar's Ledger API] Redis:     ${process.env.UPSTASH_REDIS_REST_URL ? "✓" : "✗ missing"}`);
-});
+if (process.env.NODE_ENV !== "test") {
+  app.listen(PORT, () => {
+    console.log(`[Liar's Ledger API] listening on port ${PORT}`);
+    console.log(`[Liar's Ledger API] Claude:    ${process.env.CLAUDE_API_KEY   ? "✓" : "✗ missing"}`);
+    console.log(`[Liar's Ledger API] Mistral:   ${process.env.MISTRAL_API_KEY  ? "✓" : "✗ missing"}`);
+    console.log(`[Liar's Ledger API] Congress:  ${process.env.CONGRESS_API_KEY ? "✓" : "✗ missing"}`);
+    console.log(`[Liar's Ledger API] VoteSmart: ${process.env.VOTESMART_EMAIL  ? "✓" : "✗ missing"}`);
+    console.log(`[Liar's Ledger API] Redis:     ${process.env.UPSTASH_REDIS_REST_URL ? "✓" : "✗ missing"}`);
+  });
+}
+
+export { app };
