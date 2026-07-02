@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { startAppServer, supportDebugLog, exhaustGenericApi } from "../server-utils.js";
 
 const mockSendMail = vi.fn();
 const mockCreateTransport = vi.fn(() => ({ sendMail: mockSendMail }));
@@ -12,16 +13,8 @@ vi.mock("nodemailer", () => ({
 }));
 
 let app;
-
-async function startAppServer() {
-  const server = app.listen(0);
-  await new Promise((resolve) => server.once("listening", resolve));
-  const address = server.address();
-  return {
-    server,
-    baseUrl: `http://127.0.0.1:${address.port}`,
-  };
-}
+let server;
+let baseUrl;
 
 beforeEach(async () => {
   vi.resetModules();
@@ -38,9 +31,17 @@ beforeEach(async () => {
 
   globalThis.fetch = mockFetch;
   ({ app } = await import("../../index.js"));
+  app.get("/api/test-generic-limiter", (req, res) => res.json({ ok: true }));
+  ({ server, baseUrl } = await startAppServer(app));
 });
 
 afterEach(() => {
+  if (server) {
+    server.close();
+    server = null;
+    baseUrl = null;
+  }
+
   delete process.env.SMTP_HOST;
   delete process.env.SMTP_USER;
   delete process.env.SMTP_PASS;
@@ -54,46 +55,55 @@ describe("Support debug log delivery", () => {
     mockSendMail.mockRejectedValue(new Error("Invalid login"));
     mockFetch.mockResolvedValue({ ok: true, status: 200 });
 
-    const { server, baseUrl } = await startAppServer();
-    try {
-      const res = await realFetch(`${baseUrl}/api/support/debug-log`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tokenId: "token-123", version: "0.17.6", logs: ["log1", "log2"] }),
-      });
+    const res = await supportDebugLog(baseUrl, realFetch, { logs: ["log1", "log2"] });
+    const body = await res.json();
 
-      const body = await res.json();
-      expect(res.status).toBe(200);
-      expect(body.ok).toBe(true);
-      expect(body.delivery.email.success).toBe(false);
-      expect(body.delivery.webhook.success).toBe(true);
-      expect(body.delivery.email.error).toContain("Invalid login");
-    } finally {
-      server.close();
-    }
+    expect(res.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.delivery.email.success).toBe(false);
+    expect(body.delivery.webhook.success).toBe(true);
+    expect(body.delivery.email.error).toContain("Invalid login");
   });
 
   it("returns 502 when both email and webhook delivery fail", async () => {
     mockSendMail.mockRejectedValue(new Error("Invalid login"));
     mockFetch.mockResolvedValue({ ok: false, status: 535 });
 
-    const { server, baseUrl } = await startAppServer();
-    try {
-      const res = await realFetch(`${baseUrl}/api/support/debug-log`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tokenId: "token-123", version: "0.17.6", logs: ["log1"] }),
-      });
+    const res = await supportDebugLog(baseUrl, realFetch, { logs: ["log1"] });
+    const body = await res.json();
 
-      const body = await res.json();
-      expect(res.status).toBe(502);
-      expect(body.ok).toBe(false);
-      expect(body.delivery.email.success).toBe(false);
-      expect(body.delivery.webhook.success).toBe(false);
-      expect(body.delivery.email.error).toContain("Invalid login");
-      expect(body.delivery.webhook.error).toContain("webhook responded 535");
-    } finally {
-      server.close();
+    expect(res.status).toBe(502);
+    expect(body.ok).toBe(false);
+    expect(body.delivery.email.success).toBe(false);
+    expect(body.delivery.webhook.success).toBe(false);
+    expect(body.delivery.email.error).toContain("Invalid login");
+    expect(body.delivery.webhook.error).toContain("webhook responded 535");
+  });
+
+  it("rate-limits support debug log uploads", async () => {
+    mockSendMail.mockResolvedValue({});
+    mockFetch.mockResolvedValue({ ok: true, status: 200 });
+
+    let lastResponse;
+    for (let i = 0; i < 11; i += 1) {
+      lastResponse = await supportDebugLog(baseUrl, realFetch);
     }
+
+    expect(lastResponse.status).toBe(429);
+    const body = await lastResponse.json();
+    expect(body.error).toMatch(/Too many support requests/);
+  });
+
+  it("still accepts support debug log when generic /api limiter is exhausted", async () => {
+    mockSendMail.mockResolvedValue({});
+    mockFetch.mockResolvedValue({ ok: true, status: 200 });
+
+    await exhaustGenericApi(baseUrl, realFetch);
+    const res = await supportDebugLog(baseUrl, realFetch);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.delivery.webhook.success).toBe(true);
   });
 });

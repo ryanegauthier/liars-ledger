@@ -57,17 +57,45 @@ async function getToken() {
   return _tokenPromise;
 }
 
+const VS_RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
+const VS_MAX_RETRIES = 3;
+const VS_RETRY_BASE_MS = 250;
+const VS_RETRY_JITTER_MS = 150;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function retryDelay(attempt) {
+  return VS_RETRY_BASE_MS * attempt + Math.floor(Math.random() * VS_RETRY_JITTER_MS);
+}
+
 async function votesmartFetch(path) {
   const token = await getToken();
-  const res = await fetch(`${VS_BASE}${path}`, {
-    headers: { "Authorization": `Bearer ${token}` },
-    signal:  AbortSignal.timeout(15000),
-  });
-  if (!res.ok) {
+  let attempt = 0;
+
+  while (true) {
+    const res = await fetch(`${VS_BASE}${path}`, {
+      headers: { "Authorization": `Bearer ${token}` },
+      signal:  AbortSignal.timeout(15000),
+    });
+
+    if (res.ok) {
+      return res.json();
+    }
+
     const body = await res.text().catch(() => "");
-    throw new Error(`VoteSmart ${res.status} on ${path}: ${body.slice(0, 120)}`);
+    const err = new Error(`VoteSmart ${res.status} on ${path}: ${body.slice(0, 120)}`);
+    err.status = res.status;
+
+    if (VS_RETRYABLE_STATUSES.has(res.status) && attempt < VS_MAX_RETRIES) {
+      attempt += 1;
+      await sleep(retryDelay(attempt));
+      continue;
+    }
+
+    throw err;
   }
-  return res.json();
 }
 
 export const votesmart = { fetch: votesmartFetch };
