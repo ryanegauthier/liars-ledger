@@ -77,6 +77,3 @@ const logger = {
 };
 
 globalThis.logger = logger;
-
-export { logger };
-export default logger;

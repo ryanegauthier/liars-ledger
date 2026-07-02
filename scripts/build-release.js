@@ -43,6 +43,7 @@ const srcFiles = [
   "src/keywords.js",
   "src/llm.js",
   "src/topic-match.js",
+  "src/cache-maintenance.js",
   "src/api.js",
   "src/votesmart.js",
   "src/verify.js",
