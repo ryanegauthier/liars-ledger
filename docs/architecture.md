@@ -49,8 +49,8 @@ When you click **Scan This Page**:
 2. **`popup.js`** sends an `analyze` message to the background service worker and begins polling `browser.storage.session` every 500ms.
 3. **`background.js`** hits `GET /api/scan-status` to get a fresh tier and scan count from Redis (falls back to cached value on failure).
 4. **`background.js`** calls `POST /api/scan/start`, which atomically reserves a scan slot in Redis and returns two single-use tokens:
-   - `scanToken` — required by the extraction endpoints; consumed on first use
-   - `commitToken` — used later to finalize the scan count only if data was retrieved
+   - `scanToken` - required by the extraction endpoints; consumed on first use
+   - `commitToken` - used later to finalize the scan count only if data was retrieved
    - Returns `429` if the daily limit is already hit; pipeline aborts here before any AI call.
 5. **`src/llm.js`** fires both extraction calls in parallel via `Promise.allSettled`:
    - `POST /api/claude/extract`
@@ -96,7 +96,7 @@ Subscriptions are managed via Square webhooks (`subscription.created/updated`, `
 
 `safeSessionSet()` (exported from `cache-maintenance.js`, called by both `cacheSet` in `api.js` and `vsSet` in `votesmart.js`) adds a second layer: it checks usage before each individual write and evicts if needed, with a retry-after-eviction path on quota errors.
 
-Evictable keys: all `api:*` and `vs:*` prefixed entries (request cache data). Preserved: `ll_results` (last scan result), `vs:id:*` (VoteSmart candidateId resolution cache — small but expensive to re-fetch).
+Evictable keys: all `api:*` and `vs:*` prefixed entries (request cache data). Preserved: `ll_results` (last scan result), `vs:id:*` (VoteSmart candidateId resolution cache - small but expensive to re-fetch).
 
 ## Key design decisions
 
@@ -107,10 +107,10 @@ All API keys (Claude, Mistral, Congress.gov, VoteSmart) live server-side. The ex
 Two independent models from different companies with different training data reduces systematic bias. Agreement (Jaccard ≥ 0.65) = higher confidence. Disagreement = both interpretations surfaced rather than arbitrarily picking one.
 
 **Why GovTrack instead of Congress.gov for votes?**
-The Congress.gov `senate-vote` and `house-vote` endpoints return 404 for the 119th Congress — they are in beta and not yet available. GovTrack provides complete roll-call vote history at no cost.
+The Congress.gov `senate-vote` and `house-vote` endpoints return 404 for the 119th Congress - they are in beta and not yet available. GovTrack provides complete roll-call vote history at no cost.
 
 **Why anonymous tokens instead of accounts?**
 No account means no email, no password, no PII. The token is the credential. This makes the privacy story simple: there is nothing to breach except an anonymous UUID and a scan count.
 
 **Why two-phase scan counting?**
-Scans are reserved at start and committed only when at least one government data source responds. If all APIs time out, the reservation expires and the user keeps their scan. This also prevents scan-limit bypass via direct calls to extraction endpoints — the `scanToken` is single-use and required.
+Scans are reserved at start and committed only when at least one government data source responds. If all APIs time out, the reservation expires and the user keeps their scan. This also prevents scan-limit bypass via direct calls to extraction endpoints - the `scanToken` is single-use and required.

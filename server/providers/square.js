@@ -4,7 +4,7 @@
 //
 // Flow summary:
 //   1. pricing.html POSTs { token } to /pricing/checkout
-//   2. /pricing/checkout calls createPaymentLink() — embeds the anonymous token
+//   2. /pricing/checkout calls createPaymentLink() - embeds the anonymous token
 //      as order.reference_id on a Square-hosted checkout for a subscription
 //   3. Square hosted page: buyer enters card + contact info (Square collects,
 //      we never see it). Subscription created, invoice sent to buyer.
@@ -15,13 +15,13 @@
 //   6. upgradeTier(token, "pro") in Redis
 //
 // Webhook signature verification uses the official `square` npm package's
-// WebhooksHelper.verifySignature() — not hand-rolled HMAC, per SQUAREDESIGN.md.
+// WebhooksHelper.verifySignature() - not hand-rolled HMAC, per SQUAREDESIGN.md.
 //
 // API calls use the REST API directly (no SDK client needed for three endpoints).
 
 import { WebhooksHelper } from "square";
 
-// Square API version pinned — bump only after reviewing release notes.
+// Square API version pinned - bump only after reviewing release notes.
 const SQUARE_VERSION = "2026-05-20";
 
 function baseUrl() {
@@ -63,27 +63,27 @@ async function request(method, path, body) {
  * Create a Square-hosted payment link for a Pro subscription.
  *
  * The anonymous tokenId is embedded as `order.reference_id`. Square's hosted
- * checkout page collects the buyer's payment and contact info — we never see it.
+ * checkout page collects the buyer's payment and contact info - we never see it.
  * After checkout, the subscription.created webhook reads `order_template_id`
  * from the subscription, calls retrieveOrder(), and recovers the tokenId from
  * `order.reference_id`.
  *
  * IMPORTANT: `checkout_options.subscription_plan_id` must be the PLAN
  * VARIATION ID (SQUARE_PLAN_VARIATION_ID), not the top-level plan ID. Square's
- * field name is misleading — see SQUAREDESIGN.md §1 gotcha.
+ * field name is misleading - see SQUAREDESIGN.md §1 gotcha.
  *
  * IMPORTANT: Square's CreatePaymentLink requires `order.line_items` to be
- * non-empty even for subscription checkout — confirmed against live docs.
+ * non-empty even for subscription checkout - confirmed against live docs.
  * `quick_pay` (Square's other top-level option) maps its `name`/`price_money`
  * internally into the exact same order line-item shape, so this isn't a
- * different mechanism, just a different way of supplying the same data —
+ * different mechanism, just a different way of supplying the same data -
  * which means it's safe to keep using `order` (and therefore keep
  * `reference_id`) rather than switching to `quick_pay`, which has no
  * `reference_id`-equivalent field and would have broken the whole
  * token-resolution chain this design depends on.
  *
  * The line item's price should match the plan variation's actual catalog
- * price (set via setup-square-catalog.mjs) — per Square's docs, a mismatch
+ * price (set via setup-square-catalog.mjs) - per Square's docs, a mismatch
  * acts as a price OVERRIDE on checkout, not just display text.
  *
  * @param {string} locationId      - SQUARE_LOCATION_ID env var

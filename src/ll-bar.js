@@ -366,7 +366,7 @@ const LiarsLedgerBar = (() => {
           <span class="ll-footer-source">congress.gov · official record · non-partisan</span>
           <div class="ll-footer-right">
             <span class="ll-ticker-dot"></span>
-            <span class="ll-version">v0.17.6</span>
+            <span class="ll-version">v0.17.7</span>
           </div>
         </div>
       </div>

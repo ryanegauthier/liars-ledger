@@ -7,7 +7,7 @@ nav_order: 6
 
 ## From the Chrome Web Store (recommended)
 
-Liar's Ledger is available on the Chrome Web Store. Install directly from there — no developer mode or manual setup required.
+Liar's Ledger is available on the Chrome Web Store. Install directly from there - no developer mode or manual setup required.
 
 → **[Install from the Chrome Web Store](https://liarsledger.com)**
 
@@ -24,7 +24,7 @@ If you prefer not to install from the Web Store:
 7. Click **Load unpacked** and select the unzipped folder
 8. The Liar's Ledger icon will appear in your toolbar
 
-No API keys needed — everything runs through `api.liarsledger.com`.
+No API keys needed - everything runs through `api.liarsledger.com`.
 
 **Note:** Manual installs use a different extension ID than the Web Store version. If your extension ID is not listed in the server's `ALLOWED_ORIGINS`, API calls will be rejected. Contact the maintainer to get your ID added, or run the backend proxy locally.
 
@@ -50,7 +50,7 @@ Register for a free key at [api.congress.gov/sign-up](https://api.congress.gov/s
 
 ### Running the backend proxy locally
 
-See [Backend Proxy — Local development](backend-proxy#local-development).
+See [Backend Proxy - Local development](backend-proxy#local-development).
 
 ## Building a release zip
 

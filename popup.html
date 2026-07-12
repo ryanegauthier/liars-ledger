@@ -519,7 +519,6 @@
 
   <div class="body">
     <button class="scan-btn" id="scanBtn">Scan This Page</button>
-    <button class="support-btn" id="supportBtn">Send Debug Log</button>
     <div class="scan-info" id="scanInfo"></div>
     <div class="status" id="status">Ready.</div>
     <div class="cards" id="cardsContainer"></div>
@@ -532,7 +531,7 @@
   <div class="account-panel" id="accountPanel" role="region">
     <div class="account-row">
       <span class="account-label">Token</span>
-      <span class="account-token-id" id="tokenDisplay">—</span>
+      <span class="account-token-id" id="tokenDisplay">-</span>
       <button class="copy-btn" id="copyTokenBtn" title="Copy install token">Copy</button>
     </div>
     <button id="upgradeProBtn" class="upgrade-to-pro-btn">Subscribe to Pro</button>
@@ -548,11 +547,14 @@
       <button class="restore-btn" id="restoreBtn">Restore</button>
     </div>
     <div class="restore-status" id="restoreStatus"></div>
+
+    <div class="restore-divider">Troubleshooting</div>
+    <button class="support-btn" id="supportBtn">Send Debug Log</button>
   </div>
 
   <div class="popup-footer">
     <span class="footer-source">congress.gov · official record</span>
-    <span class="footer-version" id="versionLabel">v0.17.6</span>
+    <span class="footer-version" id="versionLabel">v0.17.7</span>
   </div>
 
   <script src="src/config.js"></script>

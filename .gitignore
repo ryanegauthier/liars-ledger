@@ -11,6 +11,9 @@ desktop.ini
 .vscode/
 .idea/
 
+# Local Claude Code context, not shared with the repo
+CLAUDE.md
+
 # Build artifacts
 *.zip
 dist/

@@ -30,15 +30,41 @@ const TOPIC_TITLE_KEYWORDS = {
   "agriculture":      ["agriculture", "farm bill", "farmer", "livestock", "food safety", "pesticide", "crop insurance", "rural development", "ethanol"],
 };
 
+// Generic words that pad out LLM-generated search terms (e.g. "Medicare
+// expansion", "healthcare reform") without being distinctive enough to
+// safely require in an AND-match, but too common to accept as an OR-match
+// on their own either -- matching a bill on "funding" or "reform" alone
+// would false-positive against nearly any policy bill.
+const GENERIC_TOPIC_FILLER_WORDS = new Set([
+  "for", "all", "the", "and", "with",
+  "reform", "reforms", "expansion", "restoration", "funding", "access",
+  "affordability", "cuts", "subsidy", "subsidies", "policy", "act", "bill",
+  "law", "program", "rights", "support", "protection", "relief",
+  "assistance", "initiative", "plan",
+]);
+
+// Matches a raw topic/search-term string (not necessarily a
+// TOPIC_TITLE_KEYWORDS key) against a title/description blob. Requires at
+// least one distinctive (non-filler) word rather than every word -- real
+// bill titles rarely contain LLM-paraphrased filler like "reform" or
+// "funding" verbatim, but do contain the actual subject (e.g. "medicare").
+// Falls back to requiring every word only if the term has no distinctive
+// word at all (rare -- would mean the whole term is filler).
+function topicWordsMatchText(topic, text) {
+  const words = topic.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
+  if (words.length === 0) return false;
+  const distinctive = words.filter((w) => !GENERIC_TOPIC_FILLER_WORDS.has(w));
+  const required = distinctive.length > 0 ? distinctive : words;
+  return required.some((w) => text.includes(w));
+}
+
 function billMatchesTopic(bill, topic) {
   if (!bill.title) return false;
   const title = bill.title.toLowerCase();
   const keywords = TOPIC_TITLE_KEYWORDS[topic.toLowerCase()];
   if (keywords) return keywords.some((kw) => title.includes(kw));
 
-  // LLM search terms - check that all significant words appear in the title
-  const words = topic.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
-  return words.length > 0 && words.every((w) => title.includes(w));
+  return topicWordsMatchText(topic, title);
 }
 
 function chamberKey(ch) {
@@ -103,8 +129,11 @@ function rollCallMatchesTopics(vote, topics) {
   }
   for (const topic of topics) {
     const titleKeywords = TOPIC_TITLE_KEYWORDS[topic.toLowerCase()];
-    if (!titleKeywords) continue;
-    if (titleKeywords.some((kw) => hay.includes(kw))) return true;
+    if (titleKeywords) {
+      if (titleKeywords.some((kw) => hay.includes(kw))) return true;
+      continue;
+    }
+    if (topicWordsMatchText(topic, hay)) return true;
   }
   return false;
 }

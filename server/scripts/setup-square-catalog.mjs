@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // server/scripts/setup-square-catalog.mjs
 //
-// ONE-TIME SETUP — run this once to create the subscription plan and
+// ONE-TIME SETUP - run this once to create the subscription plan and
 // plan variation in Square. After running, copy the printed IDs into
 // your Render environment variables:
 //
@@ -12,8 +12,8 @@
 //   node server/scripts/setup-square-catalog.mjs
 //
 // Requires these env vars (set in .env or shell):
-//   SQUARE_ACCESS_TOKEN   — from Square Developer Console
-//   SQUARE_ENVIRONMENT    — "sandbox" or "production"
+//   SQUARE_ACCESS_TOKEN   - from Square Developer Console
+//   SQUARE_ENVIRONMENT    - "sandbox" or "production"
 //
 // The script is idempotent-safe: if you run it twice you just get two
 // separate plan objects. Keep track of the IDs from the first run.
@@ -40,7 +40,7 @@ const BASE_URL = ENV === "production"
   ? "https://connect.squareup.com"
   : "https://connect.squareupsandbox.com";
 
-// Square API version pinned — bump only after reviewing changelog
+// Square API version pinned - bump only after reviewing changelog
 const SQUARE_VERSION = "2026-05-20";
 
 async function squarePost(path, body) {
@@ -66,7 +66,7 @@ async function main() {
   console.log(`[setup] creating Liar's Ledger Pro subscription plan…\n`);
 
   // ── Step 1: Create SUBSCRIPTION_PLAN ─────────────────────────────────────
-  // A service-level subscription plan — no physical items, no categories.
+  // A service-level subscription plan - no physical items, no categories.
   // `all_items: false` with no `eligible_*` IDs means it's a pure service plan.
   const planResult = await squarePost("/catalog/object", {
     idempotency_key: randomUUID(),
@@ -87,7 +87,7 @@ async function main() {
 
   // ── Step 2: Create SUBSCRIPTION_PLAN_VARIATION ───────────────────────────
   // Single phase, STATIC pricing, $5.00/month, no end date (perpetual).
-  // STATIC pricing means no order template is needed — Square handles the
+  // STATIC pricing means no order template is needed - Square handles the
   // recurring billing entirely; we only need to create the customer and
   // call CreateSubscription.
   const variationResult = await squarePost("/catalog/object", {
@@ -128,7 +128,7 @@ async function main() {
   console.log(`SQUARE_PLAN_ID=${planId}`);
   console.log(`SQUARE_PLAN_VARIATION_ID=${variationId}`);
   console.log("─".repeat(60));
-  console.log("\nDone. Keep these IDs — they're used by /checkout/create.");
+  console.log("\nDone. Keep these IDs - they're used by /checkout/create.");
 }
 
 main().catch(err => {

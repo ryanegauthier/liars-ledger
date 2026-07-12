@@ -8,9 +8,9 @@
 // remembering to run curl commands at the right moment.
 
 import { describe, it, expect, beforeAll } from "vitest";
-import { api, authHeaders, setTestTokenTier, resetTestTokenScans, TEST_TOKEN } from "../helpers.js";
+import { api, authHeaders, setTestTokenTier, resetTestTokenScans, getScanToken, TEST_TOKEN } from "../helpers.js";
 
-describe("Free tier — Pro-gated routes reject with 403", () => {
+describe("Free tier - Pro-gated routes reject with 403", () => {
   beforeAll(async () => {
     await setTestTokenTier("free");
   });
@@ -34,12 +34,13 @@ describe("Free tier — Pro-gated routes reject with 403", () => {
   });
 });
 
-describe("Free tier — extraction responses strip Pro-only fields", () => {
+describe("Free tier - extraction responses strip Pro-only fields", () => {
   beforeAll(async () => {
     await setTestTokenTier("free");
   });
 
   it("strips claim and summary from /api/claude/extract, keeps lookup_name and search_terms", async () => {
+    const scanToken = await getScanToken();
     const { status, body } = await api("/api/claude/extract", {
       method: "POST",
       headers: authHeaders(),
@@ -47,6 +48,7 @@ describe("Free tier — extraction responses strip Pro-only fields", () => {
         articleText:
           "Senator Jane Smith voted for the new infrastructure bill, " +
           "supporting her claim that she champions roads and bridges funding for the state.",
+        scanToken,
       },
     });
 
@@ -57,15 +59,15 @@ describe("Free tier — extraction responses strip Pro-only fields", () => {
     expect(body.figures.length).toBeGreaterThan(0);
     for (const fig of body.figures) {
       expect(fig.claim).toBeNull();
-      // These must survive stripping — free tier still needs them to
+      // These must survive stripping - free tier still needs them to
       // resolve politicians and search for bills.
       expect(fig.lookup_name).toBeTruthy();
       expect(Array.isArray(fig.search_terms)).toBe(true);
     }
-  }, 30000); // LLM extraction can be slow — generous timeout, no retry needed for a 200-or-fail check
+  }, 30000); // LLM extraction can be slow - generous timeout, no retry needed for a 200-or-fail check
 });
 
-describe("Pro tier — gated routes and fields are NOT stripped", () => {
+describe("Pro tier - gated routes and fields are NOT stripped", () => {
   beforeAll(async () => {
     await setTestTokenTier("pro");
   });
@@ -86,7 +88,7 @@ describe("Pro tier — gated routes and fields are NOT stripped", () => {
       headers: authHeaders(),
     });
     // A fake path will likely fail upstream (502), but the gating check
-    // itself must not be what blocks it — 403 specifically would mean
+    // itself must not be what blocks it - 403 specifically would mean
     // requirePro incorrectly rejected a pro token.
     expect(status).not.toBe(403);
   }, 15000);
@@ -103,6 +105,7 @@ describe("Pro tier — gated routes and fields are NOT stripped", () => {
   }, 15000);
 
   it("does not strip claim/summary from /api/claude/extract for pro tier", async () => {
+    const scanToken = await getScanToken();
     const { status, body } = await api("/api/claude/extract", {
       method: "POST",
       headers: authHeaders(),
@@ -110,6 +113,7 @@ describe("Pro tier — gated routes and fields are NOT stripped", () => {
         articleText:
           "Senator Jane Smith voted for the new infrastructure bill, " +
           "supporting her claim that she champions roads and bridges funding for the state.",
+        scanToken,
       },
     });
     expect(status).toBe(200);

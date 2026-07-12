@@ -16,8 +16,8 @@ All political ground truth in Liar's Ledger comes from official government sourc
 
 Congress.gov is the official U.S. government source for congressional records. We fetch up to 100 sponsored and 100 cosponsored bills per member per scan, then filter by topic relevance using a two-pass matching algorithm:
 
-1. **Pass 1** — keyword category matching against 19 predefined topic buckets
-2. **Pass 2** — direct title substring match against the LLM's per-figure `search_terms`
+1. **Pass 1** - keyword category matching against 19 predefined topic buckets
+2. **Pass 2** - direct title substring match against the LLM's per-figure `search_terms`
 
 Results are deduplicated by bill URL and title prefix. Ceremonial bills (honoring, congratulating, commemorating, designating, etc.) are filtered out before display.
 
@@ -37,7 +37,7 @@ We fetch the 50 most recent votes per member and filter by topic relevance using
 **URL:** [app.votesmart-api.org](https://app.votesmart-api.org)
 **What we use:** Interest group ratings + vote history
 **Key required:** Yes (educational license, server-side)
-**Note:** CORS-blocked from browsers — all calls go through the backend proxy
+**Note:** CORS-blocked from browsers - all calls go through the backend proxy
 **Available:** Free and Pro tiers
 
 VoteSmart provides ratings from major interest groups including:
@@ -60,7 +60,7 @@ VoteSmart provides ratings from major interest groups including:
 
 Ratings are scored 0–100. The most recent year's rating per group is shown.
 
-VoteSmart uses JWT authentication. The backend proxy handles token refresh automatically — a single `_tokenPromise` guard prevents concurrent requests from triggering multiple simultaneous re-authentication calls.
+VoteSmart uses JWT authentication. The backend proxy handles token refresh automatically - a single `_tokenPromise` guard prevents concurrent requests from triggering multiple simultaneous re-authentication calls.
 
 ### ID resolution
 
@@ -68,7 +68,7 @@ VoteSmart identifies politicians by a numeric `candidateId`, not a bioguide ID. 
 
 - **Compound surnames**: politicians whose VoteSmart record files a multi-word last name (e.g. "Gluesenkamp Perez") are retried with the compound form if the simple surname lookup fails
 - **Preferred names**: VoteSmart's `firstName` field may differ from the politician's public name; `nickName` and `preferredName` fields are also checked
-- **Pagination failures**: if any page of results fails after retries, the lookup salvages whatever pages succeeded and flags the result as `partial` — the scan is not charged when a partial result is detected
+- **Pagination failures**: if any page of results fails after retries, the lookup salvages whatever pages succeeded and flags the result as `partial` - the scan is not charged when a partial result is detected
 
 ## Politician dictionary
 

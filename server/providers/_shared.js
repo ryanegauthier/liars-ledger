@@ -27,6 +27,7 @@ export function buildPrompt(articleText) {
     "- Include at most 10 figures. If none qualify, use an empty figures array.\n" +
     "- Use the most formal version of each person's name consistently. Never return the same person twice with different name formats (e.g. 'Sen. Sanders' and 'Sen. Bernie Sanders' are the same person - pick one).\n" +
     "- main_topics must reflect the dominant legislation/policy threads in the article.\n" +
+    "- Order main_topics from most to least prominent in the article - the topic given the most attention or mentioned most often comes first.\n" +
     "- search_terms must be useful for matching bill titles (e.g. \"border security\", \"child tax credit\").\n\n" +
     "Article excerpt:\n\"\"\"\n" + excerpt + '\n"""'
   );

@@ -2,7 +2,7 @@
 // Covers: admin endpoint auth (fail-closed), and /register's behavior.
 //
 // Deliberately does NOT test the rate limiter's actual threshold (5
-// requests/hour) by sending 6 requests — that would pollute global:user_count
+// requests/hour) by sending 6 requests - that would pollute global:user_count
 // with throwaway test tokens every single test run, which directly degrades
 // the real pooled scan limit for real users. Instead, it tests the things
 // that don't have that side effect: that admin routes reject bad/missing
@@ -81,7 +81,7 @@ describe("/register validation", () => {
   });
 
   it("accepts a valid new tokenId and returns a numeric limit (not hardcoded 5)", async () => {
-    // Uses a fresh, throwaway token — this DOES increment global:user_count
+    // Uses a fresh, throwaway token - this DOES increment global:user_count
     // by one, same as a real install would. Acceptable for a single test run;
     // do not loop this.
     const tokenId = freshTokenId();

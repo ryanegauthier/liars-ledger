@@ -1,4 +1,4 @@
-// Liar's Ledger - popup.js v0.17.6
+// Liar's Ledger - popup.js v0.17.7
 
 const browser = window.browser || window.chrome;
 const toggle         = document.getElementById("enableToggle");
@@ -21,7 +21,7 @@ toggle.addEventListener("change", () => {
 // Previously this auto-closed the popup after restoring results to the
 // sidebar, with no way to trigger a fresh scan of the same page short of
 // closing/reopening the tab or browser. Now it keeps the popup open and
-// relabels the scan button to "Rescan This Page" — a deliberate action,
+// relabels the scan button to "Rescan This Page" - a deliberate action,
 // since a rescan costs a real scan from the daily pool, same as any scan.
 browser.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
   if (!tab) return;
@@ -245,7 +245,7 @@ scanBtn.addEventListener("click", async () => {
               } else if (result && result.status !== "working") {
                 handleResult(result);
               } else {
-                // ll_results is still "working" after 45s — worker likely
+                // ll_results is still "working" after 45s - worker likely
                 // crashed before writing a result (e.g. unhandled rejection).
                 setStatus("Scan did not complete. Please try again. [ERR-HANG]", "error");
               }
@@ -258,7 +258,7 @@ scanBtn.addEventListener("click", async () => {
 });
 
 function handleResult(result) {
-  // Refresh scan count display — background.js's syncTier() call after
+  // Refresh scan count display - background.js's syncTier() call after
   // /api/scan/start means storage.sync should already reflect the new
   // count by now, regardless of which branch below fires.
   loadScanInfo();
@@ -287,7 +287,7 @@ function handleResult(result) {
         <a class="upgrade-btn" id="upgradeBtn" href="${upgradeUrl}" target="_blank">View Pricing →</a>
       </div>`;
     // Append the install token as a query param so /pricing can pre-fill
-    // and auto-redirect to Square without the user copy/pasting anything —
+    // and auto-redirect to Square without the user copy/pasting anything -
     // same mechanism as the Account panel's pricing link (see below).
     // Done after the innerHTML write (rather than templated into it above)
     // because the token read from chrome.storage.sync is async.
@@ -319,14 +319,14 @@ function loadScanInfo() {
     const tierLabel = token.tier === "pro" ? "Pro" : "Free";
 
     // token.downgradeReason is expected to be copied through from
-    // /api/scan-status's response by src/token.js's syncTier() — same
+    // /api/scan-status's response by src/token.js's syncTier() - same
     // pattern as tier/scansToday/limit/remaining above. If syncTier()
     // doesn't yet pass this field through into chrome.storage.sync,
     // this will just silently be undefined and fall through to the
-    // normal label below — nothing breaks, but the explanation won't
+    // normal label below - nothing breaks, but the explanation won't
     // show until that wiring is confirmed/added on the syncTier() side.
     if (token.tier === "free" && token.downgradeReason === "payment_failed") {
-      scanInfoEl.textContent = "Pro paused — your card was declined. Update it in Square to resume.";
+      scanInfoEl.textContent = "Pro paused - your card was declined. Update it in Square to resume.";
       scanInfoEl.className = "scan-info exhausted"; // reuses the existing alert-red state, no new CSS needed
       return;
     }
@@ -334,7 +334,7 @@ function loadScanInfo() {
     scanInfoEl.textContent = `${tierLabel} · ${remaining} scan${remaining !== 1 ? "s" : ""} remaining today`;
     scanInfoEl.className = "scan-info" + (token.tier === "pro" ? " pro" : "") + (remaining === 0 ? " exhausted" : remaining <= 1 ? " low" : "");
 
-    // Hide the upgrade button entirely once the user is already Pro —
+    // Hide the upgrade button entirely once the user is already Pro -
     // showing "Subscribe to Pro" to someone who already subscribed reads
     // as broken/confusing, not just redundant. Re-evaluated on every
     // loadScanInfo() call (initial popup load, post-scan refresh, and
@@ -462,7 +462,7 @@ restoreBtn?.addEventListener("click", () => {
     return;
   }
   if (orderReference.length < 8) {
-    restoreStatus.textContent = "Order reference looks too short — check and try again.";
+    restoreStatus.textContent = "Order reference looks too short - check and try again.";
     restoreStatus.className = "restore-status error";
     return;
   }

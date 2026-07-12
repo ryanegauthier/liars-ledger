@@ -102,24 +102,24 @@ function renderRecord(record, tier, upgradeUrl) {
           </div>`;
       }).join("");
 
-  // VoteSmart — free for everyone (sourced data, not AI-generated). Used to
+  // VoteSmart - free for everyone (sourced data, not AI-generated). Used to
   // be Pro-gated; ungated as of the AI-vs-sourced-data tier split. See
   // background.js's PRO-TIER GATING comment for the full reasoning.
   const isPro = tier === "pro";
 
-  // Pro-features upsell — shown in the claim/verdict area below when those
+  // Pro-features upsell - shown in the claim/verdict area below when those
   // fields are absent (stripped server-side for free tier). NOT shown near
   // VoteSmart anymore, since VoteSmart is no longer gated.
   //
   // KEEP THIS BULLET LIST IN SYNC WITH background.js's gating block
   // (search "PRO-TIER GATING" in handleAnalyze). Each bullet here should
   // correspond to a field that's actually being stripped there for free
-  // tier — if you add/remove a gated field in background.js, update this
+  // tier - if you add/remove a gated field in background.js, update this
   // list too.
   //
   // NOTE: article summary is listed here as a Pro feature (it genuinely is
   // one, per background.js's gating), but this page does not currently
-  // render the summary anywhere even for Pro users — that's a pre-existing
+  // render the summary anywhere even for Pro users - that's a pre-existing
   // gap in report.js unrelated to this tier-split change, flagged here but
   // not fixed in this pass since it's outside what was asked for.
   const proFeaturesUpsellHtml = `
@@ -167,7 +167,7 @@ function renderRecord(record, tier, upgradeUrl) {
       </ul>
     </div>`;
 
-  // VoteSmart votes — free for everyone now
+  // VoteSmart votes - free for everyone now
   const vsVotes = record.voteSmartVotes || [];
   const vsVotesHtml = vsVotes.length === 0
     ? `<div class="ll-empty">No topic-matched votes found.</div>`
@@ -182,7 +182,7 @@ function renderRecord(record, tier, upgradeUrl) {
           </div>
         </div>`).join("");
 
-  // VoteSmart ratings — free for everyone now
+  // VoteSmart ratings - free for everyone now
   const vsRatings = record.voteSmartRatings || [];
   const vsRatingsHtml = vsRatings.length === 0
     ? `<div class="ll-empty">No interest group ratings found.</div>`
@@ -205,7 +205,7 @@ function renderRecord(record, tier, upgradeUrl) {
           </div>`;
       }).join("");
 
-  // VoteSmart section — always the real data now, no upsell substitution,
+  // VoteSmart section - always the real data now, no upsell substitution,
   // same for every tier.
   const voteSmartSectionHtml = `
       <div class="ll-section">
@@ -273,7 +273,7 @@ async function loadReport() {
   }
 
   // Build a token-bearing pricing link, same pattern as background.js's
-  // upgradeUrl / content.js's renderCapacityWarning — so "Upgrade to Pro"
+  // upgradeUrl / content.js's renderCapacityWarning - so "Upgrade to Pro"
   // here doesn't drop the user on a bare /pricing page requiring manual
   // copy/paste. The token lives in chrome.storage.sync (ll_auth_token),
   // a different storage area than ll_results (session storage) above,
@@ -286,7 +286,7 @@ async function loadReport() {
       upgradeUrl = `https://liarsledger.com/pricing?token=${encodeURIComponent(tokenId)}`;
     }
   } catch (e) {
-    // fall through to the bare URL above — no token is better than a broken page
+    // fall through to the bare URL above - no token is better than a broken page
   }
 
   const records = idx !== null && results.records[idx]

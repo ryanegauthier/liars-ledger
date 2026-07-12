@@ -153,12 +153,11 @@ async function lookupPoliticianOnTopics(member, topics, options = {}) {
       if (billMatchesTopic(bill, topic)) return true;
     }
 
-    // Pass 2: LLM search terms - word-level matching
+    // Pass 2: LLM search terms - word-level matching (filler-word aware,
+    // see topic-match.js's topicWordsMatchText)
     for (const term of llmSearchTerms) {
       if (term.length <= 3) continue;
-      const words = term.split(/\s+/).filter((w) => w.length > 2);
-      if (words.length > 0 && words.every((w) => titleLower.includes(w)))
-        return true;
+      if (topicWordsMatchText(term, titleLower)) return true;
     }
 
     return false;
@@ -198,7 +197,7 @@ async function lookupPoliticianOnTopics(member, topics, options = {}) {
     if (billMatchesAny(bill)) addIfNew(bill, result.cosponsored, "cosponsored");
   }
 
-  // Keyword search for "Related" bills removed — broad topic names produce too
+  // Keyword search for "Related" bills removed - broad topic names produce too
   // many false positives and the results add more noise than signal for users.
 
   // Fetch GovTrack roll-call votes + VoteSmart data in parallel
@@ -311,8 +310,12 @@ async function findMemberRollCallVotesOnTopics(member, topics) {
       const keywords =
         (typeof TOPIC_TITLE_KEYWORDS !== "undefined" &&
           TOPIC_TITLE_KEYWORDS[topic]) ||
-        [];
-      return keywords.some((kw) => blob.includes(kw));
+        null;
+      if (keywords) return keywords.some((kw) => blob.includes(kw));
+      // No predefined category for this topic (e.g. an LLM search term like
+      // "healthcare reform") - fall back to filler-word-aware word matching
+      // instead of requiring the exact paraphrased phrase verbatim.
+      return typeof topicWordsMatchText === "function" && topicWordsMatchText(topic, blob);
     });
   });
 
@@ -376,9 +379,9 @@ async function resolveGovTrackId(bioguideId) {
       // all, unlike apiFetch() and findMemberRollCallVotesOnTopics' GovTrack
       // call above, both of which correctly attach authHeaders(). If
       // /api/legislators requires requireToken server-side (confirmed via
-      // direct curl test — unauthenticated request 401s, authenticated
+      // direct curl test - unauthenticated request 401s, authenticated
       // succeeds), this call has been silently failing this whole time,
-      // independent of any scan-token/hardening work this session — it's a
+      // independent of any scan-token/hardening work this session - it's a
       // pre-existing gap, not a regression from anything recent.
       const auth = await authHeaders();
       const res = await fetch(url, { headers: auth });

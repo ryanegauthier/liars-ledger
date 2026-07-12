@@ -55,10 +55,10 @@ const mailTransport = process.env.SMTP_HOST
 // Render sits behind a single reverse proxy hop, which sets X-Forwarded-For
 // on every incoming request. Express's default (trust proxy: false) ignores
 // that header entirely and falls back to the proxy's own connection IP for
-// anything IP-based — meaning every distinct visitor would resolve to the
+// anything IP-based - meaning every distinct visitor would resolve to the
 // same address as far as express-rate-limit is concerned, silently breaking
 // the /register, general API, and /restore-token limiters (all keyed by IP).
-// Setting this to 1 means "trust exactly one hop" — correct for Render's
+// Setting this to 1 means "trust exactly one hop" - correct for Render's
 // architecture. Must be set before any rate limiter middleware is registered.
 app.set("trust proxy", 1);
 
@@ -80,7 +80,7 @@ app.use(cors({
   allowedHeaders: ["Content-Type", "Authorization", "x-token"],
 }));
 
-// Capture raw body before JSON parsing — required for Square webhook signature
+// Capture raw body before JSON parsing - required for Square webhook signature
 // verification. The webhook handler reads req.rawBody; all other routes use
 // the parsed req.body as normal. See POST /webhook/square below.
 app.use(express.json({
@@ -121,6 +121,40 @@ app.post("/api/support/debug-log", supportLimiter, wrap(async (req, res) => {
   console.log(`[support] token=${payload.tokenId || "unknown"} version=${payload.version || "unknown"}`);
   console.log(`[support] logs:\n${preview}`);
 
+  // Retry helper for transient webhook failures (429, 5xx)
+  const SUPPORT_RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+  const SUPPORT_MAX_RETRIES = 2;
+  const SUPPORT_RETRY_BASE_MS = 200;
+  const SUPPORT_RETRY_JITTER_MS = 100;
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const retryDelay = (attempt) => SUPPORT_RETRY_BASE_MS * attempt + Math.floor(Math.random() * SUPPORT_RETRY_JITTER_MS);
+
+  async function fetchWithRetries(url, opts) {
+    let attempt = 0;
+    while (true) {
+      try {
+        const r = await fetch(url, opts);
+        if (r.ok) return r;
+        const status = r.status;
+        if (SUPPORT_RETRYABLE_STATUS.has(status) && attempt < SUPPORT_MAX_RETRIES) {
+          attempt += 1;
+          await sleep(retryDelay(attempt));
+          continue;
+        }
+        return r; // non-ok and non-retryable or retries exhausted
+      } catch (e) {
+        // network/other errors - retry as well
+        if (attempt < SUPPORT_MAX_RETRIES) {
+          attempt += 1;
+          await sleep(retryDelay(attempt));
+          continue;
+        }
+        throw e;
+      }
+    }
+  }
+
   const delivery = {
     email: { attempted: false, success: false, error: null },
     webhook: { attempted: false, success: false, error: null },
@@ -139,13 +173,14 @@ app.post("/api/support/debug-log", supportLimiter, wrap(async (req, res) => {
     } catch (e) {
       delivery.email.error = e.message;
       console.error(`[support] email delivery failed: ${e.message}`);
+      if (e.stack) console.error(e.stack);
     }
   }
 
   if (supportWebhookUrl) {
     delivery.webhook.attempted = true;
     try {
-      const webhookRes = await fetch(supportWebhookUrl, {
+      const webhookRes = await fetchWithRetries(supportWebhookUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -154,13 +189,20 @@ app.post("/api/support/debug-log", supportLimiter, wrap(async (req, res) => {
           logs,
         }),
       });
+
       if (!webhookRes.ok) {
-        throw new Error(`webhook responded ${webhookRes.status}`);
+        let text = "";
+        if (webhookRes && typeof webhookRes.text === "function") {
+          text = await webhookRes.text().catch(() => "");
+        }
+        throw new Error(`webhook responded ${webhookRes.status}${text ? `: ${text.slice(0, 240)}` : ""}`);
       }
+
       delivery.webhook.success = true;
     } catch (e) {
       delivery.webhook.error = e.message;
       console.error(`[support] webhook delivery failed: ${e.message}`);
+      if (e.stack) console.error(e.stack);
     }
   }
 
@@ -182,12 +224,12 @@ app.post("/api/support/debug-log", supportLimiter, wrap(async (req, res) => {
 app.use("/api", limiter);
 
 // /register gets its own, much stricter limiter, keyed by IP. A real install
-// calls this once (occasionally again on startup to refresh state) — there's
+// calls this once (occasionally again on startup to refresh state) - there's
 // no legitimate reason for one IP to register many tokens quickly. This is
 // the main defense against a script mass-creating fake tokens to drain the
 // shared scan pool or inflate global:user_count (which lowers everyone's
-// daily limit). Not a complete fix — a distributed attacker with many IPs
-// or proxies isn't stopped by this — but it closes the trivial single-machine
+// daily limit). Not a complete fix - a distributed attacker with many IPs
+// or proxies isn't stopped by this - but it closes the trivial single-machine
 // case for free, with no user-facing downside for real installs.
 const registerLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
@@ -198,11 +240,11 @@ const registerLimiter = rateLimit({
 });
 app.use("/register", registerLimiter);
 
-// /pricing/checkout calls Square's CreatePaymentLink on every invocation —
+// /pricing/checkout calls Square's CreatePaymentLink on every invocation -
 // previously had no dedicated limiter at all (only the general /api/* one,
 // which doesn't even apply here since this route isn't under /api/). Found
 // via security review: unbounded calls could exhaust Square API quotas and
-// clutter the dashboard with junk orders. Keyed by token rather than IP —
+// clutter the dashboard with junk orders. Keyed by token rather than IP -
 // more precise for this route, since the meaningful identity here is the
 // token, not the network address. Falls back to IP if no token is present
 // in the body (e.g. a malformed request that requireToken/manual checks
@@ -210,7 +252,7 @@ app.use("/register", registerLimiter);
 // trying to build a key from undefined).
 //
 // NOTE: defined here, early in the file alongside the other rate limiters,
-// rather than near the /pricing/checkout route itself further down — a
+// rather than near the /pricing/checkout route itself further down - a
 // previous version of this file had it defined AFTER the route that uses
 // it, which threw "Cannot access 'checkoutLimiter' before initialization"
 // on startup (const hoisting puts the binding in an uninitialized state
@@ -219,7 +261,7 @@ app.use("/register", registerLimiter);
 // to avoid this class of bug recurring.
 const checkoutLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
-  max: 3, // generous for any legitimate use — a handful of "Get Pro" clicks
+  max: 3, // generous for any legitimate use - a handful of "Get Pro" clicks
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => req.body?.token || req.ip,
@@ -228,7 +270,7 @@ const checkoutLimiter = rateLimit({
 
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => {
-  res.json({ status: "ok", version: process.env.npm_package_version || "0.17.0", ts: new Date().toISOString() });
+  res.json({ status: "ok", version: process.env.npm_package_version || "0.17.7", ts: new Date().toISOString() });
 });
 
 // ── Registration ──────────────────────────────────────────────────────────────
@@ -280,7 +322,7 @@ app.get("/api/scan-status", requireToken, wrap(async (req, res) => {
   const [scans, { limit, warn, userCount }, downgrade] = await Promise.all([
     getScans(req.tokenId),
     getScanLimit(req.tier),
-    // Only meaningful for free tier — a pro user obviously hasn't been
+    // Only meaningful for free tier - a pro user obviously hasn't been
     // downgraded, and any stale marker would already have been cleared on
     // their last successful payment/resubscribe anyway. Skipping the
     // lookup entirely for pro tier avoids an extra Redis round-trip on
@@ -294,7 +336,7 @@ app.get("/api/scan-status", requireToken, wrap(async (req, res) => {
     scansToday: scans,
     limit,
     remaining,
-    capacityWarning: warn,     // true at 2500–4999 users — surface in extension UI
+    capacityWarning: warn,     // true at 2500–4999 users - surface in extension UI
     userCount,
     // Present only when this token was downgraded due to repeated payment
     // failure (not a normal cancellation, and not "never subscribed").
@@ -424,7 +466,7 @@ app.post("/api/support/debug-log", wrap(async (req, res) => {
 }));
 
 // ── LLM extraction (requires a valid scan token from /api/scan/start above,
-//    NOT counted again here — requireScanToken consumes the token issued
+//    NOT counted again here - requireScanToken consumes the token issued
 //    there; see its doc comment in auth.js for the dual-model handling) ────
 
 // Strips Pro-only fields from a claude/mistral extraction result before it
@@ -463,7 +505,7 @@ app.post("/api/mistral/extract", requireToken, requireScanToken, wrap(async (req
 }));
 
 // ── Pro-tier gating ────────────────────────────────────────────────────────────
-// Server-side enforcement — the actual security boundary. Client-side stripping
+// Server-side enforcement - the actual security boundary. Client-side stripping
 // in background.js is a UX nicety (avoids flashing gated data before deciding
 // not to show it) and a cost-saver (free tier never even calls these routes),
 // but a modified or malicious client could call these endpoints directly,
@@ -483,12 +525,12 @@ function requirePro(req, res, next) {
   next();
 }
 
-// /api/verify-claim input limits — found via security review: claim/member
+// /api/verify-claim input limits - found via security review: claim/member
 // were only checked for truthiness, with no length cap. A Pro user could
 // send an arbitrarily large claim/member string (bounded only by the 64KB
 // JSON body limit), inflating per-call LLM cost and opening a narrow,
 // self-contained prompt-injection surface (the blast radius is limited to
-// that same Pro user's own verification result — not a cross-user issue).
+// that same Pro user's own verification result - not a cross-user issue).
 // record's individual fields aren't capped here; server/providers/verify.js
 // already truncates the assembled prompt via MAX_RECORD_CHARS before it
 // reaches the LLM, so the existing truncation covers that side.
@@ -518,13 +560,13 @@ app.post("/api/verify-claim", requireToken, requirePro, wrap(async (req, res) =>
 // Found via security review: both proxies previously forwarded req.query
 // verbatim, letting callers inject arbitrary parameters into the upstream
 // request. No SSRF risk (base URL is hardcoded, ../ in a path segment
-// doesn't change the host in a normalized HTTPS URL) — the actual concern
+// doesn't change the host in a normalized HTTPS URL) - the actual concern
 // is unpredictable proxy behavior and requesting unnecessarily large
 // result sets.
 const CONGRESS_ALLOWED_PARAMS = new Set(["offset", "limit", "fromDateTime", "toDateTime", "sort"]);
 // Congress.gov's own docs confirm `limit` is capped at 250 server-side
 // regardless of what's requested, which already bounds the worst case on
-// their end — this allowlist is still worth having for predictability and
+// their end - this allowlist is still worth having for predictability and
 // defense-in-depth, not because that cap alone was insufficient.
 // Source: https://github.com/LibraryOfCongress/api.congress.gov (confirmed
 // June 2026: offset, limit, fromDateTime, toDateTime, sort are the
@@ -568,14 +610,14 @@ app.get("/api/congress/*", requireToken, wrap(async (req, res) => {
 // ── VoteSmart proxy ───────────────────────────────────────────────────────────
 // Free tier as of the AI-vs-sourced-data tier split: VoteSmart ratings and
 // vote history are sourced facts (same category as roll-call votes and bill
-// links, both already free), not AI-generated content — only the AI article
+// links, both already free), not AI-generated content - only the AI article
 // summary and AI claim-vs-record verdict are Pro. requirePro removed below.
 //
-// IMPORTANT — revisit the allowlist decision: the note below about leaving
+// IMPORTANT - revisit the allowlist decision: the note below about leaving
 // query-parameter passthrough un-allowlisted was written when this route
 // was Pro-gated, on the reasoning that a smaller, paying caller pool bounded
 // the risk. That assumption no longer holds now that any registered token
-// (the entire free tier, not just Pro subscribers) can reach this route —
+// (the entire free tier, not just Pro subscribers) can reach this route -
 // the un-allowlisted passthrough is now exposed to a much larger pool than
 // when this was last assessed. Worth allowlisting properly (lastName,
 // candidateId, confirmed against VoteSmart's actual API docs) rather than
@@ -591,7 +633,7 @@ app.get("/api/congress/*", requireToken, wrap(async (req, res) => {
 // `meta.lastPage`/`meta.next` fields) rather than requesting one larger page
 // and hoping it's enough. officeId/stateId remain allowlisted for a planned
 // office+state-scoped lookup (currently disabled client-side pending an
-// endpoint/param mismatch investigation — see src/votesmart.js for details)
+// endpoint/param mismatch investigation - see src/votesmart.js for details)
 // but are otherwise unused today.
 app.get("/api/votesmart/*", requireToken, wrap(async (req, res) => {
   const path  = req.params[0];
@@ -652,8 +694,8 @@ app.get("/api/legislators", requireToken, wrap(async (req, res) => {
 // Flow (per SQUAREDESIGN.md):
 //   1. Validate the token exists in Redis
 //   2. Create a Square payment link with order.reference_id = token
-//   3. Return { url } — frontend navigates to Square's hosted checkout
-//   4. Square collects payment + contact info (buyer's email, card) — we never see it
+//   3. Return { url } - frontend navigates to Square's hosted checkout
+//   4. Square collects payment + contact info (buyer's email, card) - we never see it
 //   5. POST /webhook/square fires on subscription events → upgradeTier
 //
 // CORS note: called from liarsledger.com. ALLOWED_ORIGINS must include
@@ -664,7 +706,7 @@ app.post("/pricing/checkout", checkoutLimiter, wrap(async (req, res) => {
   if (!token || typeof token !== "string") {
     return res.status(400).json({ error: "token is required" });
   }
-  // Basic plausibility check — UUIDs are 36 chars; our tokens are similar length
+  // Basic plausibility check - UUIDs are 36 chars; our tokens are similar length
   if (token.length < 16 || token.length > 128) {
     return res.status(400).json({ error: "invalid token format" });
   }
@@ -685,15 +727,15 @@ app.post("/pricing/checkout", checkoutLimiter, wrap(async (req, res) => {
   const planVariationId = process.env.SQUARE_PLAN_VARIATION_ID;
   const backendUrl      = process.env.BACKEND_URL || "https://api.liarsledger.com";
   // Square's CreatePaymentLink requires a populated order.line_items even for
-  // subscription checkout — confirmed against live docs (the order/quick_pay
+  // subscription checkout - confirmed against live docs (the order/quick_pay
   // distinction is cosmetic; quick_pay's name+price_money map internally to
   // the same order line item shape). This must match the plan variation's
-  // actual price set in Square's catalog (see setup-square-catalog.mjs) —
+  // actual price set in Square's catalog (see setup-square-catalog.mjs) -
   // per Square's own subscription-checkout docs, a mismatch acts as a price
   // OVERRIDE, not just display text, so these two numbers must stay in sync
   // by hand if the Pro price is ever changed in the Square dashboard.
   const proPriceCents = parseInt(process.env.SQUARE_PRO_PRICE_CENTS || "500", 10); // $5.00 default
-  const proPriceName  = process.env.SQUARE_PRO_PRICE_NAME || "Liar's Ledger Pro — Monthly";
+  const proPriceName  = process.env.SQUARE_PRO_PRICE_NAME || "Liar's Ledger Pro - Monthly";
 
   if (!locationId || !planVariationId) {
     console.error("[checkout] SQUARE_LOCATION_ID or SQUARE_PLAN_VARIATION_ID not set");
@@ -733,7 +775,7 @@ app.post("/pricing/checkout", checkoutLimiter, wrap(async (req, res) => {
 //
 // Token resolution path (per SQUAREDESIGN.md §3):
 //   1. subscription.created fires with phases[0].order_template_id
-//   2. Check Redis cache (square:ordertemplate:{id}) — skip RetrieveOrder if hit
+//   2. Check Redis cache (square:ordertemplate:{id}) - skip RetrieveOrder if hit
 //   3. Cache miss: call RetrieveOrder → order.reference_id = our token
 //   4. Cache the resolution + write customer/subscription recovery mappings
 //   5. upgradeTier(token, "pro") or downgradeTier based on subscription.status
@@ -752,11 +794,11 @@ app.post("/webhook/square", wrap(async (req, res) => {
   });
 
   if (!isValid) {
-    console.warn("[webhook/square] signature mismatch — rejecting");
+    console.warn("[webhook/square] signature mismatch - rejecting");
     return res.status(403).send();
   }
 
-  // Acknowledge immediately — Square retries on non-2xx (up to 24h).
+  // Acknowledge immediately - Square retries on non-2xx (up to 24h).
   // We process the event after responding to minimize Square's retry window
   // on transient internal errors (e.g. brief Redis downtime). Don't let a
   // downstream failure become a Square retry storm.
@@ -796,14 +838,14 @@ async function handleSquareEvent(event) {
       if (status === "ACTIVE") {
         // Reaching ACTIVE (e.g. after a card update following failed
         // charges, or a fresh resubscribe) means whatever retry sequence
-        // was in progress is over — clear both the failure count and any
+        // was in progress is over - clear both the failure count and any
         // stale "you were downgraded" marker so it doesn't resurface after
         // the person has already fixed things.
         await clearFailedCharges(subscriptionId);
         if (tokenId) await clearDowngradeReason(tokenId);
       }
     } else if (status === "CANCELED" || status === "DEACTIVATED") {
-      // User-initiated (or otherwise not failure-driven) — the person
+      // User-initiated (or otherwise not failure-driven) - the person
       // already knows why (they cancelled, or Square/we deactivated it for
       // some other reason unrelated to a declined card). No downgrade-
       // reason marker here; that's reserved for the failure-driven path.
@@ -815,7 +857,7 @@ async function handleSquareEvent(event) {
       }
       await clearFailedCharges(subscriptionId);
     } else if (status === "FAILED") {
-      // Square's own subscription-level FAILED status — this IS
+      // Square's own subscription-level FAILED status - this IS
       // failure-driven (distinct from an individual invoice.scheduled_
       // charge_failed event, but same underlying cause), so set the marker.
       const tokenId = await resolveTokenFromOrderTemplate(orderTemplateId, subscriptionId, customerId);
@@ -827,7 +869,7 @@ async function handleSquareEvent(event) {
       await clearFailedCharges(subscriptionId);
     } else {
       // PENDING without a start_date, PAUSED, etc.
-      console.log(`[webhook/square] ${type} status=${status} — no tier action`);
+      console.log(`[webhook/square] ${type} status=${status} - no tier action`);
     }
     return;
   }
@@ -836,7 +878,7 @@ async function handleSquareEvent(event) {
   // Idempotent confirmation of Pro status on recurring billing cycles.
   // subscription.created/updated already handles the initial upgrade, but
   // invoice.payment_made is a belt-and-suspenders confirmation each cycle.
-  // Also clears any failed-charge tracking — a successful payment means
+  // Also clears any failed-charge tracking - a successful payment means
   // whatever retry sequence was in progress resolved itself.
   if (type === "invoice.payment_made") {
     const subscriptionId = obj?.invoice?.subscription_id;
@@ -855,9 +897,9 @@ async function handleSquareEvent(event) {
   // ── invoice.scheduled_charge_failed ──────────────────────────────────────
   // Fires when an automatic subscription payment attempt fails. This is the
   // correct, documented event for this (payment.updated is too broad and not
-  // subscription-specific — see CHANGELOG for the live-docs verification).
+  // subscription-specific - see CHANGELOG for the live-docs verification).
   //
-  // IMPORTANT: confirmed against Square's own docs — Square does NOT
+  // IMPORTANT: confirmed against Square's own docs - Square does NOT
   // auto-cancel a subscription when payments fail. It retries automatically
   // on day 3, day 6, and day 9 after the initial decline, then simply leaves
   // the subscription ACTIVE with an unpaid invoice indefinitely. There is no
@@ -866,7 +908,7 @@ async function handleSquareEvent(event) {
   // So we track failures ourselves and downgrade proactively once we're past
   // Square's retry window with no successful payment in between. Using
   // count >= 3 as the threshold (matches Square's 3-retry schedule: day 3,
-  // 6, 9) rather than a fixed day-9 timer — simpler, and avoids needing a
+  // 6, 9) rather than a fixed day-9 timer - simpler, and avoids needing a
   // separate scheduled job just to check elapsed time.
   if (type === "invoice.scheduled_charge_failed") {
     const subscriptionId = obj?.invoice?.subscription_id;
@@ -878,7 +920,7 @@ async function handleSquareEvent(event) {
     // After Square's full retry schedule (3 failures = day 3, 6, 9 all
     // missed) has played out with no intervening payment_made, downgrade.
     // subscription.updated → CANCELED, if it ever arrives, will also
-    // downgrade (idempotent) — this just stops us granting Pro forever to a
+    // downgrade (idempotent) - this just stops us granting Pro forever to a
     // card that's permanently failing while Square leaves it ACTIVE.
     if (failureRecord.count >= 3) {
       const tokenId = await lookupTokenBySquareSubscription(subscriptionId);
@@ -887,7 +929,7 @@ async function handleSquareEvent(event) {
         await setDowngradeReason(tokenId, "payment_failed");
         console.warn(`[webhook/square] sub=${subscriptionId.slice(0, 8)}… exceeded retry window (${failureRecord.count} failures) → token ${tokenId.slice(0, 8)}… downgraded to free`);
       } else {
-        console.error(`[webhook/square] sub=${subscriptionId.slice(0, 8)}… exceeded retry window but no token mapping found — could not downgrade`);
+        console.error(`[webhook/square] sub=${subscriptionId.slice(0, 8)}… exceeded retry window but no token mapping found - could not downgrade`);
       }
     }
     return;
@@ -949,7 +991,7 @@ async function resolveTokenFromOrderTemplate(orderTemplateId, subscriptionId, cu
       tokenId = null;
     }
   } else {
-    console.warn(`[webhook/square] subscription event has no order_template_id — cannot resolve token`);
+    console.warn(`[webhook/square] subscription event has no order_template_id - cannot resolve token`);
   }
 
   return tokenId;
@@ -959,10 +1001,10 @@ async function resolveTokenFromOrderTemplate(orderTemplateId, subscriptionId, cu
 // POST /restore-token
 // Called from popup.js when a subscriber has lost their token (e.g., after
 // reinstalling Chrome) and wants to recover Pro access.
-// Body: { orderReference }  — Square order ID from their receipt email
+// Body: { orderReference }  - Square order ID from their receipt email
 //
 // Resolution path (per SQUAREDESIGN.md §4):
-//   1. Call RetrieveOrder(orderReference) — validates the order exists
+//   1. Call RetrieveOrder(orderReference) - validates the order exists
 //   2. Get order.customer_id
 //   3. Look up square:customer:{customer_id} in Redis → tokenId
 //   4. Return { token: tokenId } to the extension popup
@@ -995,7 +1037,7 @@ app.post("/restore-token", restoreTokenLimiter, wrap(async (req, res) => {
       return res.status(404).json({ error: "Order not found. Double-check your Square receipt." });
     }
 
-    // Only accept completed/paid orders — not OPEN or CANCELED
+    // Only accept completed/paid orders - not OPEN or CANCELED
     if (order.state !== "COMPLETED") {
       return res.status(404).json({
         error: "No completed payment found for that reference. Check your receipt and try again.",
@@ -1010,7 +1052,7 @@ app.post("/restore-token", restoreTokenLimiter, wrap(async (req, res) => {
 
     const tokenId = await lookupTokenBySquareCustomer(customerId);
     if (!tokenId) {
-      // Mapping not in Redis — possibly an edge case where the webhook fired
+      // Mapping not in Redis - possibly an edge case where the webhook fired
       // before the mapping was written, or Redis was flushed.
       console.error(`[restore-token] no token mapping for customer ${customerId.slice(0, 8)}…`);
       return res.status(404).json({

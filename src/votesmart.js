@@ -541,7 +541,7 @@ async function getVoteSmartVotes(candidateId, topics) {
 }
 
 function normalizeVsVote(raw) {
-  const map = { "Y": "Yea", "N": "Nay", "-": "Not Voting", "A": "Abstain" };
+  const map = { "Y": "Yea", "N": "Nay", "-": "Not Voting", "A": "Abstain", "5": "Present" };
   return map[raw] || raw || "-";
 }
 

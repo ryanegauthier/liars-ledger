@@ -7,11 +7,11 @@
 //   ADMIN_SECRET  - same value as the server's ADMIN_SECRET env var
 //   TEST_TOKEN    - a real, already-registered token UUID to use for tests.
 //                    Tests will flip this token's tier and reset its scan
-//                    count freely — do not use a real user's token.
+//                    count freely - do not use a real user's token.
 //
 // These tests run against a REAL server (local or deployed) and a REAL
 // Redis-backed token. There is no mocking. Tests that call /api/claude/extract
-// or /api/mistral/extract incur real, small API costs (~$0.001/call) — those
+// or /api/mistral/extract incur real, small API costs (~$0.001/call) - those
 // live in test/cost/ and do not run by default. See package.json scripts.
 
 export const API_BASE = process.env.API_BASE || "https://api.liarsledger.com";
@@ -30,7 +30,7 @@ if (!TEST_TOKEN) {
   throw new Error(
     "TEST_TOKEN environment variable is required to run tests. " +
     "This must be a real, already-registered token UUID. The test suite " +
-    "will repeatedly change its tier and scan count — never point this at " +
+    "will repeatedly change its tier and scan count - never point this at " +
     "a real user's token."
   );
 }
@@ -108,6 +108,29 @@ export async function resetTestTokenScans() {
       `Failed to reset test token scans: status=${status} body=${JSON.stringify(body)}`
     );
   }
+}
+
+/**
+ * Reserve a scan slot and return its single-use scanToken, the way the
+ * extension does via /api/scan/start before calling /api/claude/extract or
+ * /api/mistral/extract - both routes reject with 403 ("Scan authorization
+ * invalid, expired, or already used") without one, as of the scan-token
+ * hardening pass (see requireScanToken in server/middleware/auth.js).
+ * Resets the test token's scan count first so the daily/pooled limit from a
+ * previous test run never blocks this from getting a token back.
+ */
+export async function getScanToken() {
+  await resetTestTokenScans();
+  const { status, body } = await api("/api/scan/start", {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  if (status !== 200 || !body?.scanToken) {
+    throw new Error(
+      `Failed to reserve a scan token: status=${status} body=${JSON.stringify(body)}`
+    );
+  }
+  return body.scanToken;
 }
 
 /**

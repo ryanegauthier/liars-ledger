@@ -44,18 +44,23 @@ const TOPIC_MAP = [
   { pattern: /\b(minimum\s+wage|labor|union|worker|employment|unemployment|job|workforce)\b/gi, term: "labor" },
 ];
 
-// Extract topic keywords from article text
+// Extract topic keywords from article text, ranked by mention count - a
+// topic whose keywords appear 6 times in the article outranks one that
+// appears once, rather than falling back to TOPIC_MAP's arbitrary
+// declaration order.
 function extractTopics(text) {
-  const found = new Set();
+  const scored = [];
 
   for (const { pattern, term } of TOPIC_MAP) {
     pattern.lastIndex = 0; // reset regex state
-    if (pattern.test(text)) {
-      found.add(term);
+    const matches = text.match(pattern);
+    if (matches && matches.length > 0) {
+      scored.push({ term, count: matches.length });
     }
   }
 
-  return [...found];
+  scored.sort((a, b) => b.count - a.count);
+  return scored.map((s) => s.term);
 }
 
 // Extract significant freeform words as fallback search terms

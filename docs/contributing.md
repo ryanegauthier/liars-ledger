@@ -16,7 +16,7 @@ The dictionary covers the 110th through 119th Congress (3,606 entries). It needs
 
 To rebuild: `node build-dictionary.js YOUR_CONGRESS_API_KEY`
 
-To add a nickname manually, edit `src/lookup.js` — find `FULL_NAME_OVERRIDES` (for full name substitutions) or `NICKNAME_FIRST` (for first-name substitutions).
+To add a nickname manually, edit `src/lookup.js` - find `FULL_NAME_OVERRIDES` (for full name substitutions) or `NICKNAME_FIRST` (for first-name substitutions).
 
 ## News site compatibility
 
@@ -41,7 +41,7 @@ cd liars-ledger
 cp src/config.example.js src/config.js
 ```
 
-Load the extension in Chrome developer mode. Run the backend proxy locally for full functionality — see [Backend Proxy — Local development](backend-proxy#local-development).
+Load the extension in Chrome developer mode. Run the backend proxy locally for full functionality - see [Backend Proxy - Local development](backend-proxy#local-development).
 
 ## Submitting changes
 

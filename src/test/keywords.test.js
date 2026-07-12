@@ -23,6 +23,17 @@ describe("extractTopics", () => {
     const topics = g.extractTopics(text);
     assert.equal(topics.length, 0);
   });
+
+  it("ranks topics by mention count, most-mentioned first", () => {
+    const text =
+      "Immigration dominated the debate. Immigration, immigration, immigration - " +
+      "lawmakers kept returning to immigration and border immigration policy. " +
+      "One member also raised a firearm bill in passing.";
+    const topics = g.extractTopics(text);
+    assert.equal(topics[0], "immigration");
+    assert.ok(topics.includes("firearms"));
+    assert.ok(topics.indexOf("immigration") < topics.indexOf("firearms"));
+  });
 });
 
 describe("getSearchTerms", () => {

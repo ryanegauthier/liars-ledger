@@ -68,6 +68,10 @@ function installStorageMock({ sessionState = {}, localState = {}, bytesInUse = 0
 test('logger storage writes route through the quota-safe session helper', async () => {
   await loadHelpers();
   const { sessionState } = installStorageMock();
+  // installStorageMock() -> resetGlobals() deletes globalThis.logger (but
+  // not safeSessionSet/maybeRunCacheMaintenance, which is why only this
+  // test needs this) - restore it from loadHelpers()'s cache.
+  await loadHelpers();
 
   let safeSetCalls = 0;
   const realSafeSessionSet = globalThis.safeSessionSet;
@@ -77,8 +81,7 @@ test('logger storage writes route through the quota-safe session helper', async 
     assert.deepEqual(value, []);
   };
 
-  const { default: logger } = await import('../logger.js');
-  await logger.clear();
+  await globalThis.logger.clear();
 
   globalThis.safeSessionSet = realSafeSessionSet;
   assert.equal(safeSetCalls, 1);

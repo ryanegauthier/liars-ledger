@@ -14,7 +14,7 @@
 //   Set CLAUDE_API_ENDPOINT / MISTRAL_API_ENDPOINT to your backend URLs.
 //   The proxy accepts { articleText, scanToken } and returns the parsed
 //   result directly. scanToken is required as of the scan-token hardening
-//   pass — obtained from POST /api/scan/start, threaded through via
+//   pass - obtained from POST /api/scan/start, threaded through via
 //   background.js -> extractArticleAnalysis's options.scanToken. The
 //   backend's requireScanToken middleware rejects requests with no valid,
 //   unconsumed scan token (see server/middleware/auth.js, SECURITY.md
@@ -22,7 +22,7 @@
 //
 // Direct mode (local dev):
 //   Leave endpoints at defaults, set CLAUDE_API_KEY / MISTRAL_API_KEY in
-//   config.js. scanToken is irrelevant here — there's no backend scan-limit
+//   config.js. scanToken is irrelevant here - there's no backend scan-limit
 //   check to satisfy when calling the provider APIs directly.
 
 // ---------------------------------------------------------------------------
@@ -36,8 +36,12 @@ const MISTRAL_MODEL = "mistral-small-latest";      // ~$0.10/1M tokens in
 const CLAUDE_MODEL  = "claude-haiku-4-5-20251001"; // cheapest Claude 4 tier
 
 // ---------------------------------------------------------------------------
-// Prompt - canonical version. Must match server/providers/_shared.js exactly.
-// When changing this, update _shared.js too (and vice versa).
+// Prompt - manually-synced mirror of server/providers/_shared.js, which is
+// the actual single source of truth (see its header comment). This copy is
+// only exercised in direct mode (local dev, calling Claude/Mistral straight
+// from the extension) - in proxy mode (production), the extension sends raw
+// articleText and the server builds the real prompt from _shared.js.
+// When changing the prompt, change _shared.js FIRST, then mirror here.
 // ---------------------------------------------------------------------------
 const MAX_ARTICLE_CHARS = 12000;
 
@@ -54,10 +58,11 @@ function buildPrompt(articleText) {
     '"search_terms":["2-6 short phrases for bill title search - never include the person\'s name"]}' +
     "]}\n\n" +
     "Rules:\n" +
-    "- Only include people who are clearly discussed as federal lawmakers (current Congress). Omit the President, Vice President, Cabinet, governors, candidates not in Congress, and vague references.\n" +
+    "- Include every current U.S. Senator or Representative named in the article, even if their role is secondary. Omit the President, Vice President, Cabinet secretaries, governors, and anyone not currently serving in Congress.\n" +
     "- Include at most 10 figures. If none qualify, use an empty figures array.\n" +
     "- Use the most formal version of each person's name consistently. Never return the same person twice with different name formats (e.g. 'Sen. Sanders' and 'Sen. Bernie Sanders' are the same person - pick one).\n" +
     "- main_topics must reflect the dominant legislation/policy threads in the article.\n" +
+    "- Order main_topics from most to least prominent in the article - the topic given the most attention or mentioned most often comes first.\n" +
     "- search_terms must be useful for matching bill titles (e.g. \"border security\", \"child tax credit\").\n\n" +
     "Article excerpt:\n\"\"\"\n" +
     excerpt +
@@ -126,7 +131,7 @@ async function extractArticleAnalysisViaMistral(articleText, options) {
             method:  "POST",
             headers: { "Content-Type": "application/json", ...(await authHeaders()) },
             // scanToken: see the matching comment in extractArticleAnalysisViaClaude
-            // above — same requirement, same reasoning.
+            // above - same requirement, same reasoning.
             body:    JSON.stringify({ articleText, scanToken: options.scanToken }),
           }
         : {
@@ -197,13 +202,13 @@ async function extractArticleAnalysisViaClaude(articleText, options) {
         ? {
             method:  "POST",
             headers: { "Content-Type": "application/json", ...(await authHeaders()) },
-            // scanToken: required as of the scan-token hardening pass — the
+            // scanToken: required as of the scan-token hardening pass - the
             // backend's requireScanToken middleware rejects extraction
             // calls with no valid, unconsumed scan token (see auth.js /
             // store.js / SECURITY.md "Known Gaps - Scan Limit Bypassable").
             // options.scanToken is threaded through from background.js via
             // extractArticleAnalysis -> extractArticleAnalysisDualVerified's
-            // {...options} spread above. Only meaningful in proxy mode —
+            // {...options} spread above. Only meaningful in proxy mode -
             // direct mode (local dev against Anthropic's real API) has no
             // backend scan-limit check to satisfy.
             body:    JSON.stringify({ articleText, scanToken: options.scanToken }),

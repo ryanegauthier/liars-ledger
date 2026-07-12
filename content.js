@@ -1,4 +1,4 @@
-// Liars Ledger - content.js v0.17.6
+// Liars Ledger - content.js v0.17.7
 const browser = window.browser || window.chrome;
 
 function escapeHtml(s) {
@@ -398,6 +398,31 @@ function initSidebar() {
       50% { opacity: 0.2; }
     }
     #ll-version { font-size: 0.5rem; color: #3a3f4e; }
+
+    /* Shared button look across popup.html, report.html, and this file's
+       injected panel - all three use this same gold/accent treatment as
+       the single "upgrade to pro" standard. Same class name/rules kept in
+       sync manually across all three files since none of them share a
+       loaded stylesheet. If you change one, change all three. This file
+       hardcodes the hex values (#c8a96e = --accent, #121f44 = --navy,
+       #9c7f4e = --accent-dim) instead of CSS custom properties, since this
+       stylesheet is injected into arbitrary host pages that don't define
+       those variables. */
+    .upgrade-to-pro-btn--accent {
+      display: inline-block;
+      padding: 8px 18px;
+      background: #c8a96e;
+      color: #121f44;
+      font-family: "Inter", sans-serif;
+      font-size: 0.66rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      text-decoration: none;
+      width: fit-content;
+      transition: background 0.18s ease;
+    }
+    .upgrade-to-pro-btn--accent:hover { background: #9c7f4e; }
   `;
   document.head.appendChild(style);
 
@@ -418,7 +443,7 @@ function initSidebar() {
       <div id="ll-footer-right">
         <span id="ll-pro-badge" style="display:none;color:#c8a96e;font-family:'Inter',sans-serif;font-size:0.5rem;letter-spacing:0.1em;text-transform:uppercase;margin-right:8px;">★ Pro</span>
         <span class="ll-ticker-dot"></span>
-        <span id="ll-version">v0.17.6</span>
+        <span id="ll-version">v0.17.7</span>
       </div>
     </div>
   `;
@@ -440,7 +465,7 @@ function renderSidebar(results) {
   const detailEl = document.getElementById("ll-detail");
   const bar      = document.getElementById("ll-bar");
 
-  // Pro badge — visible only for pro tier
+  // Pro badge - visible only for pro tier
   const proBadge = document.getElementById("ll-pro-badge");
   if (proBadge) proBadge.style.display = results.tier === "pro" ? "inline" : "none";
 
@@ -564,7 +589,7 @@ function renderSidebar(results) {
         allBills.sort((a, b) => (b.introducedDate || "").localeCompare(a.introducedDate || ""));
         const rollVotes = record.rollCallVotes || [];
 
-      let html = `<div class="ll-detail-title">${escapeHtml(p.full_name || p.matched_as || "")} &mdash; ${(record.topics || []).map(escapeHtml).join(", ")}</div>`;
+      let html = `<div class="ll-detail-title">${escapeHtml(p.full_name || p.matched_as || "")} - ${(record.topics || []).map(escapeHtml).join(", ")}</div>`;
 
       const detailClaim = record.claim || record._claude_claim || record._mistral_claim || "";
       const detailVerdict = record.verdict || "";
@@ -590,10 +615,10 @@ function renderSidebar(results) {
           ${vExplanation ? `<br><span style="color:rgba(196,201,215,0.7);font-size:0.54rem;font-style:normal">${escapeHtml(vExplanation)}</span>` : ""}
         </div>`;
       } else if (results.tier !== "pro") {
-        // Pro upsell for the AI claim-vs-record verdict specifically — NOT
+        // Pro upsell for the AI claim-vs-record verdict specifically - NOT
         // for VoteSmart, which is free for everyone now (see below). Shown
         // only when there's genuinely no claim content (free tier, field
-        // stripped server-side) — a Pro user whose article simply made no
+        // stripped server-side) - a Pro user whose article simply made no
         // claim about this politician sees nothing here, same as before.
         //
         // KEEP THIS CARD'S COPY IN SYNC WITH background.js's gating block
@@ -621,20 +646,8 @@ function renderSidebar(results) {
             <div style="font-size: 0.72rem; color: #c4c9d7; line-height: 1.55;">
               See an AI-generated summary and claim-vs-record verdict with Pro.
             </div>
-            <a href="${escapeHtml(results.upgradeUrl || "https://liarsledger.com/pricing")}" target="_blank" style="
-              display: inline-block;
-              margin-top: 4px;
-              padding: 6px 14px;
-              background: #c8a96e;
-              color: #121f44;
-              font-family: 'Inter', sans-serif;
-              font-size: 0.64rem;
-              font-weight: 700;
-              letter-spacing: 0.08em;
-              text-transform: uppercase;
-              text-decoration: none;
-              width: fit-content;
-            ">Upgrade to Pro →</a>
+            <a href="${escapeHtml(results.upgradeUrl || "https://liarsledger.com/pricing")}" target="_blank"
+               class="upgrade-to-pro-btn--accent" style="margin-top: 4px;">Upgrade to Pro →</a>
           </div>`;
       }
 
@@ -687,7 +700,7 @@ function renderSidebar(results) {
         html += `<div class="ll-empty">No sponsored or cosponsored bills found on these topics.</div>`;
       }
 
-      // VoteSmart — free for everyone now (sourced data, not AI-generated).
+      // VoteSmart - free for everyone now (sourced data, not AI-generated).
       // Used to be Pro-gated; ungated as of the AI-vs-sourced-data tier
       // split. See background.js's PRO-TIER GATING comment for the full
       // reasoning. The claim/verdict upsell above is the real Pro pitch now.
@@ -735,7 +748,7 @@ function renderSidebar(results) {
   // Report button - open standalone report page in new tab.
   // Routed through background.js via chrome.tabs.create rather than calling
   // window.open() directly here. Two reasons, found together:
-  //   1. Reliability — window.open() called from a content script (running
+  //   1. Reliability - window.open() called from a content script (running
   //      in the host page's context) is subject to that page's popup-
   //      blocking behavior and Chrome's same heuristics, which can produce
   //      ERR_BLOCKED_BY_CLIENT inconsistently depending on the host page
@@ -743,7 +756,7 @@ function renderSidebar(results) {
   //      same chrome-extension:// URL into a new tab directly works fine.
   //      chrome.tabs.create() from the background script's own extension
   //      context isn't subject to the host page's popup-blocking at all.
-  //   2. Security — this is the same fix already noted as deferred in
+  //   2. Security - this is the same fix already noted as deferred in
   //      SECURITY.md's "Token in URL Query Parameters" section: opening via
   //      window.open(browser.runtime.getURL(...)) meant the report URL
   //      briefly existed as a value content.js's own code touched in the
@@ -874,7 +887,7 @@ function renderRateLimited(response) {
 }
 
 // --- Capacity warning nudge (shown after successful scan when user count is 2500-4999) ---
-// Not shown to pro users — they already know they're pro, no need to upsell.
+// Not shown to pro users - they already know they're pro, no need to upsell.
 function renderCapacityWarning(upgradeUrl) {
   const footer = document.getElementById("ll-footer-source");
   if (!footer || document.getElementById("ll-capacity-warning")) return;
@@ -890,7 +903,7 @@ function renderCapacityWarning(upgradeUrl) {
     "text-transform:uppercase",
   ].join(";");
   const url = escapeHtml(upgradeUrl || "https://liarsledger.com/pricing");
-  nudge.innerHTML = `⚠ High demand &mdash; <a href="${url}" target="_blank" style="color:#c8a96e;">upgrade for guaranteed access</a>`;
+  nudge.innerHTML = `⚠ High demand - <a href="${url}" target="_blank" style="color:#c8a96e;">upgrade for guaranteed access</a>`;
   footer.appendChild(nudge);
 }
 

@@ -64,7 +64,7 @@ LLM extraction endpoints accept:
 { "articleText": "...", "scanToken": "..." }
 ```
 
-`scanToken` is required. The backend's `requireScanToken` middleware rejects requests without a valid, unconsumed token. The same token is reused for both Claude and Mistral calls in dual-model mode — one scan, two extraction calls, one token.
+`scanToken` is required. The backend's `requireScanToken` middleware rejects requests without a valid, unconsumed token. The same token is reused for both Claude and Mistral calls in dual-model mode - one scan, two extraction calls, one token.
 
 Both endpoints return:
 
@@ -126,15 +126,15 @@ The `requireScanToken` middleware on extraction endpoints ensures that calling C
 
 All async route handlers are wrapped with a `wrap()` helper that catches rejected promises and routes them to Express error middleware. The global error handler ensures the client always receives a JSON response.
 
-Provider `extract()` functions guard `res.json()` in try/catch — a non-JSON upstream response returns `{ ok: false, error: "...returned non-JSON response" }` rather than throwing.
+Provider `extract()` functions guard `res.json()` in try/catch - a non-JSON upstream response returns `{ ok: false, error: "...returned non-JSON response" }` rather than throwing.
 
 ## Prompt consistency
 
-The prompt sent to both Claude and Mistral is defined in `server/providers/_shared.js` — a single source of truth. Both providers import `buildPrompt` and `parseContent` from this file. The extension-side copy in `src/llm.js` is kept manually in sync.
+The prompt sent to both Claude and Mistral is defined in `server/providers/_shared.js` - a single source of truth. Both providers import `buildPrompt` and `parseContent` from this file. The extension-side copy in `src/llm.js` is kept manually in sync.
 
 ## Deployment
 
-The proxy is deployed on [Render](https://render.com) (Starter plan, $7/month — always-on, no cold starts). Auto-deploy triggers on every push to `main` via `server/render.yaml`.
+The proxy is deployed on [Render](https://render.com) (Starter plan, $7/month - always-on, no cold starts). Auto-deploy triggers on every push to `main` via `server/render.yaml`.
 
 ## Local development
 

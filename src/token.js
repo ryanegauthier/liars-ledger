@@ -132,7 +132,7 @@ async function updateScanInfo(scanInfo) {
     limit: scanInfo.limit ?? stored.limit,
     remaining: scanInfo.remaining ?? stored.remaining,
     // Present only when /api/scan-status reports a failure-driven downgrade
-    // (see store.js's square:downgradereason key) — null/undefined the rest
+    // (see store.js's square:downgradereason key) - null/undefined the rest
     // of the time, including immediately after a successful resubscribe.
     // Explicitly falling through to null (not stored.downgradeReason) when
     // absent from the response, so a stale value can't linger in storage

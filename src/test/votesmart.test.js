@@ -41,8 +41,9 @@ describe("resolveVoteSmartId", () => {
       ],
     });
 
-    const candidateId = await g.resolveVoteSmartId(member);
-    assert.equal(candidateId, "12345");
+    const result = await g.resolveVoteSmartId(member);
+    assert.equal(result.id, "12345");
+    assert.equal(result.partial, false);
   });
 
   it("matches nickname aliases returned by VoteSmart when member first name is a nickname", async () => {
@@ -67,11 +68,18 @@ describe("resolveVoteSmartId", () => {
       ],
     });
 
-    const candidateId = await g.resolveVoteSmartId(member);
-    assert.equal(candidateId, "67890");
+    const result = await g.resolveVoteSmartId(member);
+    assert.equal(result.id, "67890");
+    assert.equal(result.partial, false);
   });
 
-  it("prefers state-scoped VoteSmart office lookup before lastname fallback", async () => {
+  it("does not call the disabled by-office-state endpoint, resolves via lastname directly", async () => {
+    // /v1/officials/by-office-state is block-commented out in
+    // resolveVoteSmartId (confirmed live: 100% 502 rate, not transient -
+    // see the "OPTION B" comment in src/votesmart.js). This test guards
+    // against that endpoint silently getting re-enabled without updating
+    // this test: if it's ever called, the mock throws instead of quietly
+    // succeeding.
     const g = createG();
     const member = {
       bioguide_id: "P000001",
@@ -85,6 +93,9 @@ describe("resolveVoteSmartId", () => {
     g.vsFetch = async (path) => {
       paths.push(path);
       if (path.startsWith("/v1/officials/by-office-state")) {
+        throw new Error("by-office-state is disabled and should not be called");
+      }
+      if (path.startsWith("/v1/officials/by-lastname")) {
         return {
           data: [
             {
@@ -100,12 +111,13 @@ describe("resolveVoteSmartId", () => {
       throw new Error(`Unexpected VoteSmart path: ${path}`);
     };
 
-    const candidateId = await g.resolveVoteSmartId(member);
-    assert.equal(candidateId, "22222");
-    assert.deepEqual(paths, ["/v1/officials/by-office-state?officeId=5&stateId=WA"]);
+    const result = await g.resolveVoteSmartId(member);
+    assert.equal(result.id, "22222");
+    assert.equal(result.partial, false);
+    assert.deepEqual(paths, ["/v1/officials/by-lastname?lastName=Doe&perPage=50&page=1"]);
   });
 
-  it("falls back to lastname if the state office lookup returns no officials", async () => {
+  it("resolves via lastname lookup for a member with no cached ID", async () => {
     const g = createG();
     const member = {
       bioguide_id: "P000002",
@@ -118,9 +130,6 @@ describe("resolveVoteSmartId", () => {
     const paths = [];
     g.vsFetch = async (path) => {
       paths.push(path);
-      if (path.startsWith("/v1/officials/by-office-state")) {
-        return { data: [] };
-      }
       if (path.startsWith("/v1/officials/by-lastname")) {
         return {
           data: [
@@ -137,11 +146,11 @@ describe("resolveVoteSmartId", () => {
       throw new Error(`Unexpected VoteSmart path: ${path}`);
     };
 
-    const candidateId = await g.resolveVoteSmartId(member);
-    assert.equal(candidateId, "33333");
+    const result = await g.resolveVoteSmartId(member);
+    assert.equal(result.id, "33333");
+    assert.equal(result.partial, false);
     assert.deepEqual(paths, [
-      "/v1/officials/by-office-state?officeId=5&stateId=TX",
-      "/v1/officials/by-lastname?lastName=Smith",
+      "/v1/officials/by-lastname?lastName=Smith&perPage=50&page=1",
     ]);
   });
 

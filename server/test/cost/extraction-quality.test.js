@@ -1,10 +1,10 @@
 // server/test/cost/extraction-quality.test.js
-// Tests that actually call Claude/Mistral extraction — real, small API costs
+// Tests that actually call Claude/Mistral extraction - real, small API costs
 // (~$0.001/call combined). Does NOT run with `npm test` by default.
 //
 // Run explicitly with: npm run test:cost
 //
-// These exist to catch a different class of bug than test/free/ — not
+// These exist to catch a different class of bug than test/free/ - not
 // "is the gating correct" but "is the extraction actually working and
 // returning sensible data." Keep this suite small and deliberate; every
 // test here costs real money every time it runs.
@@ -17,7 +17,7 @@ const SAMPLE_ARTICLE =
   "her claim that she champions roads and bridges funding for the state. " +
   "Representative John Doe opposed the measure, citing budget concerns.";
 
-describe("Claude extraction — basic sanity (real API call)", () => {
+describe("Claude extraction - basic sanity (real API call)", () => {
   beforeAll(async () => {
     await setTestTokenTier("pro"); // pro so we can check the full unstripped shape
   });
@@ -47,7 +47,7 @@ describe("Claude extraction — basic sanity (real API call)", () => {
   }, 30000);
 });
 
-describe("Mistral extraction — basic sanity (real API call)", () => {
+describe("Mistral extraction - basic sanity (real API call)", () => {
   beforeAll(async () => {
     await setTestTokenTier("pro");
   });

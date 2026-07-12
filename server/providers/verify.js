@@ -121,14 +121,14 @@ async function verifyClaim(claim, member, record) {
       }),
       // Found via security review: this fetch had no timeout at all, unlike
       // server/providers/claude.js's matching pattern (AbortSignal.timeout
-      // (30000)) and src/verify.js's client-side equivalent — both already
+      // (30000)) and src/verify.js's client-side equivalent - both already
       // had one. A Pro user triggering verification while Claude's API is
       // experiencing elevated latency would hold the request open
       // indefinitely (until the OS socket timeout, typically minutes); a
       // hanging fetch doesn't reject, so wrap()'s promise-rejection catch
       // never sees it. Low severity (requires Pro + unusual API conditions,
       // not exploitable for abuse beyond tying up one request) but a real
-      // reliability gap — fixed to match the existing 30s pattern.
+      // reliability gap - fixed to match the existing 30s pattern.
       signal: AbortSignal.timeout(30000),
     });
   } catch (e) {

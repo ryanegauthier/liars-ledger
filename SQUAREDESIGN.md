@@ -1,4 +1,4 @@
-# Liar's Ledger — Square Subscription Integration: Pseudo-code Design
+# Liar's Ledger - Square Subscription Integration: Pseudo-code Design
 
 Status: design only, no implementation yet.
 Verified against Square's live docs/forums on 2026-06-19 (see citations inline).
@@ -13,7 +13,7 @@ Two assumptions from the original design don't survive contact with Square's cur
    confirmed (Feb 2025 forum thread) that the customer is derived from checkout-entered
    info, not the `customer_id` you pass. So we never pre-create a Square Customer and
    expect it to attach.
-2. **Order-level `reference_id` is not in the subscription webhook payload directly** —
+2. **Order-level `reference_id` is not in the subscription webhook payload directly** -
    but it IS retrievable. The trick (confirmed working, Square engineer + independent
    dev confirmation, Feb 2025): set `reference_id` on the **order** object passed into
    `CreatePaymentLink`. That order becomes the subscription's **order template** (not
@@ -24,13 +24,13 @@ So the flow is: **token → order.reference_id (at checkout) → order_template_
 webhook) → RetrieveOrder → reference_id (recovered) → flip tier.**
 
 No new PII collected by us. Square's hosted checkout will still require the buyer to
-enter contact info (their requirement, not ours) — that lives in Square's Customer
+enter contact info (their requirement, not ours) - that lives in Square's Customer
 Directory, not our Redis. Disclosure language needs to distinguish "what Square
 collects to process payment" from "what we retain."
 
 ---
 
-## 1. Catalog API — Subscription Plan + Plan Variation
+## 1. Catalog API - Subscription Plan + Plan Variation
 
 One-time setup script, run manually (not part of request-time code).
 
@@ -53,7 +53,7 @@ FUNCTION setupCatalog():
       id: "#pro-plan",                      # temporary client-side id
       subscriptionPlanData: {
         name: PLAN_NAME
-        # no all_items / eligible_category_ids — this isn't tied to
+        # no all_items / eligible_category_ids - this isn't tied to
         # physical catalog items, it's a pure access-tier subscription
       }
     }
@@ -64,7 +64,7 @@ FUNCTION setupCatalog():
   PRINT "Save this in your .env as SQUARE_SUBSCRIPTION_PLAN_ID"
 
   # Step 2: create the plan variation (price + cadence)
-  # NOTE: single phase, STATIC pricing — required for Checkout API
+  # NOTE: single phase, STATIC pricing - required for Checkout API
   # subscription support (Checkout API only supports 1 paid phase,
   # or 1 free + 1 paid phase)
   variationResult = squareClient.catalog.upsertCatalogObject({
@@ -94,7 +94,7 @@ FUNCTION setupCatalog():
   PRINT "Plan variation created: " + variationId
   PRINT "Save this in your .env as SQUARE_PLAN_VARIATION_ID"
   PRINT "IMPORTANT: this is the ID CreatePaymentLink needs as"
-  PRINT "subscription_plan_id (confusing name — it wants the VARIATION id,"
+  PRINT "subscription_plan_id (confusing name - it wants the VARIATION id,"
   PRINT "not the plan id)"
 
 RUN setupCatalog() against Sandbox first, verify in Square Sandbox
@@ -107,14 +107,14 @@ named `subscription_plan_id` but documentation explicitly says it must contain t
 
 ---
 
-## 2. `liarsledger.com/pricing` — Checkout Flow
+## 2. `liarsledger.com/pricing` - Checkout Flow
 
 ```
-ROUTE: GET /pricing  (static page, liarsledger.com — likely same Express app
+ROUTE: GET /pricing  (static page, liarsledger.com - likely same Express app
                        or a thin static site; assume same app for now)
 
   Renders pricing.html with a "Subscribe" button.
-  Button posts to /pricing/checkout, NOT directly to Square — we need to
+  Button posts to /pricing/checkout, NOT directly to Square - we need to
   build the order server-side so we control reference_id.
 
   The anonymous token must travel from the Chrome extension to this page.
@@ -142,7 +142,7 @@ ROUTE: GET /pricing  (static page, liarsledger.com — likely same Express app
     - simplest fix: GET /pricing?token=X renders the page, JS on the page
       reads it from the URL, stores in memory only, and the actual
       checkout-creation request is a POST with the token in the body, not
-      the query string. Then only the page-load GET has it in the URL —
+      the query string. Then only the page-load GET has it in the URL -
       acceptable, matches how the token already gets handled by
       chrome.storage.sync (still client-controlled, not novel exposure).
 
@@ -162,7 +162,7 @@ ROUTE: POST /pricing/checkout
 
     idempotencyKey = uuid()   # fresh per checkout attempt, NOT derived
                                # from the token (token could retry checkout
-                               # multiple times legitimately — failed card,
+                               # multiple times legitimately - failed card,
                                # abandoned checkout, etc.)
 
     paymentLinkResult = squareClient.checkout.createPaymentLink({
@@ -170,7 +170,7 @@ ROUTE: POST /pricing/checkout
       order: {
         locationId: SQUARE_LOCATION_ID,
         referenceId: token,              # <-- the whole point
-        # do NOT also set customer_id here — confirmed it's ignored /
+        # do NOT also set customer_id here - confirmed it's ignored /
         # superseded by checkout-entered info for this flow
       },
       checkoutOptions: {
@@ -192,7 +192,7 @@ ROUTE: POST /pricing/checkout
 
 ROUTE: GET /pricing/success
   Static "thanks, check your extension in a minute" page.
-  Tier flip happens via webhook, NOT here — this page must not be trusted
+  Tier flip happens via webhook, NOT here - this page must not be trusted
   to grant Pro. (Square's redirect happens regardless of final payment
   state in some edge cases / can be replayed by the user hitting back-
   forward; webhook is the only source of truth.)
@@ -200,7 +200,7 @@ ROUTE: GET /pricing/success
 
 ---
 
-## 3. `POST /webhook/square` — Express Backend
+## 3. `POST /webhook/square` - Express Backend
 
 ```
 SETUP (once, outside the request handler):
@@ -208,7 +208,7 @@ SETUP (once, outside the request handler):
   Confirmed verification inputs: HMAC-SHA256 of (notificationUrl + rawBody),
   signing key = the webhook subscription's signature key (Square dashboard),
   header = `x-square-hmacsha256-signature`, compared as base64, must be
-  constant-time (the SDK helper handles this — don't reimplement).
+  constant-time (the SDK helper handles this - don't reimplement).
 
   CRITICAL: Express's express.json() middleware must NOT run on this route
   before we capture the raw body. Signature is computed over raw bytes;
@@ -240,11 +240,11 @@ ROUTE: POST /webhook/square
     event = JSON.parse(rawBody)
 
     # ALWAYS 200 quickly once verified+parsed, even if our downstream
-    # processing has an issue — Square retries on non-2xx and we don't
+    # processing has an issue - Square retries on non-2xx and we don't
     # want duplicate side effects from naive retries on top of real
     # processing errors. Do real work, but don't let a downstream
     # exception turn into a 500 that triggers pointless retries for
-    # something like "Redis was briefly down" — handle that internally
+    # something like "Redis was briefly down" - handle that internally
     # (queue/retry ourselves) rather than via Square's retry semantics.
 
     SWITCH event.type:
@@ -256,7 +256,7 @@ ROUTE: POST /webhook/square
 
       CASE "invoice.payment_made":   # confirm exact event name against
                                       # Invoices API webhook list before
-                                      # implementing — used loosely here
+                                      # implementing - used loosely here
         AWAIT handleInvoicePaid(event.data.object)
 
       CASE "invoice.payment_failed":  # confirm exact name
@@ -280,7 +280,7 @@ FUNCTION handleSubscriptionUpsert(subscription):
     return   # nothing more we can do with this event; don't crash
 
   # Resolve token. Check Redis cache first (we may have already resolved
-  # this order_template_id on a prior event — created fires once, but
+  # this order_template_id on a prior event - created fires once, but
   # updated can fire many times over a subscription's life).
   token = AWAIT redis.get("square:ordertemplate:" + orderTemplateId)
 
@@ -296,7 +296,7 @@ FUNCTION handleSubscriptionUpsert(subscription):
     # don't need another RetrieveOrder call
     AWAIT redis.set("square:ordertemplate:" + orderTemplateId, token)
 
-  # Write/refresh the recovery mapping regardless of status —
+  # Write/refresh the recovery mapping regardless of status -
   # this is what lets us find the token later from a receipt/customer ID
   AWAIT redis.set("square:customer:" + customerId, token)
   AWAIT redis.set("square:subscription:" + subscriptionId, token)
@@ -306,11 +306,11 @@ FUNCTION handleSubscriptionUpsert(subscription):
   ELSE IF status == "CANCELED":
     AWAIT store.downgradeTier(token, "free")
   ELSE IF status == "PENDING":
-    # no tier change yet — wait for ACTIVE. PENDING means accepted but
+    # no tier change yet - wait for ACTIVE. PENDING means accepted but
     # not yet billed/started (e.g. future start_date).
     LOG info "subscription pending, no tier change: " + subscriptionId
   ELSE:
-    LOG info "subscription status " + status + " — no tier action defined yet"
+    LOG info "subscription status " + status + " - no tier action defined yet"
 
 
 FUNCTION handleInvoicePaid(invoiceObject):
@@ -333,17 +333,17 @@ FUNCTION handlePaymentFailed(invoiceObject):
   IF token:
     LOG warning "payment failed for token (partial, no PII): " + token.slice(0,8) + "..."
     # decide policy: immediate downgrade, or grace period?
-    # recommend: do NOT immediately downgrade on first failure — Square
+    # recommend: do NOT immediately downgrade on first failure - Square
     # itself retries failed payments automatically over some window before
     # the subscription transitions to CANCELED. Downgrading here AND on
     # CANCELED double-punishes a transient card issue. Leave tier as-is;
     # let the eventual subscription.updated -> CANCELED be the real signal.
     # (CONFIRM Square's actual retry/dunning window before finalizing this
-    # policy — not yet verified against current docs.)
+    # policy - not yet verified against current docs.)
 ```
 
 **Event names flagged as unconfirmed above** (`invoice.payment_made`,
-`invoice.payment_failed`) — I used plausible names but have not yet verified
+`invoice.payment_failed`) - I used plausible names but have not yet verified
 these against Square's current Invoices API webhook event list. Need to
 confirm before implementation; will check this when we move to actual code.
 
@@ -402,22 +402,22 @@ ROUTE: POST /restore-token   (new backend endpoint, server/index.js)
 
     # "orderReference" from the user could be a Square order ID, a
     # receipt number, or in practice probably whatever's printed on
-    # their email receipt — need to confirm what Square actually puts
+    # their email receipt - need to confirm what Square actually puts
     # on buyer-facing receipts before finalizing input format/label.
     # Placeholder logic assuming it's resolvable to an order ID:
 
     order = AWAIT squareClient.orders.retrieveOrder(orderReference)
-      # wrap in try/catch — invalid/garbage input will 404 from Square
+      # wrap in try/catch - invalid/garbage input will 404 from Square
 
     IF order not found OR order.state != "COMPLETED":
       return res.status(404).send()
 
     # Verify this order actually corresponds to a real completed payment
-    # — RetrieveOrder alone may not be sufficient proof of payment
+    # - RetrieveOrder alone may not be sufficient proof of payment
     # depending on order state semantics for subscription order templates
     # vs. billed orders. NEEDS VERIFICATION: is the order the user has a
     # receipt for the *order template* (reference_id lives here) or a
-    # *billed cycle order* (reference_id may NOT propagate here — same
+    # *billed cycle order* (reference_id may NOT propagate here - same
     # unreliability problem as the original payment-level reference_id
     # issue)? This determines whether we look up token directly via
     # reference_id here, or whether we need order.customerId ->
@@ -443,25 +443,25 @@ what identifier appears on a buyer's Square receipt/confirmation email, and
 whether `RetrieveOrder` on that identifier reliably has a usable
 `customer_id`. Will check before writing real code for this endpoint.
 
-> **UPDATE — 2026-06-28, verified live (bad news, see §4a below for the
-> proposed fix):** This question went unanswered through implementation —
+> **UPDATE - 2026-06-28, verified live (bad news, see §4a below for the
+> proposed fix):** This question went unanswered through implementation -
 > `/restore-token` shipped asking for "your order number from the receipt,"
 > but a real subscription receipt (Square invoice PDF, checked directly)
 > contains no order ID at all. The only identifier-shaped thing on it is a
-> "View online" link that resolves to a URL containing an `invtmp:...` ID —
+> "View online" link that resolves to a URL containing an `invtmp:...` ID -
 > an invoice **template** ID, which Square's own docs list under
 > "Invoice templates" as an *unsupported* Invoices API feature. So even if
 > `RetrieveOrder`/`GetInvoice` works perfectly, there is currently no path
 > from "what the customer actually has" to "an ID our backend can resolve."
-> Discovered while investigating a real Pro subscriber stuck on free tier —
+> Discovered while investigating a real Pro subscriber stuck on free tier -
 > see §4a for why, and a proposed redesign.
 
 ---
 
-## 4a. Proposed redesign — `resolveTokenFromOrderTemplate` fallback + `/restore-token` input
+## 4a. Proposed redesign - `resolveTokenFromOrderTemplate` fallback + `/restore-token` input
 
 **Status: design only, not yet implemented or verified against live Square
-docs. Same caveat as the rest of this document — confirm against current
+docs. Same caveat as the rest of this document - confirm against current
 API behavior before writing real code, especially the Subscriptions API
 calls below, which haven't been checked the way §0's CreatePaymentLink
 behavior was.**
@@ -472,16 +472,16 @@ Fixing `/restore-token`'s input alone doesn't help if the Redis mapping it
 queries was never written. `/restore-token` and the webhook's slow path both
 depend on the same `"square:customer:" + customerId` key, which currently
 only gets written as a side effect of `resolveTokenFromOrderTemplate`'s
-`RetrieveOrder` call succeeding (§3, original webhook design) — and that's
+`RetrieveOrder` call succeeding (§3, original webhook design) - and that's
 the exact call that fails when `order_template_id` is missing from the
-event (confirmed happening live — see §3's webhook handler in production:
-`"subscription event has no order_template_id — cannot resolve token"`).
+event (confirmed happening live - see §3's webhook handler in production:
+`"subscription event has no order_template_id - cannot resolve token"`).
 So Layer 1 below has to land before Layer 2 can actually help anyone.
 
-### Layer 1 — independent fallback in `resolveTokenFromOrderTemplate`
+### Layer 1 - independent fallback in `resolveTokenFromOrderTemplate`
 
 `subscriptionId` is present on every `subscription.created`/`updated` event,
-unconditionally — unlike `order_template_id`. If Square's Subscriptions API
+unconditionally - unlike `order_template_id`. If Square's Subscriptions API
 exposes enough on the subscription object itself to recover the order or
 customer without needing `order_template_id` at all, that becomes a real,
 independent second path rather than the current "last resort" that's
@@ -490,7 +490,7 @@ actually just the same cache, checked first.
 ```
 NEEDS VERIFICATION before implementing: does RetrieveSubscription return
 an order_id, or a customer_id, directly on the subscription object? (Not
-checked yet — this entire layer's design depends on the answer.)
+checked yet - this entire layer's design depends on the answer.)
 
 FUNCTION resolveTokenFromOrderTemplate(orderTemplateId, subscriptionId, customerId):
   # Fast path 1: subscription already resolved on a prior event (unchanged)
@@ -510,7 +510,7 @@ FUNCTION resolveTokenFromOrderTemplate(orderTemplateId, subscriptionId, customer
       IF token: cache all three mappings (unchanged), return token
     CATCH: fall through
 
-  # NEW — independent fallback, doesn't require orderTemplateId at all:
+  # NEW - independent fallback, doesn't require orderTemplateId at all:
   TRY:
     subscription = squareClient.subscriptions.retrieveSubscription(subscriptionId)
     # whichever of these Square's API actually returns -- confirm against
@@ -538,13 +538,13 @@ FUNCTION resolveTokenFromOrderTemplate(orderTemplateId, subscriptionId, customer
 very first event for a brand-new customer and NOTHING has been cached
 yet), the fallback above still returns null. For that specific case, the
 only remaining option is re-deriving from the order at checkout time
-differently — e.g. writing `"square:customer:" + customerId -> token`
+differently - e.g. writing `"square:customer:" + customerId -> token`
 proactively if/when Square's checkout flow ever exposes the customer it's
 about to create before the webhook fires. Not designed here; flagging it
 as the residual gap even after Layer 1 ships, so it doesn't look like
 Layer 1 claims to solve 100% of cases when it doesn't.
 
-### Layer 2 — redesign `/restore-token`'s input around what customers actually have
+### Layer 2 - redesign `/restore-token`'s input around what customers actually have
 
 Checked a real subscription receipt directly: no order ID, no customer ID,
 nothing the current input field can use. The one thing every subscriber
@@ -595,7 +595,7 @@ ROUTE: POST /restore-token   (revised)
 ```
 
 **Rate limiting note**: the existing 5-attempts/15-min limit (per the
-original `/restore-token` design) becomes more important here, not less —
+original `/restore-token` design) becomes more important here, not less -
 searching by email is a softer input than an opaque order ID, so it's
 worth confirming the rate limit is keyed on something that can't be
 trivially worked around (IP + email pair, not just IP alone, so someone
@@ -603,7 +603,7 @@ can't brute-force-guess emails by rotating IPs, and a legitimate user
 retrying isn't blocked by someone else's attempts on a shared IP).
 
 **Privacy note**: this surfaces a behavior difference between "no Square
-customer matches this email" and "matches, but no token" — worth a quick
+customer matches this email" and "matches, but no token" - worth a quick
 gut-check on whether that distinction lets someone probe whether an email
 address has ever paid for this product. Likely low-stakes for this
 product, but worth a deliberate yes/no rather than an unexamined default.
@@ -620,7 +620,7 @@ New section, placed near existing token-handling language:
   If you subscribe to Liar's Ledger Pro, you'll be taken to a checkout
   page hosted by Square, our payment processor. Square collects the
   payment and contact information it requires to process your
-  transaction (such as a card and contact details) — we never see or
+  transaction (such as a card and contact details) - we never see or
   store this information ourselves.
 
   To connect your payment to your anonymous token without collecting
@@ -633,11 +633,11 @@ New section, placed near existing token-handling language:
       of a completed payment (such as your order or receipt reference)
 
   This reference does not include your name, email, payment details,
-  or any other information Square collects — only an internal
+  or any other information Square collects - only an internal
   identifier pairing."
 
   PLACEMENT NOTE: should sit as its own subsection, not buried inside
-  the existing "we don't collect identifying information" paragraph —
+  the existing "we don't collect identifying information" paragraph -
   that paragraph's claim needs to stay true on its own for non-Pro
   users; this is a clearly-scoped exception for subscribers only.
 ```
@@ -647,28 +647,28 @@ New section, placed near existing token-handling language:
 ## 6. CHANGELOG.md / SECURITY.md Updates
 
 ```
-CHANGELOG.md — new entry, file-by-file as per existing project convention:
+CHANGELOG.md - new entry, file-by-file as per existing project convention:
 
   ## [0.14.0] - <date TBD>
 
   ### Added
-  - `scripts/setup-square-catalog.js` — one-time Catalog API setup for
+  - `scripts/setup-square-catalog.js` - one-time Catalog API setup for
     Pro subscription plan + monthly variation
-  - `server/routes/pricing.js` — `/pricing/checkout` route, builds Square
+  - `server/routes/pricing.js` - `/pricing/checkout` route, builds Square
     order with anonymous token as `reference_id`, redirects to
     Square-hosted checkout
-  - `server/routes/webhook-square.js` — `POST /webhook/square`, verifies
+  - `server/routes/webhook-square.js` - `POST /webhook/square`, verifies
     Square signature, handles subscription lifecycle + invoice events,
     resolves token via order_template_id -> RetrieveOrder -> reference_id,
     writes recovery mapping to Redis
-  - `server/routes/restore-token.js` — `POST /restore-token`, manual
+  - `server/routes/restore-token.js` - `POST /restore-token`, manual
     recovery flow for lost tokens via Square order/customer lookup
-  - `extension/popup.html` / `popup.js` — "Restore token" UI
-  - `privacy.html` — new disclosure section for Pro subscriber data
+  - `extension/popup.html` / `popup.js` - "Restore token" UI
+  - `privacy.html` - new disclosure section for Pro subscriber data
     retention (Square transaction reference <-> anonymous token mapping)
 
   ### Changed
-  - `server/providers/store.js` — `upgradeTier()` / `downgradeTier()` now
+  - `server/providers/store.js` - `upgradeTier()` / `downgradeTier()` now
     also invoked from webhook handler, not just `/admin/set-tier`
 
   ### Decisions
@@ -677,11 +677,11 @@ CHANGELOG.md — new entry, file-by-file as per existing project convention:
     own forums confirm doesn't reliably round-trip on payment.created/
     payment.updated events.
   - Did NOT attempt to pre-create a Square Customer and pass customer_id
-    into CreatePaymentLink — confirmed (Square forum, Feb 2025) that this
+    into CreatePaymentLink - confirmed (Square forum, Feb 2025) that this
     is silently ignored; Square derives the customer from checkout-entered
     info instead.
   - Recovery mapping keys on customer_id/subscription_id, written at
-    webhook-resolution time, not at "signup time" as originally drafted —
+    webhook-resolution time, not at "signup time" as originally drafted -
     there's nothing to map until Square has created the customer/
     subscription, which happens after checkout, not before.
 
@@ -694,7 +694,7 @@ CHANGELOG.md — new entry, file-by-file as per existing project convention:
     confirmation before /restore-token ships.
 
 
-SECURITY.md — new note:
+SECURITY.md - new note:
 
   ## Tier Management
 
@@ -717,21 +717,21 @@ SECURITY.md — new note:
 ## Summary of what still needs live-doc verification before real code
 
 1. Exact Invoices API webhook event type names (payment succeeded / failed)
-   — still open, not addressed by this update.
+   - still open, not addressed by this update.
 2. ~~Whether a billed-cycle order (vs. the order template) carries `reference_id`
    reliably, or whether `/restore-token` must key off `customer_id` only~~
-   — **superseded.** Confirmed live (2026-06-28) that the bigger problem is
+   - **superseded.** Confirmed live (2026-06-28) that the bigger problem is
    upstream of this: `order_template_id` itself is sometimes absent from
    the webhook event entirely, so neither path is reachable. See §4a Layer 1.
-3. ~~What identifier actually appears on a Square buyer receipt~~ —
+3. ~~What identifier actually appears on a Square buyer receipt~~ -
    **verified live (2026-06-28):** no order ID, no customer ID; only an
    `invtmp:...` template-ID link, which Square's docs suggest the
    Invoices API doesn't support directly. See §4a Layer 2 for the proposed
    redesign around email instead.
 4. Square's dunning/retry window for failed subscription payments, to decide
-   grace-period policy in `handlePaymentFailed` — still open, not addressed
+   grace-period policy in `handlePaymentFailed` - still open, not addressed
    by this update. (Note: production code as of v0.17.x already implements
-   a 3-failure/day-3-6-9 retry-window heuristic for this — worth checking
+   a 3-failure/day-3-6-9 retry-window heuristic for this - worth checking
    whether that resolves this open item or just predates this doc being
    updated to reflect it.)
 
@@ -740,11 +740,11 @@ SECURITY.md — new note:
 5. Does `RetrieveSubscription` return `order_id` or `customer_id` directly
    on the subscription object? §4a Layer 1's entire fallback design depends
    on the answer and is unverified.
-6. Exact `SearchCustomers` filter shape for an exact-match email lookup —
+6. Exact `SearchCustomers` filter shape for an exact-match email lookup -
    §4a Layer 2 pseudocode is a guess at the shape, not confirmed.
 7. What happens for a customer whose `square:customer:{id}` mapping was
    never written by ANY path (true first-event failure, nothing cached
-   yet anywhere) — §4a Layer 1 explicitly does not solve this residual
+   yet anywhere) - §4a Layer 1 explicitly does not solve this residual
    case; flagged there, not designed.
 
 Once you confirm this overall shape looks right, next step is verifying item

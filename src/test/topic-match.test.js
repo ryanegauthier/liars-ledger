@@ -18,6 +18,21 @@ describe("billMatchesTopic", () => {
     const bill = { title: "Rural Broadband Expansion Act" };
     assert.equal(g.billMatchesTopic(bill, "broadband"), true);
   });
+
+  it("matches an LLM search term via its distinctive word, ignoring filler words", () => {
+    const bill = { title: "Medicare Drug Price Negotiation Act of 2025" };
+    assert.equal(g.billMatchesTopic(bill, "Medicare for All"), true);
+  });
+
+  it("matches an LLM search term when only the non-filler word is present", () => {
+    const bill = { title: "Rural Hospital Support Act" };
+    assert.equal(g.billMatchesTopic(bill, "hospital funding"), true);
+  });
+
+  it("does not match when the distinctive word is absent", () => {
+    const bill = { title: "Rural Broadband Expansion Act" };
+    assert.equal(g.billMatchesTopic(bill, "Medicare for All"), false);
+  });
 });
 
 describe("rollCallMatchesTopics", () => {
