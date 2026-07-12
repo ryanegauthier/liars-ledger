@@ -105,6 +105,45 @@ unrelated bills on its own.
 **Tests added:** confirmed both words no longer false-positive alone while
 their real-subject-word companions (`"healthcare"`) still match correctly.
 
+### Fixed: VoteSmart "Vote History" matched almost nothing against LLM-phrased topics
+
+User noticed the "Vote History" (VoteSmart) section of a report never
+overlapped with the "Legislation" (Congress.gov sponsored/cosponsored)
+section for the same member. Some non-overlap is expected - sponsored bills
+and floor votes are different data sets by nature - but tracing the code
+found a real bug stacked on top: `getVoteSmartVotes()` (`src/votesmart.js`)
+matched topics with a raw `blob.includes(topic)` substring check and an
+exact-string category-expansion check, while `billMatchesTopic()`
+(`src/topic-match.js`, used for the Legislation section) had already been
+upgraded across v0.17.9 to word-aware matching via `topicWordsMatchText()`.
+`getVoteSmartVotes()` was never wired up to that shared logic.
+
+In practice, `mergeTopicsForMember()` (`src/topic-match.js`) uses the LLM's
+own phrasing (e.g. "Medicare for All") for every scan where the LLM
+succeeds - the canonical `TOPIC_TITLE_KEYWORDS` keys are only used as a
+last-resort fallback when the LLM fails outright. A raw substring check
+almost never finds "medicare for all" verbatim inside a formal bill title
+like "Medicare Drug Price Negotiation Act," so the Vote History section was
+silently starved relative to Legislation, which already had the word-aware
+matcher.
+
+**`src/votesmart.js`**
+- `getVoteSmartVotes()`'s direct title/category match now calls the shared
+  `billMatchesTopic()` (already a global by `importScripts` load order -
+  `topic-match.js` loads before `votesmart.js`) instead of a raw substring
+  check, so it benefits from the same distinctive-word/filler-word logic as
+  the Legislation section.
+- The VoteSmart-category-to-canonical-topic expansion match (e.g. VoteSmart's
+  own `"Health Insurance"` category implying `"health care"`) is unchanged -
+  still exact-string equality, since it only fires when canonical fallback
+  topics are in play, not LLM phrasing.
+
+**Tests added:** `src/test/votesmart.test.js` - confirms an LLM-phrased
+topic ("Medicare for All") now matches via its distinctive word, confirms a
+genuinely unrelated bill still doesn't match, and confirms the
+category-expansion path still works. Sandbox now loads `topic-match.js`
+before `votesmart.js` to match real load order.
+
 ---
 
 ## [0.17.9] - 2026-07-12

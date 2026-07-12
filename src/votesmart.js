@@ -533,12 +533,21 @@ async function getVoteSmartVotes(candidateId, topics) {
 
     const matched = votes.filter(v => {
       const voteCategories = (v.categories || []).map(c => c.name);
-
-      // Direct title/category match against topics
       const blob = [v.title || "", ...voteCategories].join(" ").toLowerCase();
-      if (topicsLower.some(topic => blob.includes(topic))) return true;
 
-      // Category → topic expansion match
+      // Direct title/category match against topics. Uses billMatchesTopic
+      // (src/topic-match.js, loaded before this file) so LLM-phrased search
+      // terms like "Medicare for All" match the same word-aware way here as
+      // they do against Congress.gov's sponsored/cosponsored list - a raw
+      // blob.includes(topic) check almost never matched real LLM phrasing
+      // against a formal bill title, which was silently starving this
+      // section relative to the Legislation one.
+      if (topics.some(topic => billMatchesTopic({ title: blob }, topic))) return true;
+
+      // Category → topic expansion match: VoteSmart's own category
+      // taxonomy (e.g. "Health Insurance") maps to our canonical topic
+      // keys. Kept as exact-string equality - this only fires when
+      // fallbackTopics (canonical keys) are in play, not LLM phrasing.
       for (const cat of voteCategories) {
         const mappedTopics = VS_CATEGORY_TOPICS[cat] || [];
         if (mappedTopics.some(mt => topicsLower.includes(mt))) return true;

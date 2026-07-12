@@ -4,7 +4,10 @@ import { loadScript } from "./helpers/load-script.js";
 
 const createG = () => {
   const storageSession = {};
-  return loadScript("src/votesmart.js", {
+  // topic-match.js loads before votesmart.js via importScripts in the real
+  // extension (see CLAUDE.md load order) - getVoteSmartVotes calls its
+  // billMatchesTopic global, so both must load into the same sandbox here.
+  return loadScript(["src/topic-match.js", "src/votesmart.js"], {
     browser: {
       storage: {
         session: {
@@ -330,5 +333,50 @@ describe("resolveVoteSmartId", () => {
     const data = await g.vsFetch("/v1/officials/by-lastname?lastName=Candidate");
     assert.equal(data.data[0].id, "88888");
     assert.equal(fetchCount, 3);
+  });
+});
+
+describe("getVoteSmartVotes", () => {
+  it("matches an LLM-phrased topic via its distinctive word, not just a raw substring", async () => {
+    // Confirmed live 2026-07-12: LLM search terms like "Medicare for All"
+    // almost never appear verbatim in a formal bill title, so the old raw
+    // blob.includes(topic) check silently matched almost nothing - this is
+    // why "Vote History" showed no overlap with "Legislation" (which uses
+    // billMatchesTopic's word-aware matching via src/topic-match.js).
+    const g = createG();
+    g.vsFetch = async () => ({
+      data: [
+        { billNumber: "HR 1", title: "Medicare Drug Price Negotiation Act of 2025", vote: "Y", categories: [] },
+      ],
+    });
+
+    const { votes } = await g.getVoteSmartVotes("3564", ["Medicare for All"]);
+    assert.equal(votes.length, 1);
+    assert.equal(votes[0].billNumber, "HR 1");
+  });
+
+  it("does not match when no topic word appears in the bill title or categories", async () => {
+    const g = createG();
+    g.vsFetch = async () => ({
+      data: [
+        { billNumber: "HR 2", title: "Rural Broadband Expansion Act", vote: "N", categories: [] },
+      ],
+    });
+
+    const { votes } = await g.getVoteSmartVotes("3564", ["Medicare for All"]);
+    assert.equal(votes.length, 0);
+  });
+
+  it("still matches via VoteSmart category -> canonical topic expansion", async () => {
+    const g = createG();
+    g.vsFetch = async () => ({
+      data: [
+        { billNumber: "HR 3", title: "Some Unrelated Sounding Title", vote: "Y", categories: [{ name: "Health Insurance" }] },
+      ],
+    });
+
+    const { votes } = await g.getVoteSmartVotes("3564", ["health care"]);
+    assert.equal(votes.length, 1);
+    assert.equal(votes[0].billNumber, "HR 3");
   });
 });
