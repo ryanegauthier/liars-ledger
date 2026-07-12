@@ -44,6 +44,69 @@ The Account panel's "Restore Pro after reinstalling" flow asks users to paste a 
 
 ---
 
+## [0.17.10] - 2026-07-12
+
+### Fixed: our own rate limiter could starve claim verification, not VoteSmart's
+
+Found by inspecting a real support debug log: a 9-member scan showed
+"Verification request failed" for every member, alongside 9x `verify: HTTP
+429: {"error":"Too many requests, please slow down."}`. This looked like it
+could be VoteSmart-side, but it wasn't - it was our own general rate limiter
+(`app.use("/api", limiter)`, 60/min per IP) rejecting our own extension's
+calls to `/api/verify-claim`, which runs last in a scan after every
+Congress.gov/GovTrack/VoteSmart proxy call for every member.
+
+The math: a single large scan (10 figures - the LLM prompt's own cap) costs
+~60 proxy requests on its own (2 Congress.gov + 1 GovTrack + up to 3
+VoteSmart calls per member) before `verify-claim` even runs. Worse,
+VoteSmart's own retry logic (`src/votesmart.js`, added across earlier
+releases to cope with its flakiness) amplifies this further - each retried
+page can cost up to 12 actual HTTP requests to *our* server (4
+`fetchPageWithExtraRetries` attempts x 3 inner `vsFetch` retries each), not
+the 1-3 visible in the retry log lines. So the worse VoteSmart's moment is,
+the more of our own shared rate-limit budget gets consumed retrying it -
+exactly when `verify-claim`, last in line, is most likely to get starved by
+a budget it never touched. One third-party hiccup was cascading into a
+second, unrelated feature failing for every Pro user on that scan.
+
+**`server/index.js`**
+- New `verifyLimiter` (30/min per IP), attached only to `/api/verify-claim`
+  - isolates it from proxy-route noise so upstream VoteSmart/Congress.gov/
+  GovTrack volume (including retry amplification) can never starve
+  verification again. 30/min comfortably covers 3x the 10-figure-per-scan
+  cap; this route has no retry logic of its own to amplify further.
+- General `limiter` raised from 60/min to 200/min - gives a maxed-out,
+  somewhat-flaky single scan real headroom, while still capping a client
+  at roughly 3 full scans/minute, which is not normal single-user usage.
+
+This is a server-side change - unlike v0.17.9, this release needs an
+actual Render redeploy to take effect, not just an extension reload.
+
+### Topic-matching precision: two more generic-word false positives
+
+Found in the same real report used to confirm the v0.17.9 fixes - both new
+findings are the identical failure mode as the `"insurance"` fix in
+v0.17.9: an LLM search term's real subject word gets diluted by a second,
+overly generic word that survives the filler-word filter and matches
+unrelated bills on its own.
+
+**`src/topic-match.js`**
+- Added `"public"`/`"option"` to `GENERIC_TOPIC_FILLER_WORDS` - confirmed
+  live: "public option healthcare" left "public" as the sole surviving
+  distinctive word, which alone matched "Protecting Public Safety
+  Employees' Timely Retirement Act" (the same pension bill the
+  "retirement" keyword fix in v0.17.9 was supposed to have excluded -
+  it came back through a different path). "option" added alongside it for
+  the same reason, since it's the other half of the same two-word concept.
+- Added `"cost"`/`"costs"` - confirmed live: "healthcare cost crisis" left
+  "cost" as the sole surviving distinctive word, which alone matched
+  "Increase Federal Disaster Cost Share Act."
+
+**Tests added:** confirmed both words no longer false-positive alone while
+their real-subject-word companions (`"healthcare"`) still match correctly.
+
+---
+
 ## [0.17.9] - 2026-07-12
 
 ### Fixed: office+state fast path could attribute a different person's VoteSmart record

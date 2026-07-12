@@ -62,6 +62,33 @@ describe("billMatchesTopic", () => {
     const bill = { title: "Affordable Health Care Act" };
     assert.equal(g.billMatchesTopic(bill, "health insurance reform"), true);
   });
+
+  it("does not match on \"public\" alone - confirmed live false positive", () => {
+    // "public option healthcare" left "public" as a surviving distinctive
+    // word, which alone matched "Protecting Public Safety Employees'
+    // Timely Retirement Act" - unrelated to the health care "public
+    // option" concept the term was describing.
+    const bill = { title: "Protecting Public Safety Employees' Timely Retirement Act of 2022" };
+    assert.equal(g.billMatchesTopic(bill, "public option healthcare"), false);
+  });
+
+  it("still matches \"public option healthcare\" on the real subject word", () => {
+    const bill = { title: "Rural Healthcare Access Act" };
+    assert.equal(g.billMatchesTopic(bill, "public option healthcare"), true);
+  });
+
+  it("does not match on \"cost\" alone - confirmed live false positive", () => {
+    // "healthcare cost crisis" left "cost" as a surviving distinctive
+    // word, which alone matched "Increase Federal Disaster Cost Share
+    // Act" - unrelated to healthcare costs.
+    const bill = { title: "Increase Federal Disaster Cost Share Act of 2021" };
+    assert.equal(g.billMatchesTopic(bill, "healthcare cost crisis"), false);
+  });
+
+  it("still matches \"healthcare cost crisis\" on the real subject word", () => {
+    const bill = { title: "Rural Healthcare Access Act" };
+    assert.equal(g.billMatchesTopic(bill, "healthcare cost crisis"), true);
+  });
 });
 
 describe("rollCallMatchesTopics", () => {

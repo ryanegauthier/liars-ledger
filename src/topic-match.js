@@ -54,6 +54,16 @@ const GENERIC_TOPIC_FILLER_WORDS = new Set([
   // article being scanned. Only meaningful paired with its subject
   // ("health insurance", "flood insurance"), not distinctive alone.
   "insurance",
+  // "public"/"option" confirmed live: "public option healthcare" left
+  // "public" as a surviving distinctive word, which alone matched
+  // "Protecting Public Safety Employees' Timely Retirement Act" - a
+  // pension bill unrelated to the health care "public option" concept the
+  // term was actually describing.
+  "public", "option",
+  // "cost"/"costs" confirmed live: "healthcare cost crisis" left "cost" as
+  // a surviving distinctive word, which alone matched "Increase Federal
+  // Disaster Cost Share Act" - unrelated to healthcare costs.
+  "cost", "costs",
 ]);
 
 // Matches a raw topic/search-term string (not necessarily a

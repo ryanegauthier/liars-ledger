@@ -36,7 +36,7 @@ function figureForMember(figures, member) {
 // --- Message listener ---
 browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "ping") {
-    sendResponse({ status: "ok", version: "0.17.9" });
+    sendResponse({ status: "ok", version: "0.17.10" });
     return true;
   }
 
@@ -489,7 +489,7 @@ function classifyError(err) {
   return "ERR-UNKNOWN";
 }
 
-logger.info("background", "service worker loaded v0.17.9");
+logger.info("background", "service worker loaded v0.17.10");
 
 // Initialize token and sync tier
 getOrCreateToken().then((t) => {

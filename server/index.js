@@ -89,12 +89,40 @@ app.use(express.json({
 }));
 
 // ── Rate limiting ─────────────────────────────────────────────────────────────
+// General limiter was 60/min, shared across every /api/* route including the
+// Congress.gov/VoteSmart/GovTrack proxies AND /api/verify-claim. Confirmed
+// live: a single large scan (10 figures, the LLM prompt's own cap) legitimately
+// costs ~60 proxy requests on its own (2 Congress.gov + 1 GovTrack + up to 3
+// VoteSmart calls per member) before verify-claim even runs - and VoteSmart's
+// own retry logic (src/votesmart.js) amplifies this further: each retried page
+// can cost up to 12 actual HTTP requests to OUR server (4 outer attempts x 3
+// inner vsFetch retries each), not the 1-3 visible in the retry log lines.
+// Raised to 200 to give a maxed-out, somewhat-flaky single scan real headroom,
+// while still capping a client at roughly 3 full scans/minute - clearly
+// abnormal usage, not a real user's single article scan.
 const limiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 60,
+  max: 200,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many requests, please slow down." },
+});
+
+// /api/verify-claim gets its own budget, separate from the general limiter
+// above. Previously it shared the same 60/min bucket as the Congress.gov/
+// VoteSmart/GovTrack proxy calls that run before it in a scan - confirmed
+// live: a 9-member scan's own proxy fan-out (plus VoteSmart retry
+// amplification) exhausted that shared budget before verify-claim ran for
+// any member, silently failing Pro-tier verification for the entire scan.
+// Max 30/min comfortably covers 3x the LLM's 10-figure-per-scan cap (no
+// retry logic on this route to amplify further), isolated from upstream
+// proxy noise so a flaky VoteSmart moment can't take down verification too.
+const verifyLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many verification requests, please slow down." },
 });
 
 const supportLimiter = rateLimit({
@@ -278,7 +306,7 @@ const checkoutLimiter = rateLimit({
 
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => {
-  res.json({ status: "ok", version: process.env.npm_package_version || "0.17.9", ts: new Date().toISOString() });
+  res.json({ status: "ok", version: process.env.npm_package_version || "0.17.10", ts: new Date().toISOString() });
 });
 
 // ── Registration ──────────────────────────────────────────────────────────────
@@ -471,7 +499,7 @@ function requirePro(req, res, next) {
 const MAX_CLAIM_LENGTH  = 500;
 const MAX_MEMBER_LENGTH = 100;
 
-app.post("/api/verify-claim", requireToken, requirePro, wrap(async (req, res) => {
+app.post("/api/verify-claim", verifyLimiter, requireToken, requirePro, wrap(async (req, res) => {
   const { claim, member, record } = req.body;
 
   if (!claim) return res.status(400).json({ error: "claim required" });
