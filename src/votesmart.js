@@ -229,7 +229,7 @@ async function fetchPageWithExtraRetries(pagePath) {
       if (attempt >= VS_PAGE_EXTRA_RETRIES) throw e;
       attempt += 1;
       const delay = VS_PAGE_RETRY_BASE_MS * attempt + Math.floor(Math.random() * VS_PAGE_RETRY_JITTER_MS);
-      console.warn(`[Liars Ledger] VoteSmart page retry ${attempt}/${VS_PAGE_EXTRA_RETRIES} for ${pagePath}: ${e.message}`);
+      logger.warn("votesmart", `page retry ${attempt}/${VS_PAGE_EXTRA_RETRIES} for ${pagePath}: ${e.message}`);
       await sleep(delay);
     }
   }
@@ -252,7 +252,7 @@ async function fetchAllVsPages(basePath) {
     try {
       data = await fetchPageWithExtraRetries(`${basePath}&page=${page}`);
     } catch (e) {
-      console.warn(`[Liars Ledger] VoteSmart pagination: page ${page} failed after all retries, salvaging ${allData.length} result(s) from earlier pages: ${e.message}`);
+      logger.warn("votesmart", `pagination: page ${page} failed after all retries, salvaging ${allData.length} result(s) from earlier pages: ${e.message}`);
       return { officials: allData, partial: true, failedAtPage: page };
     }
 
@@ -307,40 +307,42 @@ async function resolveVoteSmartId(member) {
     let officials = [];
     let pathTried = "lastname-only";
     let isPartialResult = false; // true if any pagination step had to salvage a partial page set - see fetchAllVsPages
+    let match = null;
 
-    /* ----------------------------------------------------------------------
-     * OPTION B - office+state-scoped lookup (DISABLED, see CHANGELOG/notes)
-     *
-     * /v1/officials/by-office-state consistently 502s on app.votesmart-api.org
-     * for every officeId/stateId combo tested (confirmed across Warren/MA,
-     * Hill/AR, Thune/SD - 100% failure rate, not transient/rate-limit related).
-     * Root cause suspected to be a host/endpoint mismatch: the classic
-     * api.votesmart.org SOAP-era docs and the votesmartjs wrapper both
-     * document getByOfficeState(officeId, stateId), but app.votesmart-api.org
-     * may not implement the same method/shape, or may require different
-     * params (e.g. officeTypeId letter code instead of numeric officeId -
-     * see "C"/"N"/"L" values observed in raw by-lastname responses).
-     *
-     * Re-enable once the correct endpoint/params are confirmed against
-     * app.votesmart-api.org's actual Swagger spec (not the legacy docs).
-     * Until then, this falls straight through to the lastname lookup below,
-     * which now requests a larger perPage to avoid the page-1-of-10
-     * truncation bug that silently dropped common surnames (Warren,
-     * Gluesenkamp Perez) when results sorted outside the default page.
-     *
+    // Office+state fast path (v0.17.8+): /v1/officials/by-office-id.
+    // The endpoint previously here, /v1/officials/by-office-state, was
+    // never a real path on app.votesmart-api.org (100% 404/502, confirmed
+    // across many office/state combos) - it doesn't appear anywhere in the
+    // API's own Swagger spec. by-office-id is the real equivalent, and
+    // unlike /v1/candidates/by-office-state (which returns every candidate
+    // who ever ran - 329 rows for CA House alone), this is pre-filtered by
+    // VoteSmart to only currently-active officeholders - confirmed live
+    // 2026-07-12: 51 rows for CA House (California's actual seat count),
+    // every row officeStatus="active", no client-side status filtering
+    // needed. Response has no preferredName field (unlike by-lastname), so
+    // this can't replace the compound-surname retry below - it's a fast
+    // first pass only, falling through to the unchanged by-lastname flow
+    // if it doesn't find a match.
     if (state) {
-      pathTried = "by-office-state";
-      try {
-        const stateData = await vsFetch(`/v1/officials/by-office-state?officeId=${targetOffice}&stateId=${encodeURIComponent(state)}`);
-        officials = Array.isArray(stateData?.data) ? stateData.data : [];
-      } catch (e) {
-        officials = [];
+      pathTried = "by-office-id";
+      const officeIdResult = await fetchAllVsPages(
+        `/v1/officials/by-office-id?officeId=${targetOffice}&stateId=${encodeURIComponent(state)}&perPage=50`
+      );
+      match = officeIdResult.officials.find(o =>
+        normalizeVoteSmartOfficeId(o.officeId) === targetOffice &&
+        o.officeStateId?.toUpperCase() === state &&
+        firstNameMatches(o)
+      );
+      if (match) {
+        officials = officeIdResult.officials;
+        isPartialResult = officeIdResult.partial;
+      } else {
+        pathTried = "by-office-id-empty-then-lastname";
       }
     }
-    ---------------------------------------------------------------------- */
 
-    if (!officials.length) {
-      pathTried = officials.length === 0 && state ? "by-office-state-empty-then-lastname" : "lastname-only";
+    if (!match) {
+      pathTried = state ? "by-office-id-empty-then-lastname" : "lastname-only";
 
       // Paginates through every page of by-lastname results rather than
       // trusting a single arbitrary perPage value. Fixed v0.17.0+: the
@@ -369,13 +371,16 @@ async function resolveVoteSmartId(member) {
       // TEMP DEBUG - remove after diagnosing name-resolution mismatch
       console.log(`[LL DEBUG] fell back to by-lastname="${member.last_name}", returned ${officials.length} officials across all pages (path=${pathTried}, partial=${isPartialResult}${isPartialResult ? `, failedAtPage=${lastnameResult.failedAtPage}` : ""})`);
       if (isPartialResult) {
-        console.warn(`[Liars Ledger] VoteSmart: PARTIAL pagination result for "${member.full_name}" - page ${lastnameResult.failedAtPage} failed after all retries. A real match may exist on the missing page and be silently absent here.`);
+        logger.warn("votesmart", `PARTIAL pagination result for "${member.full_name}" - page ${lastnameResult.failedAtPage} failed after all retries. A real match may exist on the missing page and be silently absent here.`);
       }
       // END TEMP DEBUG
     }
 
-    // Pass 1: office + state + first/nick/preferred name
-    let match = officials.find(o =>
+    // Pass 1: office + state + first/nick/preferred name (redundant, and a
+    // no-op, if the office+state fast path above already found a match -
+    // re-running it against the same small already-fetched array is
+    // cheaper than adding a branch to skip it)
+    match = officials.find(o =>
       normalizeVoteSmartOfficeId(o.officeId) === targetOffice &&
       o.officeStateId?.toUpperCase() === state &&
       firstNameMatches(o)
@@ -414,7 +419,7 @@ async function resolveVoteSmartId(member) {
       // TEMP DEBUG - remove after diagnosing name-resolution mismatch
       console.log(`[LL DEBUG] compound-surname retry lastName="${compoundLastNameGuess}", returned ${compoundOfficials.length} officials (partial=${compoundResult.partial})`);
       if (compoundResult.partial) {
-        console.warn(`[Liars Ledger] VoteSmart: PARTIAL pagination result for compound-surname retry on "${member.full_name}" - page ${compoundResult.failedAtPage} failed after all retries.`);
+        logger.warn("votesmart", `PARTIAL pagination result for compound-surname retry on "${member.full_name}" - page ${compoundResult.failedAtPage} failed after all retries.`);
       }
       // END TEMP DEBUG
 
@@ -449,7 +454,7 @@ async function resolveVoteSmartId(member) {
     if (id) await vsSet(cacheKey, id);
     return { id, partial: isPartialResult };
   } catch (e) {
-    console.warn("[Liars Ledger] VoteSmart ID resolution failed:", e.message);
+    logger.warn("votesmart", `ID resolution failed: ${e.message}`);
     return { id: null, partial: false };
   }
 }
@@ -492,7 +497,7 @@ async function getVoteSmartRatings(candidateId) {
 
     return { ratings: [...bySig.values()].sort((a, b) => a.sigName.localeCompare(b.sigName)), errored: false };
   } catch (e) {
-    console.warn("[Liars Ledger] VoteSmart ratings failed:", e.message);
+    logger.warn("votesmart", `ratings failed: ${e.message}`);
     return { ratings: [], errored: true };
   }
 }
@@ -535,7 +540,7 @@ async function getVoteSmartVotes(candidateId, topics) {
     }));
     return { votes: mapped, errored: false };
   } catch (e) {
-    console.warn("[Liars Ledger] VoteSmart votes failed:", e.message);
+    logger.warn("votesmart", `votes failed: ${e.message}`);
     return { votes: [], errored: true };
   }
 }
@@ -549,11 +554,11 @@ function normalizeVsVote(raw) {
 async function lookupVoteSmart(member, topics) {
   const { id: candidateId, partial: idPartial } = await resolveVoteSmartId(member);
   if (!candidateId) {
-    console.warn("[Liars Ledger] VoteSmart: no candidate ID for", member.full_name);
+    logger.warn("votesmart", `no candidate ID for ${member.full_name}`);
     return { candidateId: null, ratings: [], votes: [], partial: idPartial };
   }
 
-  console.log(`[Liars Ledger] VoteSmart: resolved ${member.full_name} → candidateId=${candidateId}`);
+  logger.info("votesmart", `resolved ${member.full_name} → candidateId=${candidateId}`);
 
   const [ratingsResult, votesResult] = await Promise.all([
     getVoteSmartRatings(candidateId),
@@ -567,6 +572,6 @@ async function lookupVoteSmart(member, topics) {
   // ratings/votes" - see getVoteSmartRatings/getVoteSmartVotes's comments.
   const partial = idPartial || ratingsResult.errored || votesResult.errored;
 
-  console.log(`[Liars Ledger] VoteSmart: ${member.full_name} - ${ratingsResult.ratings.length} ratings, ${votesResult.votes.length} votes${partial ? " (PARTIAL - see above for which part failed)" : ""}`);
+  logger.info("votesmart", `${member.full_name} - ${ratingsResult.ratings.length} ratings, ${votesResult.votes.length} votes${partial ? " (PARTIAL - see above for which part failed)" : ""}`);
   return { candidateId, ratings: ratingsResult.ratings, votes: votesResult.votes, partial };
 }

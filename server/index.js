@@ -108,13 +108,21 @@ const supportLimiter = rateLimit({
 app.post("/api/support/debug-log", supportLimiter, wrap(async (req, res) => {
   const payload = req.body || {};
   const logs = Array.isArray(payload.logs) ? payload.logs : [];
-  const preview = logs.slice(-20).join("\n") || "(no logs)";
+  // Full log, not a tail slice - a busy scan easily produces 40-50+ entries
+  // (one "fetching:" log per Congress.gov/GovTrack request alone), so the
+  // previous last-20 truncation cut off exactly the useful early narrative
+  // (LLM provider choice, search terms, resolved names) and kept only
+  // late-scan noise. logger.js's MAX_ENTRIES=200 client-side cap already
+  // bounds this to a reasonable size - no need to truncate again here. The
+  // webhook payload below was never truncated; this just brings the email
+  // in line with it.
+  const preview = logs.join("\n") || "(no logs)";
   const bodyText = [
     `Support request from Liars Ledger`,
     `Version: ${payload.version || "unknown"}`,
     `Token: ${payload.tokenId || "unknown"}`,
     "",
-    "Recent logs:",
+    "Full session log:",
     preview,
   ].join("\n");
 
@@ -270,7 +278,7 @@ const checkoutLimiter = rateLimit({
 
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => {
-  res.json({ status: "ok", version: process.env.npm_package_version || "0.17.7", ts: new Date().toISOString() });
+  res.json({ status: "ok", version: process.env.npm_package_version || "0.17.8", ts: new Date().toISOString() });
 });
 
 // ── Registration ──────────────────────────────────────────────────────────────
@@ -389,80 +397,6 @@ app.post("/api/scan/commit", requireToken, wrap(async (req, res) => {
     return res.status(200).json({ committed: false });
   }
   res.json({ committed: true });
-}));
-
-app.post("/api/support/debug-log", wrap(async (req, res) => {
-  const payload = req.body || {};
-  const logs = Array.isArray(payload.logs) ? payload.logs : [];
-  const preview = logs.slice(-20).join("\n") || "(no logs)";
-  const bodyText = [
-    `Support request from Liars Ledger`,
-    `Version: ${payload.version || "unknown"}`,
-    `Token: ${payload.tokenId || "unknown"}`,
-    "",
-    "Recent logs:",
-    preview,
-  ].join("\n");
-
-  console.log(`[support] token=${payload.tokenId || "unknown"} version=${payload.version || "unknown"}`);
-  console.log(`[support] logs:\n${preview}`);
-
-  const delivery = {
-    email: { attempted: false, success: false, error: null },
-    webhook: { attempted: false, success: false, error: null },
-  };
-
-  if (mailTransport) {
-    delivery.email.attempted = true;
-    try {
-      await mailTransport.sendMail({
-        from: process.env.SMTP_FROM || supportEmail,
-        to: supportEmail,
-        subject: `Liars Ledger support request (${payload.version || "unknown"})`,
-        text: bodyText,
-      });
-      delivery.email.success = true;
-    } catch (e) {
-      delivery.email.error = e.message;
-      console.error(`[support] email delivery failed: ${e.message}`);
-    }
-  }
-
-  if (supportWebhookUrl) {
-    delivery.webhook.attempted = true;
-    try {
-      const webhookRes = await fetch(supportWebhookUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          tokenId: payload.tokenId || null,
-          version: payload.version || null,
-          logs,
-        }),
-      });
-      if (!webhookRes.ok) {
-        throw new Error(`webhook responded ${webhookRes.status}`);
-      }
-      delivery.webhook.success = true;
-    } catch (e) {
-      delivery.webhook.error = e.message;
-      console.error(`[support] webhook delivery failed: ${e.message}`);
-    }
-  }
-
-  const deliveryOk = (delivery.email.attempted ? delivery.email.success : false)
-    || (delivery.webhook.attempted ? delivery.webhook.success : false)
-    || (!delivery.email.attempted && !delivery.webhook.attempted);
-
-  if (!deliveryOk) {
-    return res.status(502).json({
-      ok: false,
-      received: logs.length,
-      delivery,
-    });
-  }
-
-  res.json({ ok: true, received: logs.length, delivery });
 }));
 
 // ── LLM extraction (requires a valid scan token from /api/scan/start above,

@@ -1,4 +1,4 @@
-// Liar's Ledger - popup.js v0.17.7
+// Liar's Ledger - popup.js v0.17.8
 
 const browser = window.browser || window.chrome;
 const toggle         = document.getElementById("enableToggle");
@@ -162,8 +162,19 @@ supportBtn?.addEventListener("click", async () => {
       body: JSON.stringify(payload),
     });
 
+    // The server returns a `delivery` object (email/webhook attempted +
+    // success + error) in the JSON body even on failure - parse it
+    // regardless of res.ok so the real reason (e.g. "email delivery
+    // failed: <SMTP error>") is visible here instead of just a bare status
+    // code. Render's server-side logs aren't currently visible (see
+    // CLAUDE.md open issues), so this is the only diagnosable surface for
+    // a delivery failure right now.
+    let body = null;
+    try { body = await res.json(); } catch { /* non-JSON response, fall through */ }
+
     if (!res.ok) {
-      throw new Error(`support upload failed: ${res.status}`);
+      const reason = body?.delivery?.email?.error || body?.delivery?.webhook?.error;
+      throw new Error(reason ? `support upload failed: ${reason}` : `support upload failed: ${res.status}`);
     }
 
     setStatus("Debug log sent. Thanks for reporting this issue.", "success");

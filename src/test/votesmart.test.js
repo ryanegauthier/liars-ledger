@@ -15,6 +15,10 @@ const createG = () => {
     },
     CONFIG: {},
     authHeaders: async () => ({}),
+    // Real runtime always has this defined - logger.js loads before
+    // votesmart.js via importScripts. No-op here since these tests assert
+    // on return values/paths, not log output.
+    logger: { info: () => {}, warn: () => {}, error: () => {} },
   });
 };
 
@@ -73,13 +77,11 @@ describe("resolveVoteSmartId", () => {
     assert.equal(result.partial, false);
   });
 
-  it("does not call the disabled by-office-state endpoint, resolves via lastname directly", async () => {
-    // /v1/officials/by-office-state is block-commented out in
-    // resolveVoteSmartId (confirmed live: 100% 502 rate, not transient -
-    // see the "OPTION B" comment in src/votesmart.js). This test guards
-    // against that endpoint silently getting re-enabled without updating
-    // this test: if it's ever called, the mock throws instead of quietly
-    // succeeding.
+  it("resolves via the office+state fast path (by-office-id) without ever calling by-lastname", async () => {
+    // /v1/officials/by-office-id is the real, working replacement for the
+    // old /v1/officials/by-office-state (never a real endpoint - confirmed
+    // via live Swagger inspection 2026-07-12). Also guards against
+    // by-office-state ever getting called again - the mock throws if it is.
     const g = createG();
     const member = {
       bioguide_id: "P000001",
@@ -93,9 +95,9 @@ describe("resolveVoteSmartId", () => {
     g.vsFetch = async (path) => {
       paths.push(path);
       if (path.startsWith("/v1/officials/by-office-state")) {
-        throw new Error("by-office-state is disabled and should not be called");
+        throw new Error("by-office-state is not a real endpoint and should never be called");
       }
-      if (path.startsWith("/v1/officials/by-lastname")) {
+      if (path.startsWith("/v1/officials/by-office-id")) {
         return {
           data: [
             {
@@ -114,10 +116,10 @@ describe("resolveVoteSmartId", () => {
     const result = await g.resolveVoteSmartId(member);
     assert.equal(result.id, "22222");
     assert.equal(result.partial, false);
-    assert.deepEqual(paths, ["/v1/officials/by-lastname?lastName=Doe&perPage=50&page=1"]);
+    assert.deepEqual(paths, ["/v1/officials/by-office-id?officeId=5&stateId=WA&perPage=50&page=1"]);
   });
 
-  it("resolves via lastname lookup for a member with no cached ID", async () => {
+  it("falls back to by-lastname when the office+state fast path finds no match", async () => {
     const g = createG();
     const member = {
       bioguide_id: "P000002",
@@ -130,6 +132,9 @@ describe("resolveVoteSmartId", () => {
     const paths = [];
     g.vsFetch = async (path) => {
       paths.push(path);
+      if (path.startsWith("/v1/officials/by-office-id")) {
+        return { data: [], meta: { total: 0, lastPage: 1 } };
+      }
       if (path.startsWith("/v1/officials/by-lastname")) {
         return {
           data: [
@@ -150,6 +155,7 @@ describe("resolveVoteSmartId", () => {
     assert.equal(result.id, "33333");
     assert.equal(result.partial, false);
     assert.deepEqual(paths, [
+      "/v1/officials/by-office-id?officeId=5&stateId=TX&perPage=50&page=1",
       "/v1/officials/by-lastname?lastName=Smith&perPage=50&page=1",
     ]);
   });

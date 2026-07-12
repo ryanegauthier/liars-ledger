@@ -405,10 +405,25 @@ async function resolveGovTrackId(bioguideId) {
   }
 }
 
-// --- Parallel lookup for all resolved politicians ---
+// --- Batched lookup for all resolved politicians ---
+// Firing every member's lookup at once (fully parallel) sends a burst of
+// simultaneous VoteSmart by-lastname requests to the proxy - confirmed
+// live on a 9-member article: 7 of 9 got 502'd repeatedly while only 2
+// succeeded, several ending up with zero VoteSmart data for the scan.
+// Small batches trade some latency for fewer self-inflicted concurrency
+// failures. Each member's own Congress.gov/GovTrack/VoteSmart fetches
+// still run in parallel with each other within a batch - only the number
+// of members processed at once is capped.
+const LOOKUP_BATCH_SIZE = 3;
+
 async function lookupAll(memberJobs, options = {}) {
-  const results = await Promise.all(
-    memberJobs.map(({ member, topics }) => lookupPoliticianOnTopics(member, topics, options))
-  );
+  const results = [];
+  for (let i = 0; i < memberJobs.length; i += LOOKUP_BATCH_SIZE) {
+    const batch = memberJobs.slice(i, i + LOOKUP_BATCH_SIZE);
+    const batchResults = await Promise.all(
+      batch.map(({ member, topics }) => lookupPoliticianOnTopics(member, topics, options))
+    );
+    results.push(...batchResults);
+  }
   return results;
 }

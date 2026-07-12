@@ -44,6 +44,168 @@ The Account panel's "Restore Pro after reinstalling" flow asks users to paste a 
 
 ---
 
+## [0.17.8] - 2026-07-12
+
+### VoteSmart lookup batching to reduce self-inflicted 502 bursts
+
+`lookupAll()` fired every resolved member's Congress.gov/GovTrack/VoteSmart
+lookup in parallel via `Promise.all`, with no cap. Confirmed live on a real
+9-member article: 7 of 9 VoteSmart `by-lastname` lookups got 502'd
+repeatedly (some ending up with zero VoteSmart data for the scan), while
+GovTrack and Congress.gov calls succeeded fine in the same window -
+consistent with VoteSmart's proxy load-shedding under burst concurrency
+from a single client, not a broad outage.
+
+**`src/api.js`**
+- New `LOOKUP_BATCH_SIZE = 3`. `lookupAll()` now processes members in
+  batches of 3 sequentially (each member's own Congress.gov/GovTrack/
+  VoteSmart fetches still run in parallel with each other within a batch -
+  only the number of members in flight at once is capped).
+- Validated live the next day on an 18-figure article (8 resolved members):
+  batching to size 3 produced zero 502s, full VoteSmart data for every
+  member, and the scan completed in ~19s versus the ~66s the unbatched
+  9-member scan took (most of that 66s was the 502-retry storm itself, so
+  batching improved both reliability and, in the failure case, latency).
+- No test added for this specific behavior at the time (see the `api.js`
+  test scaffolding entry below, which added one after the fact).
+
+### Debug-log delivery: dead route removed, full log instead of a 20-line tail
+
+**`server/index.js`**
+- Removed a duplicate, unreachable `POST /api/support/debug-log` route
+  registration (two identical routes existed; Express only ever runs the
+  first match, so the second - an older copy with no retry logic - was
+  dead code, never a live bug, but real cruft).
+- Email preview changed from `logs.slice(-20)` to the full log. A single
+  busy scan produces 40+ logger entries (one `api: fetching:` line alone
+  per Congress.gov/GovTrack request), so the last-20 tail was silently
+  dropping the useful early narrative (LLM provider choice, search terms,
+  resolved names) and keeping only late-scan noise. `logger.js`'s existing
+  `MAX_ENTRIES=200` cap already bounds this to a reasonable size, and the
+  webhook payload was never truncated in the first place - this just
+  brings the email in line with it.
+
+**`popup.js`**
+- The "Send Debug Log" button's failure handler now parses the response
+  body even on a non-2xx status and surfaces the server's actual
+  `delivery.email.error`/`delivery.webhook.error` message, instead of just
+  `"support upload failed: 502"`. The server already computed this detail;
+  the client was discarding it. Since Render's server-side logs aren't
+  currently visible (see Open issue #5), this is the only diagnosable
+  surface for a delivery failure right now.
+
+### VoteSmart 502s now persisted to the debug log, not just the live console
+
+Requested to give the user concrete, timestamped evidence (endpoint, retry
+count, status code) to share with VoteSmart about their infrastructure's
+reliability under load.
+
+**`src/votesmart.js`**
+- 8 `console.warn`/`console.log` calls converted to `logger.warn`/
+  `logger.info` with a `"votesmart"` context: every retry attempt (with
+  the exact endpoint and status), the final pagination give-up message,
+  both PARTIAL-result warnings (plain and compound-surname retry),
+  ID/ratings/votes fetch failures, and the per-member resolved/summary
+  lines. These now land in `ll_debug_log` and get included in the debug-log
+  email/webhook; previously they only printed to a live DevTools console
+  session, which nobody would have open when reporting an issue after the
+  fact.
+- Left the 4 `[LL DEBUG]` name-resolution scaffolding lines as plain
+  `console.log` - those are already marked for removal before Chrome Web
+  Store submission, so promoting them to permanent persisted logging
+  would work against that.
+- Verified end-to-end with a real simulated retry storm (not just read by
+  eye): mocked a 502 response, ran `resolveVoteSmartId` against it, and
+  confirmed every retry/failure message was captured with the right
+  endpoint and status text.
+
+**`src/test/votesmart.test.js`**
+- Added a `logger` stub to the test sandbox. It had none before - harmless
+  since no existing test exercised a retry/failure path, but would have
+  thrown `ReferenceError: logger is not defined` the moment one did, since
+  the real runtime always has `logger.js` loaded before `votesmart.js`.
+
+### Test scaffolding for api.js
+
+`api.js` had no test coverage at all before this - its heavy dependencies
+(`CONFIG`, `authHeaders`, cache helpers, `logger`, and `topic-match.js`'s
+globals) meant verification up to this point was `node --check` plus
+tracing the logic by hand, including for the batching change above.
+
+**`src/test/helpers/load-script.js`**
+- `loadScript()` now accepts an array of paths as well as a single string,
+  loading each into the same sandbox in order - matching real
+  `importScripts` load order for files that depend on globals defined by
+  an earlier one. Backward compatible; existing single-path callers
+  unaffected.
+
+**`src/test/api.test.js`** (new, 18 tests)
+- Loads `["src/topic-match.js", "src/api.js"]` together so `api.js`'s
+  calls to `billMatchesTopic`/`topicWordsMatchText` exercise the real,
+  already-tested implementation instead of a re-mock.
+- Covers: proxy URL fallbacks, `cacheGet`/`cacheSet` round-tripping through
+  a mocked `safeSessionSet`, `apiFetch`'s cache-hit/miss/error paths,
+  `normalizeVotePosition`, `resolveGovTrackId`'s caching,
+  `findMemberRollCallVotesOnTopics` (including a real `TOPIC_TITLE_KEYWORDS`
+  match), `lookupPoliticianOnTopics` (real category-keyword matching, the
+  filler-word LLM-term fallback, ceremonial-bill filtering, cross-list
+  dedup, VoteSmart-skip behavior), and `lookupAll`'s batching - the one
+  specifically flagged as untested - directly proving concurrency never
+  exceeds `LOOKUP_BATCH_SIZE` and that all members still get processed in
+  order.
+- Discovered and worked around a `vm.runInNewContext` gotcha: arrays/
+  objects returned from sandboxed code have a different realm than the
+  outer test file's own literals, so `assert.deepEqual(sandboxValue, [])`
+  fails Node's strict prototype check even when the contents are
+  identical ("same structure but not reference-equal"). Used `.length`/
+  element-wise checks instead of `deepEqual` against literals wherever a
+  value crosses the sandbox boundary - a reusable gotcha for any future
+  tests against `loadScript`-loaded code.
+
+### VoteSmart: real office+state fast path, replacing the never-real endpoint
+
+Resolves Open issue #4. The endpoint previously block-commented out in
+`resolveVoteSmartId()`, `/v1/officials/by-office-state`, was never a real
+path on `app.votesmart-api.org` at all - confirmed by inspecting the API's
+own Swagger parameter list directly, not just re-testing the same URL. Also
+investigated `/v1/candidates/by-office-state`, which does exist, but is not
+a usable substitute: it returns every candidate who ever ran for an
+office+state (329 rows for CA House alone), not just current officeholders,
+and has no server-side status filter (`page`, `perPage`, `stateId`,
+`stageId`, `electionYear`, `sortBy`, `sortOrder`, `officeId`, `format` are
+the complete param list - confirmed via the Swagger "Try it out" panel).
+
+The real equivalent is `/v1/officials/by-office-id` - confirmed live
+2026-07-12: 51 rows for CA House (California's actual seat count, one
+short - likely a vacancy), every row `officeStatus: "active"`, results
+already sorted alphabetically by last name with no `sortBy` needed.
+
+**`src/votesmart.js`**
+- `resolveVoteSmartId()` now tries `/v1/officials/by-office-id?officeId=
+  {targetOffice}&stateId={state}&perPage=50` as a first pass before the
+  existing `by-lastname` flow, reusing `fetchAllVsPages` since the response
+  envelope (`data`/`meta.total`/`meta.lastPage`) matches exactly.
+- Deliberately minimal in scope: this is a fast path only, not a
+  replacement for `by-lastname`. The `by-office-id` response has no
+  `preferredName` field (unlike `by-lastname`), so it can't resolve the
+  Marie Gluesenkamp Perez-style compound-surname case on its own - the
+  existing compound-surname retry against `by-lastname` is unchanged and
+  still runs if the fast path (and the plain lastname pass) both miss.
+- A bigger redesign was considered and deferred: since `by-office-id`
+  returns an entire state's current delegation in one call, a single
+  cached fetch could resolve multiple same-state members in one scan
+  instead of one `by-lastname` call each. Not implemented here - kept this
+  change to the fast-path swap only.
+
+**`src/test/votesmart.test.js`**
+- Rewrote the two tests that covered the old disabled-endpoint guard: one
+  now confirms `by-office-id` resolves correctly without ever calling
+  `by-lastname` (and that the literal, nonexistent `by-office-state` path
+  is never hit), the other confirms a proper fallback to `by-lastname` when
+  `by-office-id` returns no match.
+
+---
+
 ## [0.17.7] - 2026-07-11
 
 ### Topic-word matching: filler-word guard for LLM search terms

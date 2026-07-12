@@ -8,19 +8,25 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "../../..");
 
 /**
- * @param {string} relativePath - e.g. "src/keywords.js"
+ * @param {string | string[]} relativePathOrPaths - e.g. "src/keywords.js", or
+ *   ["src/topic-match.js", "src/api.js"] to load multiple scripts into the
+ *   same sandbox in order, matching real importScripts load order for
+ *   files that depend on globals defined by an earlier one.
  * @param {Record<string, unknown>} [extraGlobals]
  */
-export function loadScript(relativePath, extraGlobals = {}) {
-  const filePath = path.join(ROOT, relativePath);
-  const code = fs.readFileSync(filePath, "utf8");
+export function loadScript(relativePathOrPaths, extraGlobals = {}) {
+  const paths = Array.isArray(relativePathOrPaths) ? relativePathOrPaths : [relativePathOrPaths];
   const sandbox = {
     console,
     setTimeout,
     clearTimeout,
     ...extraGlobals,
   };
-  vm.runInNewContext(code, sandbox, { filename: filePath });
+  for (const relativePath of paths) {
+    const filePath = path.join(ROOT, relativePath);
+    const code = fs.readFileSync(filePath, "utf8");
+    vm.runInNewContext(code, sandbox, { filename: filePath });
+  }
   return sandbox;
 }
 
