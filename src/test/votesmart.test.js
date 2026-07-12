@@ -40,6 +40,7 @@ describe("resolveVoteSmartId", () => {
           officeId: "5",
           officeStateId: "WA",
           firstName: "Marie",
+          lastName: "Perez",
           nickName: null,
         },
       ],
@@ -67,6 +68,7 @@ describe("resolveVoteSmartId", () => {
           officeId: "6",
           officeStateId: "KY",
           firstName: "Addison",
+          lastName: "McConnell",
           nickName: "Mitch",
         },
       ],
@@ -105,6 +107,7 @@ describe("resolveVoteSmartId", () => {
               officeId: "5",
               officeStateId: "WA",
               firstName: "Jane",
+              lastName: "Doe",
               nickName: null,
             },
           ],
@@ -117,6 +120,48 @@ describe("resolveVoteSmartId", () => {
     assert.equal(result.id, "22222");
     assert.equal(result.partial, false);
     assert.deepEqual(paths, ["/v1/officials/by-office-id?officeId=5&stateId=WA&perPage=50&page=1"]);
+  });
+
+  it("does not match a different representative who shares a nickname (Levin vs Thompson bug)", async () => {
+    // Confirmed live 2026-07-12: resolving "Mike Thompson" (CA-4) via the
+    // office+state fast path incorrectly returned "Mike Levin" (CA-49)
+    // instead - both go by "Mike", by-office-id returns the entire state
+    // delegation sorted alphabetically by last name, and Array.find()
+    // matched Levin ("L" sorts before "T") before ever reaching Thompson's
+    // real record. Fixed by requiring an exact lastName match in addition
+    // to the existing first-name/nickname check.
+    const g = createG();
+    const member = {
+      bioguide_id: "T000460",
+      first_name: "Mike",
+      last_name: "Thompson",
+      state: "California",
+      chamber: "house",
+    };
+
+    g.vsFetch = async () => ({
+      data: [
+        {
+          id: "179416",
+          officeId: "5",
+          officeStateId: "CA",
+          firstName: "Michael",
+          lastName: "Levin",
+          nickName: "Mike",
+        },
+        {
+          id: "3564",
+          officeId: "5",
+          officeStateId: "CA",
+          firstName: "Michael",
+          lastName: "Thompson",
+          nickName: "Mike",
+        },
+      ],
+    });
+
+    const result = await g.resolveVoteSmartId(member);
+    assert.equal(result.id, "3564");
   });
 
   it("falls back to by-lastname when the office+state fast path finds no match", async () => {

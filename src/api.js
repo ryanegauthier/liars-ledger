@@ -178,12 +178,24 @@ async function lookupPoliticianOnTopics(member, topics, options = {}) {
   
   const seenBillKeys = new Set();
 
+  // Members re-introduce the same bill nearly verbatim every Congress it
+  // doesn't pass (e.g. "Mental Health Research Accelerator Act of 2025",
+  // "...of 2023", "...of 2022" are the same policy effort, not three
+  // distinct bills) - stripping the trailing year before deduping collapses
+  // these to one entry. Congress.gov returns results newest-first, so the
+  // titleKey check below naturally keeps the most recent version and drops
+  // older re-introductions, which is what a reader actually wants (a jump
+  // -off point, not every historical resubmission of the same idea).
+  function normalizeTitleForDedup(titleLower) {
+    return titleLower.replace(/\s+of\s+\d{4}(-\d{4})?\s*$/i, "").trim();
+  }
+
   function addIfNew(bill, arr, tag) {
     if (!bill.title) return;
     const titleLower = bill.title.toLowerCase();
     if (CEREMONIAL_PATTERNS.some((p) => titleLower.includes(p))) return;
     const key = bill.url || `${bill.type}${bill.number}`;
-    const titleKey = titleLower.slice(0, 80);
+    const titleKey = normalizeTitleForDedup(titleLower).slice(0, 80);
     if (seenBillKeys.has(key) || seenBillKeys.has(titleKey)) return;
     seenBillKeys.add(key);
     seenBillKeys.add(titleKey);

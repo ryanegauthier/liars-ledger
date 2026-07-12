@@ -328,9 +328,18 @@ async function resolveVoteSmartId(member) {
       const officeIdResult = await fetchAllVsPages(
         `/v1/officials/by-office-id?officeId=${targetOffice}&stateId=${encodeURIComponent(state)}&perPage=50`
       );
+      // lastName check is required here, unlike the by-lastname path below
+      // - by-office-id returns the ENTIRE state delegation (e.g. all 51 CA
+      // House members), not narrowed by surname at all, so first-name-only
+      // matching isn't enough to disambiguate. Confirmed live: without this
+      // check, "Mike Thompson" (CA-4) incorrectly matched "Mike Levin"
+      // (CA-49) instead - both go by "Mike", and Levin sorts first
+      // alphabetically, so Array.find() picked him and never reached
+      // Thompson's actual record.
       match = officeIdResult.officials.find(o =>
         normalizeVoteSmartOfficeId(o.officeId) === targetOffice &&
         o.officeStateId?.toUpperCase() === state &&
+        o.lastName?.toLowerCase() === member.last_name.toLowerCase() &&
         firstNameMatches(o)
       );
       if (match) {
@@ -376,22 +385,30 @@ async function resolveVoteSmartId(member) {
       // END TEMP DEBUG
     }
 
-    // Pass 1: office + state + first/nick/preferred name (redundant, and a
-    // no-op, if the office+state fast path above already found a match -
-    // re-running it against the same small already-fetched array is
-    // cheaper than adding a branch to skip it)
-    match = officials.find(o =>
-      normalizeVoteSmartOfficeId(o.officeId) === targetOffice &&
-      o.officeStateId?.toUpperCase() === state &&
-      firstNameMatches(o)
-    );
-
-    // Pass 2: office + state only
+    // Pass 1/Pass 2 below assume `officials` was narrowed by a lastname
+    // search, so first-name is the only remaining discriminator needed -
+    // that assumption does NOT hold for the fast path's `officials` (the
+    // entire state delegation, unnarrowed by surname). Re-running them
+    // unconditionally previously reintroduced the exact Levin/Thompson bug
+    // the fast path's lastName check was meant to fix, by overwriting a
+    // correct fast-path match with whichever same-first-name person
+    // happens to sort first in the full delegation. Skip both passes
+    // entirely once the fast path has already found a match.
     if (!match) {
+      // Pass 1: office + state + first/nick/preferred name
       match = officials.find(o =>
         normalizeVoteSmartOfficeId(o.officeId) === targetOffice &&
-        o.officeStateId?.toUpperCase() === state
+        o.officeStateId?.toUpperCase() === state &&
+        firstNameMatches(o)
       );
+
+      // Pass 2: office + state only
+      if (!match) {
+        match = officials.find(o =>
+          normalizeVoteSmartOfficeId(o.officeId) === targetOffice &&
+          o.officeStateId?.toUpperCase() === state
+        );
+      }
     }
 
     // Compound-surname retry (v0.17.1+, confirmed live): if no match yet

@@ -258,6 +258,26 @@ describe("lookupPoliticianOnTopics", () => {
     assert.equal(result.cosponsored.length, 0);
   });
 
+  it("collapses a bill re-introduced across Congresses to just the most recent version", async () => {
+    // Members re-introduce the same bill nearly every Congress it doesn't
+    // pass, differing only by the trailing year - these should collapse to
+    // one entry (the newest), not show up as three near-duplicate rows.
+    const g = createG();
+    g.fetch = mockFetchFor({
+      sponsored: [
+        { title: "Mental Health Research Accelerator Act of 2025", url: "https://congress.gov/bill/2025", type: "hr", number: "2085" },
+        { title: "Mental Health Research Accelerator Act of 2023", url: "https://congress.gov/bill/2023", type: "hr", number: "5821" },
+        { title: "Mental Health Research Accelerator Act of 2022", url: "https://congress.gov/bill/2022", type: "hr", number: "7279" },
+      ],
+    });
+
+    const member = { bioguide_id: "B000004", full_name: "Test Member" };
+    const result = await g.lookupPoliticianOnTopics(member, ["health care"], { skipVoteSmart: true });
+
+    assert.equal(result.sponsored.length, 1);
+    assert.ok(result.sponsored[0].title.includes("2025"));
+  });
+
   it("skips VoteSmart entirely when lookupVoteSmart isn't defined (proxy not configured)", async () => {
     const g = createG();
     g.fetch = mockFetchFor();

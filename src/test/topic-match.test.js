@@ -33,6 +33,35 @@ describe("billMatchesTopic", () => {
     const bill = { title: "Rural Broadband Expansion Act" };
     assert.equal(g.billMatchesTopic(bill, "Medicare for All"), false);
   });
+
+  it("does not match \"social security\" on a bare mention of retirement", () => {
+    // Confirmed live: "Protecting Public Safety Employees' Timely
+    // Retirement Act" matched the "social security" category via a bare
+    // "retirement" keyword despite having nothing to do with Social
+    // Security policy - "retirement" was removed as too broad.
+    const bill = { title: "Protecting Public Safety Employees' Timely Retirement Act of 2022" };
+    assert.equal(g.billMatchesTopic(bill, "social security"), false);
+  });
+
+  it("still matches \"social security\" on the actual phrase or other real keywords", () => {
+    assert.equal(g.billMatchesTopic({ title: "Social Security Fairness Act" }, "social security"), true);
+    assert.equal(g.billMatchesTopic({ title: "Medicaid Expansion Act" }, "social security"), true);
+  });
+
+  it("does not match on \"insurance\" alone - only meaningful paired with its subject", () => {
+    // Confirmed live: the LLM search term "health insurance reform" left
+    // "insurance" as the sole surviving distinctive word (once "reform"
+    // was filtered as filler), which alone matched "Smoke Exposure Crop
+    // Insurance Act" - a farm bill unrelated to the health care article
+    // being scanned.
+    const bill = { title: "Smoke Exposure Crop Insurance Act of 2023" };
+    assert.equal(g.billMatchesTopic(bill, "health insurance reform"), false);
+  });
+
+  it("still matches on the real subject word once insurance/reform are filtered", () => {
+    const bill = { title: "Affordable Health Care Act" };
+    assert.equal(g.billMatchesTopic(bill, "health insurance reform"), true);
+  });
 });
 
 describe("rollCallMatchesTopics", () => {

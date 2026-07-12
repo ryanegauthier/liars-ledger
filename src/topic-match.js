@@ -21,7 +21,13 @@ const TOPIC_TITLE_KEYWORDS = {
   "trade":            ["trade agreement", "tariff", "import duty", "export control", "manufacturing", "usmca", "trade deficit", "supply chain", "trade war"],
   "housing":          ["housing", "affordable housing", "rent", "mortgage", "eviction", "homeless", "section 8", "zoning", "tenant", "foreclosure", "first-time home"],
   "criminal justice": ["criminal justice", "prison reform", "sentencing", "incarceration", "bail reform", "parole", "death penalty", "fentanyl", "trafficking", "cartel", "organized crime", "hate crime", "domestic violence", "law enforcement"],
-  "social security":  ["social security", "retirement", "medicaid", "food stamp", "disability", "supplemental nutrition"],
+  // "retirement" deliberately excluded - too broad, matches unrelated
+  // pension bills (public safety employee retirement timing, military
+  // retirement pay, private 401k rules) that have nothing to do with
+  // Social Security policy specifically. Confirmed live: "Protecting
+  // Public Safety Employees' Timely Retirement Act" matched here and had
+  // no connection to the article being fact-checked.
+  "social security":  ["social security", "medicaid", "food stamp", "disability", "supplemental nutrition"],
   "elections":        ["election", "voting rights", "ballot", "campaign finance", "gerrymandering", "redistricting", "voter id", "voter registration", "electoral", "political action committee"],
   "federal budget":   ["budget", "appropriation", "deficit", "debt ceiling", "continuing resolution", "omnibus", "sequester", "government shutdown", "national debt", "fiscal year"],
   "drug policy":      ["opioid", "fentanyl", "cannabis", "marijuana", "controlled substance", "narcotics", "substance abuse", "overdose", "drug enforcement"],
@@ -41,6 +47,13 @@ const GENERIC_TOPIC_FILLER_WORDS = new Set([
   "affordability", "cuts", "subsidy", "subsidies", "policy", "act", "bill",
   "law", "program", "rights", "support", "protection", "relief",
   "assistance", "initiative", "plan",
+  // "insurance" confirmed live: search terms like "health insurance
+  // reform" left "insurance" as the only surviving distinctive word (once
+  // "reform" was filtered), which alone matched "Smoke Exposure Crop
+  // Insurance Act" - a farm bill with nothing to do with the health care
+  // article being scanned. Only meaningful paired with its subject
+  // ("health insurance", "flood insurance"), not distinctive alone.
+  "insurance",
 ]);
 
 // Matches a raw topic/search-term string (not necessarily a

@@ -44,6 +44,91 @@ The Account panel's "Restore Pro after reinstalling" flow asks users to paste a 
 
 ---
 
+## [0.17.9] - 2026-07-12
+
+### Fixed: office+state fast path could attribute a different person's VoteSmart record
+
+Serious correctness bug in the office+state fast path added in v0.17.8, found
+by inspecting a real report: "Mike Thompson" (CA-4) resolved to VoteSmart
+`candidateId=179416`, which turned out to be **Mike Levin** (CA-49) - a
+completely different representative who happens to also go by "Mike."
+Confirmed by pulling both candidates' bios directly (`/v1/candidatebios/
+179416` and `/v1/candidatebios/3564`) rather than assuming a VoteSmart data
+duplicate.
+
+Two bugs stacked to cause this:
+
+1. `/v1/officials/by-office-id` returns the entire state delegation (51 CA
+   House members), not narrowed by surname at all - so matching on first
+   name/nickname alone isn't enough to disambiguate when two members share
+   one (Thompson and Levin both go by "Mike"). Results sort alphabetically
+   by last name, so `Array.find()` hit Levin ("L") before ever reaching
+   Thompson ("T").
+2. Fixing #1 alone wasn't sufficient: the existing "Pass 1"/"Pass 2" name
+   -matching logic right after the fast path unconditionally re-ran against
+   the same `officials` array, without a last-name check, because it was
+   originally written assuming `officials` always came from a
+   lastname-narrowed search. It silently overwrote the now-correct
+   fast-path match back to Levin.
+
+**`src/votesmart.js`**
+- Fast path's matching predicate now requires `o.lastName` to equal
+  `member.last_name` (case-insensitive), in addition to the existing
+  office+state+first-name checks.
+- Pass 1/Pass 2 now only run `if (!match)` - skipped entirely once the fast
+  path has already found a match, instead of unconditionally re-deriving
+  `match` against an array that (for the fast path) isn't narrowed by
+  surname.
+
+**`src/test/votesmart.test.js`**
+- New regression test reproducing the exact scenario (two same-state,
+  same-chamber officials sharing a nickname, sorted so the wrong one comes
+  first) - failed against the first fix alone, confirming the second bug
+  was real before it was found by inspection.
+- Three existing tests' mock data was missing a `lastName` field entirely
+  (harmless before this fix, since nothing checked it) - added, since the
+  new check would otherwise fail to match any of them.
+
+This affects any two same-state, same-chamber members who share a first
+name or common nickname - not just Thompson/Levin. Worth treating any
+office+state fast-path resolution from v0.17.8 with suspicion; this fix
+should be verified live before trusting that release's VoteSmart data
+broadly.
+
+### Topic-matching precision: two keyword tightenings, one dedup fix
+
+Found by inspecting a real report for extraneous/irrelevant entries -
+the goal is giving users a jump-off point for fact-checking, not a wall of
+duplicate or unrelated legislation to sift through.
+
+**`src/topic-match.js`**
+- Removed the bare `"retirement"` keyword from the `"social security"`
+  category - confirmed live it matched "Protecting Public Safety
+  Employees' Timely Retirement Act," a pension-timing bill with nothing to
+  do with Social Security policy. The category still matches on the actual
+  phrase `"social security"` and its other real keywords.
+- Added `"insurance"` to `GENERIC_TOPIC_FILLER_WORDS` - confirmed live the
+  LLM search term "health insurance reform" left "insurance" as the sole
+  surviving distinctive word (once "reform" was filtered as filler), which
+  alone matched "Smoke Exposure Crop Insurance Act" - a farm bill unrelated
+  to the health care article being scanned. Only meaningful paired with
+  its subject ("health insurance," "flood insurance"), not distinctive by
+  itself.
+
+**`src/api.js`**
+- `addIfNew`'s title-based dedup now strips a trailing "of YYYY"/"of
+  YYYY-YYYY" before comparing titles, collapsing a bill re-introduced
+  across multiple Congresses (same title, new bill number each session -
+  e.g. "Mental Health Research Accelerator Act of 2025/2023/2022") to just
+  the most recent version instead of three near-duplicate rows.
+
+**Tests added:** confirmed the retirement/insurance keywords no longer
+false-positive while the category's real keywords still work, and that a
+bill re-introduced three times collapses to one entry (modeled directly on
+the "Mental Health Research Accelerator Act" case).
+
+---
+
 ## [0.17.8] - 2026-07-12
 
 ### VoteSmart lookup batching to reduce self-inflicted 502 bursts
