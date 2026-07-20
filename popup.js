@@ -1,4 +1,4 @@
-// Liar's Ledger - popup.js v0.17.10
+// Liar's Ledger - popup.js v0.17.11
 
 const browser = window.browser || window.chrome;
 const toggle         = document.getElementById("enableToggle");
@@ -17,6 +17,8 @@ toggle.addEventListener("change", () => {
   browser.storage.local.set({ enabled: toggle.checked });
 });
 
+const ANALYZE_TIMEOUT_MS = 45000;
+
 // ── Check for existing results on popup open ──────────────────────────────────
 // Previously this auto-closed the popup after restoring results to the
 // sidebar, with no way to trigger a fresh scan of the same page short of
@@ -33,9 +35,56 @@ browser.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
       const count = data.ll_results.records?.length || 0;
       setStatus(`Showing cached results (${count} member${count !== 1 ? "s" : ""}). Rescan for an update.`, "");
       scanBtn.textContent = "Rescan This Page";
+    } else if (data.ll_results?.status === "working" && data.ll_results_url === tab.url) {
+      // A scan for this tab was already running when the popup was closed
+      // (its JS context, including scanBtn.disabled, doesn't survive that) -
+      // resume watching it instead of leaving the button clickable, which
+      // would fire a second, fully duplicate pipeline. Confirmed live: this
+      // exact gap doubled every downstream API cost and charged the daily
+      // scan pool twice for what the user experienced as one scan.
+      setStatus("Scanning page… (resuming)", "working");
+      scanBtn.disabled = true;
+      const remaining = Math.max(
+        0,
+        ANALYZE_TIMEOUT_MS - (Date.now() - (data.ll_results.startedAt || Date.now())),
+      );
+      pollForResults(tab, remaining);
     }
   });
 });
+
+// Shared by a fresh scan and a resumed (popup-reopened) one so both watch
+// ll_results the same way and both respect the same overall timeout.
+function pollForResults(tab, timeoutMs) {
+  browser.tabs.sendMessage(tab.id, { action: "startResultsPoll" }, () => {});
+
+  const poll = setInterval(() => {
+    browser.storage.session.get("ll_results", (data) => {
+      const result = data.ll_results;
+      if (!result || result.status === "working") return;
+
+      clearInterval(poll);
+      scanBtn.disabled = false;
+      handleResult(result);
+    });
+  }, 500);
+
+  // On timeout: do one final check before giving up
+  setTimeout(() => {
+    clearInterval(poll);
+    browser.storage.session.get("ll_results", (data) => {
+      scanBtn.disabled = false;
+      const result = data.ll_results;
+      if (result && result.status !== "working") {
+        handleResult(result);
+      } else {
+        // ll_results is still "working" after the deadline - worker likely
+        // crashed before writing a result (e.g. unhandled rejection).
+        setStatus("Scan did not complete. Please try again. [ERR-HANG]", "error");
+      }
+    });
+  }, timeoutMs);
+}
 
 // ── Proxy check ───────────────────────────────────────────────────────────────
 function getProxyUrl() {
@@ -187,6 +236,31 @@ supportBtn?.addEventListener("click", async () => {
 
 // ── Scan ──────────────────────────────────────────────────────────────────────
 scanBtn.addEventListener("click", async () => {
+  browser.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+    if (!tab) return;
+
+    // Block a second click from firing a fully duplicate scan while one for
+    // this tab is already running (e.g. the popup was closed mid-scan and
+    // reopened, which resets scanBtn's disabled state but not the actual
+    // in-flight pipeline). Resume watching the existing one instead.
+    browser.storage.session.get(["ll_results", "ll_results_url"], (data) => {
+      if (data.ll_results?.status === "working" && data.ll_results_url === tab.url) {
+        cardsContainer.innerHTML = "";
+        setStatus("Scanning page… (already in progress)", "working");
+        scanBtn.disabled = true;
+        const remaining = Math.max(
+          0,
+          ANALYZE_TIMEOUT_MS - (Date.now() - (data.ll_results.startedAt || Date.now())),
+        );
+        pollForResults(tab, remaining);
+        return;
+      }
+      runScan(tab);
+    });
+  });
+});
+
+function runScan(tab) {
   cardsContainer.innerHTML = "";
   setStatus("Scanning page…", "working");
   scanBtn.disabled = true;
@@ -197,76 +271,43 @@ scanBtn.addEventListener("click", async () => {
     return;
   }
 
-  const analyzeTimeoutMs = 45000;
+  browser.tabs.sendMessage(tab.id, { action: "scan" }, (scanResult) => {
+    if (browser.runtime.lastError || !scanResult) {
+      setStatus("Could not reach page. Try refreshing.", "error");
+      scanBtn.disabled = false;
+      return;
+    }
+    if (scanResult.error) {
+      setStatus(scanResult.error, "error");
+      scanBtn.disabled = false;
+      return;
+    }
 
-  browser.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
-    browser.tabs.sendMessage(tab.id, { action: "scan" }, (scanResult) => {
-      if (browser.runtime.lastError || !scanResult) {
-        setStatus("Could not reach page. Try refreshing.", "error");
-        scanBtn.disabled = false;
-        return;
+    const { politicians, articleText } = scanResult;
+
+    if (!articleText || articleText.trim().length < 200) {
+      setStatus("Not enough article text to analyze.", "");
+      scanBtn.disabled = false;
+      return;
+    }
+
+    const hint = politicians.length
+      ? `Found ${politicians.length} politician${politicians.length !== 1 ? "s" : ""}. Analyzing…`
+      : "Analyzing with AI…";
+    setStatus(hint, "working");
+    // Save URL so results are tab-specific
+    browser.storage.session.set({ ll_results_url: tab.url });
+    browser.runtime.sendMessage(
+      { action: "analyze", payload: { politicians: politicians || [], articleText, url: tab.url } },
+      () => {
+        // If background.js responded "already_running" (a race between two
+        // rapid triggers, rather than the popup-reopen case caught above),
+        // watching the existing scan here is still the correct behavior.
+        pollForResults(tab, ANALYZE_TIMEOUT_MS);
       }
-      if (scanResult.error) {
-        setStatus(scanResult.error, "error");
-        scanBtn.disabled = false;
-        return;
-      }
-
-      const { politicians, articleText } = scanResult;
-
-      if (!articleText || articleText.trim().length < 200) {
-        setStatus("Not enough article text to analyze.", "");
-        scanBtn.disabled = false;
-        return;
-      }
-
-      const hint = politicians.length
-        ? `Found ${politicians.length} politician${politicians.length !== 1 ? "s" : ""}. Analyzing…`
-        : "Analyzing with AI…";
-      setStatus(hint, "working");
-      // Save URL so results are tab-specific
-      browser.storage.session.set({ ll_results_url: tab.url });
-      browser.runtime.sendMessage(
-        { action: "analyze", payload: { politicians: politicians || [], articleText } },
-        () => {
-          browser.tabs.sendMessage(tab.id, { action: "startResultsPoll" }, () => {});
-
-          let elapsed = 0;
-          const poll = setInterval(() => {
-            elapsed += 500;
-
-            browser.storage.session.get("ll_results", (data) => {
-              const result = data.ll_results;
-              if (!result || result.status === "working") return;
-
-              clearInterval(poll);
-              scanBtn.disabled = false;
-              handleResult(result);
-            });
-          }, 500);
-
-          // On timeout: do one final check before giving up
-          setTimeout(() => {
-            clearInterval(poll);
-            browser.storage.session.get("ll_results", (data) => {
-              scanBtn.disabled = false;
-              const result = data.ll_results;
-              if (result && result.status === "ok") {
-                handleResult(result);
-              } else if (result && result.status !== "working") {
-                handleResult(result);
-              } else {
-                // ll_results is still "working" after 45s - worker likely
-                // crashed before writing a result (e.g. unhandled rejection).
-                setStatus("Scan did not complete. Please try again. [ERR-HANG]", "error");
-              }
-            });
-          }, analyzeTimeoutMs);
-        }
-      );
-    });
+    );
   });
-});
+}
 
 function handleResult(result) {
   // Refresh scan count display - background.js's syncTier() call after

@@ -33,17 +33,41 @@ function figureForMember(figures, member) {
   return null;
 }
 
+// Tab URLs with a scan currently in flight. Guards against a duplicate
+// "analyze" message launching a second, fully independent pipeline (its
+// own LLM extraction, VoteSmart/Congress.gov/GovTrack fan-out, and its own
+// /api/scan/start + /api/scan/commit reservation) while an earlier one for
+// the same tab is still running - confirmed live: a popup closed and
+// reopened mid-scan (its scanBtn.disabled guard doesn't survive the popup's
+// JS context being torn down) fired a second "analyze" that ran fully
+// concurrently with the first, doubling every downstream API cost and
+// charging the daily scan pool twice for what the user experienced as one
+// scan. In-memory only (not persisted) - acceptable because a service
+// worker actively awaiting fetches for a real scan won't go idle and lose
+// this Set mid-flight; popup.js's own "working" + startedAt check against
+// ll_results is the durable backstop if the worker does restart.
+const scansInFlight = new Set();
+
 // --- Message listener ---
 browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "ping") {
-    sendResponse({ status: "ok", version: "0.17.10" });
+    sendResponse({ status: "ok", version: "0.17.11" });
     return true;
   }
 
   if (message.action === "analyze") {
+    const url = message.payload?.url || null;
+    if (url && scansInFlight.has(url)) {
+      logger.info("background", `analyze request ignored - scan already in flight for ${url}`);
+      sendResponse({ status: "already_running" });
+      return true;
+    }
     logger.info("background", "received analyze request");
-    safeSessionSet("ll_results", { status: "working" });
-    handleAnalyze(message.payload).then((result) => {
+    if (url) scansInFlight.add(url);
+    safeSessionSet("ll_results", { status: "working", startedAt: Date.now() });
+    handleAnalyze(message.payload).finally(() => {
+      if (url) scansInFlight.delete(url);
+    }).then((result) => {
       safeSessionSet("ll_results", result);
     });
     sendResponse({ status: "accepted" });
@@ -489,7 +513,7 @@ function classifyError(err) {
   return "ERR-UNKNOWN";
 }
 
-logger.info("background", "service worker loaded v0.17.10");
+logger.info("background", "service worker loaded v0.17.11");
 
 // Initialize token and sync tier
 getOrCreateToken().then((t) => {

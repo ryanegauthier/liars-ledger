@@ -89,6 +89,30 @@ describe("billMatchesTopic", () => {
     const bill = { title: "Rural Healthcare Access Act" };
     assert.equal(g.billMatchesTopic(bill, "healthcare cost crisis"), true);
   });
+
+  it("does not match \"public option\" (all-filler term) against \"Republic of Cuba\" - confirmed live false positive", () => {
+    // Both "public" and "option" are filler words, so the term has no
+    // distinctive word at all. The old fallback treated the raw words as
+    // an OR-match via plain substring, and "public" matched inside
+    // "Republic" of a Cuba war-powers resolution with no connection to
+    // the health care article being scanned.
+    const bill = {
+      title: "A joint resolution to direct the removal of United States Armed Forces from hostilities within or against the Republic of Cuba that have not been authorized by Congress.",
+    };
+    assert.equal(g.billMatchesTopic(bill, "public option"), false);
+  });
+
+  it("still matches \"public option\" when both words are literally present", () => {
+    const bill = { title: "Public Option Health Insurance Act" };
+    assert.equal(g.billMatchesTopic(bill, "public option"), true);
+  });
+
+  it("does not match a short distinctive word as a substring inside an unrelated word", () => {
+    // "art" would previously substring-match "heart" via a bare
+    // text.includes() check.
+    const bill = { title: "Rural Heart Disease Prevention Act" };
+    assert.equal(g.billMatchesTopic(bill, "art funding"), false);
+  });
 });
 
 describe("rollCallMatchesTopics", () => {

@@ -1,6 +1,12 @@
 // Liars Ledger - src/topic-match.js
 // Bill title and roll-call vote text matching against policy topics.
 
+// "retirement" deliberately excluded - too broad, matches unrelated
+// pension bills (public safety employee retirement timing, military
+// retirement pay, private 401k rules) that have nothing to do with
+// Social Security policy specifically. Confirmed live: "Protecting
+// Public Safety Employees' Timely Retirement Act" matched here and had
+// no connection to the article being fact-checked.
 const TOPIC_TITLE_KEYWORDS = {
   "foreign policy":   ["foreign policy", "foreign affairs", "foreign relations", "international relations", "diplomatic", "treaty", "nato", "ukraine", "israel", "iran", "trade agreement", "iron dome", "security assistance", "foreign aid", "supplemental appropriation", "arms sale", "weapons transfer", "ceasefire", "humanitarian aid", "peacekeeping", "embassy", "ambassador"],
   "israel":           ["israel", "iron dome", "hamas", "hezbollah", "gaza", "west bank", "palestinian", "antisemit", "two-state", "abraham accords", "israeli", "jerusalem", "golan"],
@@ -21,12 +27,6 @@ const TOPIC_TITLE_KEYWORDS = {
   "trade":            ["trade agreement", "tariff", "import duty", "export control", "manufacturing", "usmca", "trade deficit", "supply chain", "trade war"],
   "housing":          ["housing", "affordable housing", "rent", "mortgage", "eviction", "homeless", "section 8", "zoning", "tenant", "foreclosure", "first-time home"],
   "criminal justice": ["criminal justice", "prison reform", "sentencing", "incarceration", "bail reform", "parole", "death penalty", "fentanyl", "trafficking", "cartel", "organized crime", "hate crime", "domestic violence", "law enforcement"],
-  // "retirement" deliberately excluded - too broad, matches unrelated
-  // pension bills (public safety employee retirement timing, military
-  // retirement pay, private 401k rules) that have nothing to do with
-  // Social Security policy specifically. Confirmed live: "Protecting
-  // Public Safety Employees' Timely Retirement Act" matched here and had
-  // no connection to the article being fact-checked.
   "social security":  ["social security", "medicaid", "food stamp", "disability", "supplemental nutrition"],
   "elections":        ["election", "voting rights", "ballot", "campaign finance", "gerrymandering", "redistricting", "voter id", "voter registration", "electoral", "political action committee"],
   "federal budget":   ["budget", "appropriation", "deficit", "debt ceiling", "continuing resolution", "omnibus", "sequester", "government shutdown", "national debt", "fiscal year"],
@@ -41,44 +41,55 @@ const TOPIC_TITLE_KEYWORDS = {
 // safely require in an AND-match, but too common to accept as an OR-match
 // on their own either -- matching a bill on "funding" or "reform" alone
 // would false-positive against nearly any policy bill.
+// e.g. "insurance" confirmed live: search terms like "health insurance
+// reform" left "insurance" as the only surviving distinctive word (once
+// "reform" was filtered), which alone matched "Smoke Exposure Crop
+// Insurance Act" - a farm bill with nothing to do with the health care
+// article being scanned. Only meaningful paired with its subject
+// ("health insurance", "flood insurance"), not distinctive alone.
 const GENERIC_TOPIC_FILLER_WORDS = new Set([
   "for", "all", "the", "and", "with",
   "reform", "reforms", "expansion", "restoration", "funding", "access",
   "affordability", "cuts", "subsidy", "subsidies", "policy", "act", "bill",
   "law", "program", "rights", "support", "protection", "relief",
-  "assistance", "initiative", "plan",
-  // "insurance" confirmed live: search terms like "health insurance
-  // reform" left "insurance" as the only surviving distinctive word (once
-  // "reform" was filtered), which alone matched "Smoke Exposure Crop
-  // Insurance Act" - a farm bill with nothing to do with the health care
-  // article being scanned. Only meaningful paired with its subject
-  // ("health insurance", "flood insurance"), not distinctive alone.
-  "insurance",
-  // "public"/"option" confirmed live: "public option healthcare" left
-  // "public" as a surviving distinctive word, which alone matched
-  // "Protecting Public Safety Employees' Timely Retirement Act" - a
-  // pension bill unrelated to the health care "public option" concept the
-  // term was actually describing.
-  "public", "option",
-  // "cost"/"costs" confirmed live: "healthcare cost crisis" left "cost" as
-  // a surviving distinctive word, which alone matched "Increase Federal
-  // Disaster Cost Share Act" - unrelated to healthcare costs.
+  "assistance", "initiative", "plan", "insurance", "public", "option",
   "cost", "costs",
 ]);
+
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Word-bounded check, not a plain substring check -- confirmed live:
+// "public" (see below) matched "Republic of Cuba" via a bare
+// `text.includes("public")`, since "republic" contains "public" as
+// characters. Bill/vote text is free-form prose, not a controlled
+// vocabulary, so short distinctive words need boundaries to avoid
+// matching inside unrelated words.
+function wordBoundaryIncludes(text, word) {
+  return new RegExp(`\\b${escapeRegExp(word)}\\b`).test(text);
+}
 
 // Matches a raw topic/search-term string (not necessarily a
 // TOPIC_TITLE_KEYWORDS key) against a title/description blob. Requires at
 // least one distinctive (non-filler) word rather than every word -- real
 // bill titles rarely contain LLM-paraphrased filler like "reform" or
 // "funding" verbatim, but do contain the actual subject (e.g. "medicare").
-// Falls back to requiring every word only if the term has no distinctive
-// word at all (rare -- would mean the whole term is filler).
+// Requires every word (not just one) when the whole term is filler --
+// confirmed live: "public option" (both words filler) fell back to an
+// OR-match on "public" alone, which then substring-matched "Republic of
+// Cuba" in a war-powers resolution with no connection to the health care
+// article being scanned. A term with zero distinctive words carries no
+// reliable signal on its own; requiring all of it, word-bounded, is a much
+// narrower net than any single generic word.
 function topicWordsMatchText(topic, text) {
   const words = topic.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
   if (words.length === 0) return false;
   const distinctive = words.filter((w) => !GENERIC_TOPIC_FILLER_WORDS.has(w));
-  const required = distinctive.length > 0 ? distinctive : words;
-  return required.some((w) => text.includes(w));
+  if (distinctive.length === 0) {
+    return words.every((w) => wordBoundaryIncludes(text, w));
+  }
+  return distinctive.some((w) => wordBoundaryIncludes(text, w));
 }
 
 function billMatchesTopic(bill, topic) {

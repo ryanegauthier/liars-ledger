@@ -44,6 +44,146 @@ The Account panel's "Restore Pro after reinstalling" flow asks users to paste a 
 
 ---
 
+### `token.js` fresh-install registration failures are silently masked - no error surfaces, no retry
+
+**Discovered**: 2026-06-27, during the v0.17.9 VoteSmart session (unrelated to VoteSmart - found in the same session, not part of that fix). Reproduced once on a fresh Chrome profile: `/register` failed/non-OK, and `getOrCreateToken()`'s `!res.ok` branch wrote a fully-formed-looking fallback token object to `storage.sync`, which the popup displayed as if registered. The backend never saw this token (confirmed via direct `GET token:<id>` -> nil in Redis), so every subsequent authenticated call 401s with "Token not recognized" - with no error ever shown to the user. `syncTier()`'s empty `catch` block has the identical blind spot and never retries registration, so the existing code comment implying "syncTier() will correct this on next startup" is not true for this failure mode.
+
+**Root trigger not confirmed** - did not reproduce on retry immediately after. Suspected causes (unconfirmed): a Render cold start, a transient CORS/network issue, or a real race in `/register` server-side.
+
+**Not fixed**: TODOs added at both spots (`getOrCreateToken`'s `!res.ok` branch and `syncTier()`'s catch block, `src/token.js`) documenting the gap, but no visible retry state in the popup UI and no re-registration code path exist yet. Deferred - needs a UX decision (what the user sees, what they click), not just a backend retry loop.
+
+---
+
+### Render server-side logs have shown nothing for recent sessions - no visibility into backend behavior
+
+**Discovered**: first noted before v0.17.7 (referenced there as "Open issue #5" when the debug-log webhook's error surfacing became the only diagnosable signal for delivery failures, since Render's own logs weren't showing anything). Render's dashboard logs are not currently showing output for recent sessions; cause not investigated - log-level misconfiguration, a log drain issue, and a Render platform-side problem are all unconfirmed possibilities.
+
+**Impact**: any bug not already caught client-side (popup error codes, debug-log webhook) or diagnosed via a manual live API call currently has no server-side log trail to check against. The Square subscription and VoteSmart wrong-data issues documented elsewhere in this file were both diagnosed by manual live API testing, not via Render logs.
+
+**Not fixed**: not yet investigated. Deferred.
+
+---
+
+## [0.17.11] - 2026-07-18
+
+### Fixed: topic matching could substring-match a generic word inside an unrelated word
+
+User reported a live false positive: a Bernie Sanders scan of a Medicare
+for All / health care cost article surfaced "A joint resolution to direct
+the removal of United States Armed Forces from hostilities within or
+against the Republic of Cuba that have not been authorized by Congress" -
+a bill with no connection to health care, defense, or Cuba anywhere in the
+article. Confirmed by reading the article directly: it never mentions
+military, defense, veteran, or Cuba.
+
+Traced to `topicWordsMatchText()` (`src/topic-match.js`), the same function
+behind the three near-identical false positives fixed in v0.17.8-v0.17.9
+("retirement," "insurance," "public"/"option," "cost"/"costs" added to
+`GENERIC_TOPIC_FILLER_WORDS`). Two bugs stacked here:
+
+1. **All-filler terms fell back to an OR-match, not the documented AND.**
+   The function's own doc comment says it "falls back to requiring every
+   word only if the term has no distinctive word at all" - but the
+   implementation used `.some()` unconditionally, so an all-filler term
+   like `"public option"` (both words already in the filler set from the
+   v0.17.9 fix) matched on either word alone rather than requiring both.
+2. **The match itself was a plain substring check, not word-bounded.**
+   `text.includes("public")` is true for `"Republic of Cuba"`, since
+   "republic" contains the literal characters "public." This is the same
+   shape of bug as the three prior fixes but at the character level
+   instead of the word level - no amount of adding more words to the
+   filler set would have prevented this one, since "public" was never
+   removed from the term's own two words, only from being trusted *alone*.
+
+**`src/topic-match.js`**
+- `topicWordsMatchText()` now requires **all** words (not any) when every
+  word in the term is filler, matching the function's original documented
+  intent.
+- Matching now uses a word-boundary regex (`wordBoundaryIncludes()`)
+  instead of `String.includes()`, for both the distinctive-word and
+  all-filler paths, so short words can no longer match inside unrelated
+  words (e.g. "art" inside "heart").
+
+**Tests added (`src/test/topic-match.test.js`)**: confirms `"public
+option"` no longer matches the actual Cuba resolution title, still matches
+a bill where both words are genuinely present, and confirms word-boundary
+matching generally (a distinctive short word no longer matches inside an
+unrelated word).
+
+**Scope note**: `billMatchesTopic()`'s fixed-category keyword lists
+(`TOPIC_TITLE_KEYWORDS`) were left as plain substring matches - those are
+deliberately loose in places (e.g. "china" matching "chinese") and out of
+scope for this fix, which is specific to `topicWordsMatchText()`'s raw
+LLM-search-term matching.
+
+### Fixed: a second "analyze" request while one was already running for the same tab fired a fully duplicate scan
+
+User submitted a support debug log (token `93437987...`, same session that
+surfaced the topic-matching bug above) showing two complete, independent
+scan pipelines running concurrently for the same tab roughly 33 seconds
+apart: VoteSmart resolved Goldman, Matsui, Valadao, and Stevens twice
+each, two separate `"LLM analysis: provider=dual"` calls ran, two separate
+`"verifying claims for N member(s)"` runs completed (9 then 8 members),
+and two separate `"analysis complete"` results were written 3 seconds
+apart - the second silently overwriting the first in `ll_results`.
+
+**Root cause**: `background.js`'s `"analyze"` message handler had no
+concurrency guard at all - every message unconditionally reset `ll_results`
+to `{status: "working"}` and launched a brand new `handleAnalyze()`, which
+does its own independent `/api/scan/start` + `/api/scan/commit`
+reservation. `popup.js`'s `scanBtn.disabled = true` only guards against a
+double-click within one popup DOM instance; Chrome tears that instance
+down entirely when the popup loses focus or closes. A user who closed the
+popup while "Scanning page…" was showing (easy to do by accident) and then
+reopened it saw a clickable "Scan Page" button with no indication a scan
+was already running, and a second click fired a second full pipeline.
+
+**Impact confirmed by the log**: doubled backend cost (dual-model LLM
+extraction, VoteSmart/Congress.gov/GovTrack fan-out, Pro claim
+verification, all run twice), and the daily scan pool charged twice for
+what the user experienced as one scan action, since neither run had a
+failed source that would have exempted it from charging.
+
+**`background.js`**
+- New `scansInFlight` (in-memory `Set` of tab URLs). A second `"analyze"`
+  for a URL already in the set is rejected with `{status:
+  "already_running"}` instead of launching another `handleAnalyze()`.
+  Entry removed via `.finally()` once `handleAnalyze()` settles, so it
+  can't get stuck if the analysis path ever throws.
+- `ll_results` now also carries `startedAt: Date.now()` when a scan
+  begins, so a resumed poll (see below) can compute how much of the
+  45-second timeout is actually left rather than restarting the full
+  window.
+
+**`popup.js`**
+- The scan click handler now checks `ll_results`/`ll_results_url` for this
+  tab before doing anything else. If a scan is already `"working"` for
+  this tab's URL, it skips re-extracting the article and re-sending
+  `"analyze"` entirely, and instead resumes polling the existing scan.
+  Same check now also runs on popup open (previously only checked for a
+  finished `"ok"` result to show as cached) - the button shows "Scanning
+  page… (resuming)" and stays disabled until the existing scan resolves.
+- The polling loop (interval + timeout-driven final check) was factored
+  into a shared `pollForResults(tab, timeoutMs)`, used by both a fresh scan
+  and a resumed one, so both paths behave identically and respect the same
+  overall timeout budget.
+- The `"analyze"` payload now includes `url: tab.url`, needed by
+  `background.js`'s new in-flight guard.
+
+**Not done as part of this**: `scansInFlight` is in-memory only, not
+persisted - acceptable since a service worker actively awaiting fetches
+for a real scan won't go idle mid-flight, with `popup.js`'s
+`ll_results`/`startedAt` check as the durable backstop if the worker does
+restart between messages. No test coverage added - `background.js` and
+`popup.js` are Chrome-API glue code with no existing unit-test harness in
+this repo (unlike the `src/*.js` modules they call into); verifying this
+would need a Chrome APIs mock that doesn't exist yet. Verified by reading
+both files end-to-end and confirming syntax (`node --check`) and the
+existing `src/test/*.test.js` suite (73 tests) still pass; not re-verified
+against a live double-scan reproduction.
+
+---
+
 ## [0.17.10] - 2026-07-12
 
 ### Fixed: our own rate limiter could starve claim verification, not VoteSmart's
@@ -664,7 +804,7 @@ Addresses the quota exhaustion issue documented in Known Issues above. Three cha
 - `VOTESMART_ALLOWED_PARAMS` now includes `page` and `perPage` (previously `lastName`, `candidateId`, `officeId`, `stateId` only), so the client's pagination requests aren't rejected by the existing query-parameter allowlist.
 
 **`src/token.js`** (separate issue, found during the same session, NOT part of the VoteSmart fix)
-- Confirmed live: a fresh install whose `/register` call fails or never lands server-side (root trigger not confirmed - observed once, did not reproduce on retry) gets a fully-formed-looking fallback token object written to `storage.sync` and displayed in the popup as if registered. Every subsequent authenticated call then 401s with "Token not recognized," with no error ever surfaced to the user, and `syncTier()`'s empty `catch` never retries registration. TODOs added at both spots in the code; not fixed this release - see those TODOs for what the real fix needs (visible retry state, an actual re-registration path).
+- Fresh-install registration-failure masking discovered this session - see "Known Issues (Unresolved)" at the top of this file for full details and current status. Not fixed this release.
 
 ### Verification
 Marie Gluesenkamp Perez confirmed resolving correctly end-to-end (`candidateId=207307`, 5 ratings, 5 votes) against live VoteSmart data, matched via Pass 1 (compound-surname retry + `preferredName`), not the looser fallback. Warren confirmed resolving correctly (`candidateId=141272`) against live VoteSmart data via pagination. Both confirmed client-side against the deployed Render backend with the `page`/`perPage` allowlist change live.
@@ -673,7 +813,7 @@ Marie Gluesenkamp Perez confirmed resolving correctly end-to-end (`candidateId=2
 - `by-office-state` endpoint/param mismatch (disabled, not resolved)
 - Per-page resilience in `fetchAllVsPages` - a single bad page still discards all previously-accumulated pages; `perPage=50` is a mitigation (fewer pages, less exposure), not a fix
 - Compound-surname retry is a heuristic confirmed correct for one case, not a general solution for all compound-surname shapes
-- Fresh-install registration-failure masking in `src/token.js` (see above - found this session, separate issue, not fixed)
+- Fresh-install registration-failure masking in `src/token.js` (see "Known Issues (Unresolved)" at the top of this file - found this session, separate issue, not fixed)
 - Social media handle verification (carried over from v0.17.0, still unconfirmed)
 - `server/test/free/tier-gating.test.js` asserts `/api/votesmart/*` returns 403 for free tier - stale as of the v0.17.0 tier restructure (VoteSmart is free-tier now, gated by `requireToken` not `requirePro`); test not yet updated to match.
 
@@ -1160,42 +1300,43 @@ Three things worth confirming directly in the Upstash console once this is live 
 
 ## Planned
 
-### [0.18.0] - GovTrack extended data
-- Ideology scores (0.0 = most liberal, 1.0 = most conservative)
-- Missed vote rates and committee assignments
-- Historical roll-call votes back to 1990s
-
-### [Future] - API cost optimization
-- Prompt caching on Claude extraction and verification calls - static instruction prefix cached, only article text varies
-- Usage monitoring via Claude Console - cost per endpoint tracking
-- Evaluate Mistral prompt caching equivalent
-
-### [0.19.0] - Social media scanning (X / Facebook)
+### [0.18.0] - Social media scanning (X / Facebook)
 - **X (Twitter)** - extract claims from individual tweet pages and thread views
   - Platform-specific content extractor targeting tweet text containers
   - Looser name extraction - last-name-only references ("Trump", "Pelosi") without title prefix
   - Handle short-form text: LLM prompt adjusted for claim extraction from single sentences
   - `manifest.json` host permission: `https://x.com/*`, `https://twitter.com/*`
 - **Facebook** - extract claims from public post pages
-  - Platform-specific extractor targeting post body containers
+  - Platform-specific extractor targeting post body containers - current generic `findArticleBody()`
+    fallback (`document.body`) has been confirmed live to sweep in unrelated page content (sidebar
+    stories, other feed posts) alongside the actual post, polluting LLM topic extraction and
+    downstream bill/vote matching for the real claim being scanned
   - Handle dynamic React-rendered content - MutationObserver or scan-on-demand
   - `manifest.json` host permission: `https://www.facebook.com/*`
 - **Shared work** - user-highlight scan mode: select any text on any page → right-click → "Scan with Liar's Ledger"
   - Fallback for sites with no supported extractor
   - Context menu registered via `chrome.contextMenus`
 
-### [0.20.0] - Creator shareable graphics
+### [0.19.0] - Creator shareable graphics
 - One-click image card: politician name, claim, voting record
 - Twitter/X (1200×628) and Instagram (1080×1080) formats
 - Canvas API, no server render, Creator tier feature
 
-### [Future] - Performance + bundling
+### [0.20.0] - GovTrack extended data
+- Ideology scores (0.0 = most liberal, 1.0 = most conservative)
+- Missed vote rates and committee assignments
+- Historical roll-call votes back to 1990s
+
+### [0.21.0] - Performance & cost optimization
+- Prompt caching on Claude extraction and verification calls - static instruction prefix cached, only article text varies
+- Usage monitoring via Claude Console - cost per endpoint tracking
+- Evaluate Mistral prompt caching equivalent
 - esbuild or Rollup bundler - combine all `importScripts` files into single bundle
 - Minification and tree-shaking for smaller extension size
 - Service worker startup time optimization
 - Evaluate dictionary compression (gzip or binary format)
 
-### [Future] - TypeScript migration
+### [0.22.0] - TypeScript migration
 - Convert extension source (`src/*.js`, `background.js`, `content.js`) to TypeScript
 - Add interfaces for dictionary, record, verdict, and LLM response shapes
 - Type-safe message passing between popup, content script, and service worker
@@ -1203,11 +1344,11 @@ Three things worth confirming directly in the Upstash console once this is live 
 - Build step via `tsc` or `esbuild` with type checking
 - Goal: learning experience + catch bugs at compile time (e.g., missing `bioguide_id`)
 
-### [Future] - Firefox / Safari
+### [0.23.0] - Cross-browser support (Firefox / Safari)
 - Firefox: `browser.*` shim in place; publish to AMO
 - Safari: Xcode + Apple Developer account required
 
-### [Future] - State legislators via OpenStates
+### [0.24.0] - State legislators via OpenStates
 - Goal: empower voters to see what their politicians at *any level* are saying vs. voting
 - Phase 1: add governors + all 50 state legislatures via [OpenStates API](https://openstates.org/)
   - New `server/providers/openstates.js` proxy (same pattern as `govtrack.js`)
