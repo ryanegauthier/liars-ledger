@@ -11,18 +11,21 @@
     "test:cost": "vitest run --config vitest.cost.config.js"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.19.0"
   },
   "type": "module",
   "dependencies": {
+    "@mozilla/readability": "^0.6.0",
     "@upstash/redis": "^1.38.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "express-rate-limit": "^7.3.1",
+    "jsdom": "^29.1.1",
     "node-fetch": "^3.3.2",
     "nodemailer": "^9.0.3",
-    "square": "^44.2.0"
+    "square": "^44.2.0",
+    "twitter-api-v2": "^1.29.0"
   },
   "devDependencies": {
     "vitest": "^4.1.9"

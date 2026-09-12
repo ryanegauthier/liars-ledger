@@ -64,6 +64,56 @@ The Account panel's "Restore Pro after reinstalling" flow asks users to paste a 
 
 ---
 
+## [0.17.15] - 2026-09-12
+
+### Fixed: production crash - `Cannot find package 'jsdom'` on `/api/scan/extract`
+
+**Discovered**: live on Render immediately after deploying v0.17.14, on
+the very first request to hit `/api/scan/extract` on a fresh instance.
+
+**Root cause**: `server/providers/articleFetch.js` (added in v0.17.13)
+imports `jsdom` and `@mozilla/readability` directly. The commit that
+added it did not also update `server/package.json` to declare either as
+a dependency - both were only present in the local, uncommitted working
+copy of that file (added there alongside the not-yet-committed
+`server/bot/` X-bot subsystem, which needs the same two packages).
+`npm install` on Render's fresh build resolves strictly from the
+committed `package.json`, found neither package, and never installed
+them - so every call into `articleFetch.js` threw at the top-level
+`import` before any request-handling code could run. Worked in every
+local check (`node --check`, manual runs) because the local `node_modules`
+already had both installed from the uncommitted `package.json`, masking
+the gap entirely until a real fresh install happened.
+
+**Fix**: added `jsdom` (`^29.1.1`) and `@mozilla/readability` (`^0.6.0`)
+to `server/package.json`'s `dependencies`. `twitter-api-v2` (also only
+in the uncommitted local `package.json`, needed by `server/bot/`) is
+left out of this fix deliberately - nothing committed imports it yet, so
+adding it now would just be an unused dependency; it belongs in whatever
+commit actually ships the bot subsystem.
+
+**Also fixed while in here**: `engines.node` was still `">=18.0.0"`,
+stale since before this pass - `jsdom@29` requires `^20.19.0 || ^22.13.0
+|| >=24.0.0`, so an `npm install` on a Render instance actually
+provisioned with Node 18 or 19 could have failed at install time (a
+different, more confusing error than the one that actually shipped) even
+after the dependency itself was declared correctly. Corrected to
+`">=20.19.0"`. Not confirmed which Node version Render is actually
+running for this service (no `NODE_VERSION` env var or `.node-version`
+file in the repo) - worth checking in the Render dashboard directly
+rather than assuming `engines.node` alone controls it.
+
+**Lesson for next time**: `package-lock.json` is gitignored
+(`.gitignore` line 23) for this project, so there is no lockfile-diff
+signal in `git diff`/PR review that would have caught a manifest/
+imports mismatch like this one - the only check that would have caught
+it is a genuinely fresh `npm install` (not reusing an existing
+`node_modules`) before deploying. Worth doing that as a manual step
+after adding any new import, not just trusting `node --check` and local
+runs against an already-populated `node_modules`.
+
+---
+
 ## [0.17.14] - 2026-09-12
 
 ### Fixed: `/register` rate limiter keyed by IP alone unfairly punished shared-IP visitors

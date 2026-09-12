@@ -51,7 +51,7 @@ const scansInFlight = new Set();
 // --- Message listener ---
 browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "ping") {
-    sendResponse({ status: "ok", version: "0.17.14" });
+    sendResponse({ status: "ok", version: "0.17.15" });
     return true;
   }
 
@@ -513,7 +513,7 @@ function classifyError(err) {
   return "ERR-UNKNOWN";
 }
 
-logger.info("background", "service worker loaded v0.17.14");
+logger.info("background", "service worker loaded v0.17.15");
 
 // Initialize token and sync tier
 getOrCreateToken().then((t) => {
