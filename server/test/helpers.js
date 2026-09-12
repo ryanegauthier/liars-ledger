@@ -37,8 +37,11 @@ if (!TEST_TOKEN) {
 
 /**
  * Make a request to the API under test. Thin wrapper around fetch that
- * returns { status, body } for easy assertion, and never throws on a
- * non-2xx status (tests need to assert on 403s, 429s, etc. directly).
+ * returns { status, body, headers } for easy assertion, and never throws on
+ * a non-2xx status (tests need to assert on 403s, 429s, etc. directly).
+ * `headers` is the raw fetch Headers object (case-insensitive .get()) -
+ * added for rate-limiter tests that need to read RateLimit-Remaining etc.
+ * without every existing { status, body } destructure needing to change.
  */
 export async function api(path, { method = "GET", headers = {}, body } = {}) {
   const res = await fetch(`${API_BASE}${path}`, {
@@ -57,7 +60,7 @@ export async function api(path, { method = "GET", headers = {}, body } = {}) {
     parsedBody = null;
   }
 
-  return { status: res.status, body: parsedBody };
+  return { status: res.status, body: parsedBody, headers: res.headers };
 }
 
 /**

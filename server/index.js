@@ -6,6 +6,8 @@
 //   GET  /api/scan-status      - remaining scans for token
 //   POST /api/scan/start       - reserve a scan slot (returns scanToken + commitToken)
 //   POST /api/scan/commit      - finalize a reserved scan (called when sources responded)
+//   POST /api/scan/extract     - fetch + extract article text from a URL (public scan.html)
+//   GET  /api/politicians-dictionary - name-resolution dictionary (public scan.html)
 //   POST /api/claude/extract   - Claude extraction (not counted here)
 //   POST /api/mistral/extract  - Mistral extraction (not counted here)
 //   POST /api/verify-claim     - claim verification (Pro only)
@@ -34,6 +36,9 @@ import { verifyClaim } from "./providers/verify.js";
 import { createToken, getToken, getScans, incrementUserCount, getScanLimit, upgradeTier, commitScan, storeOrderTemplateMapping, lookupTokenByOrderTemplate, storeSquareCustomerMapping, lookupTokenBySquareCustomer, storeSquareSubscriptionMapping, lookupTokenBySquareSubscription, recordFailedCharge, clearFailedCharges, setDowngradeReason, clearDowngradeReason, getDowngradeReason } from "./providers/store.js";
 import { requireToken, countScan, requireScanToken } from "./middleware/auth.js";
 import * as square from "./providers/square.js";
+import { extractArticleTextPublic, ArticleFetchError } from "./providers/articleFetch.js";
+import { politicians } from "./providers/politicians.js";
+import { createHash } from "node:crypto";
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
@@ -261,19 +266,46 @@ app.post("/api/support/debug-log", supportLimiter, wrap(async (req, res) => {
 
 app.use("/api", limiter);
 
-// /register gets its own, much stricter limiter, keyed by IP. A real install
-// calls this once (occasionally again on startup to refresh state) - there's
-// no legitimate reason for one IP to register many tokens quickly. This is
-// the main defense against a script mass-creating fake tokens to drain the
-// shared scan pool or inflate global:user_count (which lowers everyone's
-// daily limit). Not a complete fix - a distributed attacker with many IPs
-// or proxies isn't stopped by this - but it closes the trivial single-machine
-// case for free, with no user-facing downside for real installs.
+// Combines the trusted client IP (see "trust proxy" above) with a lightweight
+// fingerprint from headers that are cheap to read and vary per browser/install
+// - no client-side fingerprinting library, no new dependency (node:crypto is
+// already used in providers/store.js). This is a fairness fix, not hardened
+// bot detection: a determined attacker can still vary these headers per
+// request same as they could vary IP, but it solves the real problem that
+// motivated it - liarsledger.com/scan launched keying /register by IP alone,
+// and an office network, university, or mobile carrier's CGNAT puts many
+// unrelated real visitors behind one address, so the first 5 people to load
+// the scan page in an hour from behind such a NAT would exhaust the bucket
+// for everyone else behind it. Folding in User-Agent/Accept-Language/
+// Accept-Encoding splits that shared IP back into its actual distinct
+// visitors for the common case, while a naive script that doesn't bother
+// varying its own headers still collapses into one bucket exactly as before.
+function fingerprintKey(req) {
+  const raw = [
+    req.headers["user-agent"] || "",
+    req.headers["accept-language"] || "",
+    req.headers["accept-encoding"] || "",
+  ].join("|");
+  const fp = createHash("sha256").update(raw).digest("hex").slice(0, 16);
+  return `${req.ip}:${fp}`;
+}
+
+// /register gets its own, much stricter limiter, keyed by IP+fingerprint (see
+// fingerprintKey above). A real install calls this once (occasionally again
+// on startup to refresh state) - there's no legitimate reason for one visitor
+// to register many tokens quickly. This is the main defense against a script
+// mass-creating fake tokens to drain the shared scan pool or inflate
+// global:user_count (which lowers everyone's daily limit). Not a complete fix
+// - a distributed attacker with many IPs/proxies, or one that also varies its
+// headers, isn't stopped by this - but it closes the trivial single-machine
+// case for free, with no user-facing downside for real installs, and no
+// longer punishes unrelated visitors sharing one NATed IP.
 const registerLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
   max: 5,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: fingerprintKey,
   message: { error: "Too many registration attempts. Please try again later." },
 });
 app.use("/register", registerLimiter);
@@ -306,9 +338,26 @@ const checkoutLimiter = rateLimit({
   message: { error: "Too many checkout attempts. Please wait an hour and try again." },
 });
 
+// /api/scan/extract fetches an arbitrary, visitor-supplied URL server side -
+// the most expensive and highest-risk single call available to an anonymous
+// scan.html visitor (SSRF surface, third-party server latency, Readability/
+// jsdom parse cost). Keyed by token like the other scan routes rather than
+// IP, consistent with the rest of the scan-quota system; the general /api/*
+// limiter above already applies too, this one just gives this specific
+// route a much tighter budget of its own. 20/min comfortably covers a real
+// visitor pasting a few URLs in a row while bounding a script hammering it.
+const extractLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.tokenId || req.ip,
+  message: { error: "Too many scan requests. Please wait a moment and try again." },
+});
+
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => {
-  res.json({ status: "ok", version: process.env.npm_package_version || "0.17.12", ts: new Date().toISOString() });
+  res.json({ status: "ok", version: process.env.npm_package_version || "0.17.14", ts: new Date().toISOString() });
 });
 
 // ── Registration ──────────────────────────────────────────────────────────────
@@ -427,6 +476,66 @@ app.post("/api/scan/commit", requireToken, wrap(async (req, res) => {
     return res.status(200).json({ committed: false });
   }
   res.json({ committed: true });
+}));
+
+// ── Article extraction (public scan.html) ─────────────────────────────────────
+// POST /api/scan/extract - fetches a visitor-supplied article URL server
+// side and returns its extracted text, for liarsledger.com/scan (the no-
+// install web demo). requireToken only, NOT requireScanToken/countScan -
+// this doesn't count against the daily scan limit itself, same as
+// /api/claude/extract and /api/mistral/extract aren't separately counted;
+// the actual count happens once at /api/scan/start. extractLimiter (above)
+// gives this specific route its own tight budget since it fetches
+// arbitrary third-party URLs server side - the highest-risk single call an
+// anonymous visitor can trigger. See providers/articleFetch.js for the SSRF
+// guard (DNS-resolve + private-range block, re-checked on every redirect
+// hop) and size/timeout bounds - this is deliberately NOT the same as
+// server/bot/extractArticle.js, which has no such guard and is fine only
+// because its URLs come from curated Twitter mentions, not the public.
+app.post("/api/scan/extract", requireToken, extractLimiter, wrap(async (req, res) => {
+  const { url } = req.body || {};
+  if (!url || typeof url !== "string") {
+    return res.status(400).json({ error: "url is required", code: "ERR-INVALID-URL" });
+  }
+
+  try {
+    const { title, text } = await extractArticleTextPublic(url);
+    res.json({ title, text });
+  } catch (e) {
+    if (e instanceof ArticleFetchError) {
+      const status = e.code === "ERR-BLOCKED" ? 400 : 502;
+      return res.status(status).json({ error: e.message, code: e.code });
+    }
+    console.error("[scan/extract] unexpected error:", e.message);
+    res.status(502).json({ error: "Couldn't fetch that page. Please try again.", code: "ERR-UNKNOWN" });
+  }
+}));
+
+// ── Politician dictionary (public scan.html) ──────────────────────────────────
+// GET /api/politicians-dictionary - serves the same src/data/politicians.json
+// the extension bundles, so scan.html's browser-side copy of src/lookup.js
+// (loaded via js/vendor/) can resolve names the same way the extension does,
+// via a shimmed browser.runtime.getURL pointing here instead of a manually-
+// synced static copy. See providers/politicians.js.
+//
+// Deliberately NOT behind requireToken, unlike every other /api/* route:
+// src/lookup.js's loadDictionary() calls plain fetch(url) with no auth
+// header at all (confirmed live - it 401'd here, which loadDictionary()
+// doesn't check for, silently treating the error body's missing .members/
+// .aliases as an empty dictionary and crashing resolveAll on the first
+// lookup). That's correct behavior for the real extension, where
+// browser.runtime.getURL resolves to a locally bundled file needing no
+// auth - not a bug to work around by patching the vendor file, since it's
+// meant to stay unmodified. The dictionary itself needs no gating anyway:
+// it's the same static, non-sensitive dataset already fully public inside
+// the downloadable extension bundle, same category as GET /health.
+app.get("/api/politicians-dictionary", wrap(async (req, res) => {
+  try {
+    res.json(await politicians.dictionary());
+  } catch (e) {
+    console.error("[politicians-dictionary] failed to load:", e.message);
+    res.status(502).json({ error: "Failed to load politician dictionary." });
+  }
 }));
 
 // ── LLM extraction (requires a valid scan token from /api/scan/start above,
