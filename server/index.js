@@ -38,6 +38,7 @@ import { requireToken, countScan, requireScanToken } from "./middleware/auth.js"
 import * as square from "./providers/square.js";
 import { extractArticleTextPublic, ArticleFetchError } from "./providers/articleFetch.js";
 import { politicians } from "./providers/politicians.js";
+import { createHash } from "node:crypto";
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
@@ -265,19 +266,46 @@ app.post("/api/support/debug-log", supportLimiter, wrap(async (req, res) => {
 
 app.use("/api", limiter);
 
-// /register gets its own, much stricter limiter, keyed by IP. A real install
-// calls this once (occasionally again on startup to refresh state) - there's
-// no legitimate reason for one IP to register many tokens quickly. This is
-// the main defense against a script mass-creating fake tokens to drain the
-// shared scan pool or inflate global:user_count (which lowers everyone's
-// daily limit). Not a complete fix - a distributed attacker with many IPs
-// or proxies isn't stopped by this - but it closes the trivial single-machine
-// case for free, with no user-facing downside for real installs.
+// Combines the trusted client IP (see "trust proxy" above) with a lightweight
+// fingerprint from headers that are cheap to read and vary per browser/install
+// - no client-side fingerprinting library, no new dependency (node:crypto is
+// already used in providers/store.js). This is a fairness fix, not hardened
+// bot detection: a determined attacker can still vary these headers per
+// request same as they could vary IP, but it solves the real problem that
+// motivated it - liarsledger.com/scan launched keying /register by IP alone,
+// and an office network, university, or mobile carrier's CGNAT puts many
+// unrelated real visitors behind one address, so the first 5 people to load
+// the scan page in an hour from behind such a NAT would exhaust the bucket
+// for everyone else behind it. Folding in User-Agent/Accept-Language/
+// Accept-Encoding splits that shared IP back into its actual distinct
+// visitors for the common case, while a naive script that doesn't bother
+// varying its own headers still collapses into one bucket exactly as before.
+function fingerprintKey(req) {
+  const raw = [
+    req.headers["user-agent"] || "",
+    req.headers["accept-language"] || "",
+    req.headers["accept-encoding"] || "",
+  ].join("|");
+  const fp = createHash("sha256").update(raw).digest("hex").slice(0, 16);
+  return `${req.ip}:${fp}`;
+}
+
+// /register gets its own, much stricter limiter, keyed by IP+fingerprint (see
+// fingerprintKey above). A real install calls this once (occasionally again
+// on startup to refresh state) - there's no legitimate reason for one visitor
+// to register many tokens quickly. This is the main defense against a script
+// mass-creating fake tokens to drain the shared scan pool or inflate
+// global:user_count (which lowers everyone's daily limit). Not a complete fix
+// - a distributed attacker with many IPs/proxies, or one that also varies its
+// headers, isn't stopped by this - but it closes the trivial single-machine
+// case for free, with no user-facing downside for real installs, and no
+// longer punishes unrelated visitors sharing one NATed IP.
 const registerLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
   max: 5,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: fingerprintKey,
   message: { error: "Too many registration attempts. Please try again later." },
 });
 app.use("/register", registerLimiter);
@@ -329,7 +357,7 @@ const extractLimiter = rateLimit({
 
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => {
-  res.json({ status: "ok", version: process.env.npm_package_version || "0.17.13", ts: new Date().toISOString() });
+  res.json({ status: "ok", version: process.env.npm_package_version || "0.17.14", ts: new Date().toISOString() });
 });
 
 // ── Registration ──────────────────────────────────────────────────────────────

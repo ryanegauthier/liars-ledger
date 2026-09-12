@@ -64,6 +64,54 @@ The Account panel's "Restore Pro after reinstalling" flow asks users to paste a 
 
 ---
 
+## [0.17.14] - 2026-09-12
+
+### Fixed: `/register` rate limiter keyed by IP alone unfairly punished shared-IP visitors
+
+Follow-up to the v0.17.13 `/scan` launch review. `registerLimiter`
+(5/hour) was keyed by IP only (`express-rate-limit`'s default). An
+office network, university, or mobile carrier's CGNAT puts many
+unrelated real visitors behind one address - the first 5 people to load
+`liarsledger.com/scan` in an hour from behind such a NAT would exhaust
+the bucket for everyone else sharing it, with no way for them to tell
+why registration was failing.
+
+**Fix**: added `fingerprintKey(req)` (`server/index.js`) - combines
+`req.ip` with a SHA-256 hash (first 16 hex chars) of `User-Agent` +
+`Accept-Language` + `Accept-Encoding`, and set it as `registerLimiter`'s
+`keyGenerator`. No new dependency (`node:crypto` is already used in
+`providers/store.js`). This is a fairness fix, not hardened bot
+detection - a determined attacker can still vary these headers per
+request same as they could vary IP - but it solves the actual problem:
+distinct visitors behind a shared IP now get independent buckets, while
+a script that doesn't bother varying its own headers still collapses
+into one bucket exactly as before.
+
+Left as-is, not changed by this fix: `limiter` (general `/api/*`, 200/
+min) and `extractLimiter` (`/api/scan/extract`, keyed by tokenId) - IP
+collisions there aren't a fairness problem the same way, since the
+actual daily scan quota is tracked per-token in Redis regardless of
+which HTTP-level limiter bucket a request falls into.
+
+**Tests**: `server/test/free/admin-and-register.test.js` - two new
+cases confirming same-fingerprint requests share a bucket (remaining
+decrements) and different-fingerprint requests get independent buckets
+(both read `remaining: 4`, the first hit on a never-before-seen
+fingerprint). Both send an empty `/register` body, which 400s before
+touching `global:user_count` or Redis - same no-side-effect property the
+existing tests in that file rely on. `helpers.js`'s `api()` now also
+returns the raw `headers` (previously only `{status, body}`) so tests
+can read `RateLimit-Remaining`.
+
+**Still open, not addressed by this fix** (see original `/scan` spec):
+no bot/abuse challenge (Cloudflare Turnstile or similar) on the scan
+form, and no extension-install reconciliation of an anonymous web token
+into an extension token. Both remain explicitly deferred follow-ups,
+not silently dropped - flagged again here since fixing the rate-limiter
+key made this a natural point to re-confirm they're still tracked.
+
+---
+
 ## [0.17.13] - 2026-09-02
 
 ### Added: public no-install web scan (`liarsledger.com/scan`)

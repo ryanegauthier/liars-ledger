@@ -96,3 +96,58 @@ describe("/register validation", () => {
     expect(body.limit).toBeGreaterThan(0);
   });
 });
+
+describe("/register rate limiting is keyed by IP+fingerprint, not IP alone", () => {
+  // registerLimiter is keyed by fingerprintKey(req) - IP plus a hash of
+  // User-Agent/Accept-Language/Accept-Encoding (see server/index.js) - so an
+  // office/university/mobile-carrier NAT sharing one IP doesn't exhaust the
+  // bucket for every unrelated visitor behind it.
+  //
+  // These tests send an empty body, which the route handler rejects with 400
+  // before ever touching global:user_count or Redis - same "no side effect"
+  // property the tests above rely on. The limiter middleware runs (and sets
+  // its RateLimit-* headers) before that validation, so bucketing is
+  // observable without registering a single real token.
+  //
+  // Each test invents a brand-new random User-Agent, so its fingerprint has
+  // never been hit before - that makes "remaining == 4" (max 5, minus this
+  // first hit) deterministic no matter how many times this suite has already
+  // run against this same long-lived, in-memory limiter store this hour.
+
+  function freshUserAgent() {
+    return `ll-test-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  }
+
+  it("two requests with the same fingerprint share one bucket", async () => {
+    const headers = { "User-Agent": freshUserAgent() };
+    const first = await api("/register", { method: "POST", headers, body: {} });
+    const second = await api("/register", { method: "POST", headers, body: {} });
+
+    expect(first.status).toBe(400);
+    expect(second.status).toBe(400);
+    const firstRemaining = Number(first.headers.get("ratelimit-remaining"));
+    const secondRemaining = Number(second.headers.get("ratelimit-remaining"));
+    expect(firstRemaining).toBe(4);
+    expect(secondRemaining).toBe(firstRemaining - 1);
+  });
+
+  it("two requests with different fingerprints get independent buckets", async () => {
+    const first = await api("/register", {
+      method: "POST",
+      headers: { "User-Agent": freshUserAgent() },
+      body: {},
+    });
+    const second = await api("/register", {
+      method: "POST",
+      headers: { "User-Agent": freshUserAgent() },
+      body: {},
+    });
+
+    expect(first.status).toBe(400);
+    expect(second.status).toBe(400);
+    // Both are the first-ever hit on their own fingerprint. If they shared a
+    // bucket (the old IP-only behavior), the second would read one lower.
+    expect(first.headers.get("ratelimit-remaining")).toBe("4");
+    expect(second.headers.get("ratelimit-remaining")).toBe("4");
+  });
+});
