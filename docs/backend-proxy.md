@@ -48,7 +48,13 @@ The Liar's Ledger backend proxy runs at `api.liarsledger.com` (Node.js/Express, 
 |---|---|---|---|
 | `POST` | `/pricing/checkout` | None | Create Square payment link with token embedded as `order.reference_id`; rate-limited to 3/hr per IP |
 | `POST` | `/square/webhook` | Square HMAC signature | Handle Square subscription/invoice events; upgrade/downgrade tier in Redis |
-| `POST` | `/restore-token` | None | Look up anonymous token from Square order reference (receipt recovery) |
+| `POST` | `/restore-token` | None | Look up anonymous token from Square order reference (receipt recovery); rate-limited to 5/15min per IP |
+
+### Support
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `POST` | `/api/support/debug-log` | None | Email/webhook delivery of a user's debug log (full log, not truncated) plus the last-scanned article URL; rate-limited to 10/min per IP |
 
 ### Utility
 
@@ -112,9 +118,12 @@ Requests are restricted to origins in `ALLOWED_ORIGINS`: the extension's `chrome
 
 ## Rate limiting
 
-- General API routes: 60 requests/minute per IP
+- General API routes: 200 requests/minute per IP - raised from 60/min after a real 9-member scan's own Congress.gov/GovTrack/VoteSmart fan-out (amplified further by VoteSmart's internal retry logic) exhausted the shared budget before `/api/verify-claim` ever ran, silently failing Pro verification for the whole scan. 200/min gives a maxed-out, somewhat-flaky single scan headroom while still capping a client at roughly 3 full scans/minute.
+- `/api/verify-claim`: 30 requests/minute per IP, in its own bucket separate from the general limiter above - so upstream proxy noise (including VoteSmart retry storms) can never starve verification again. Comfortably covers 3x the LLM's 10-figure-per-scan cap.
+- `/api/support/debug-log`: 10 requests/minute per IP
 - `/register`: 5 requests/hour per IP
 - `/pricing/checkout`: 3 requests/hour per IP
+- `/restore-token`: 5 requests/15 minutes per IP
 
 `trust proxy: 1` is set so Render's reverse proxy passes the real client IP for rate limit calculations.
 

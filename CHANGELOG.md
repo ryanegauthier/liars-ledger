@@ -64,6 +64,250 @@ The Account panel's "Restore Pro after reinstalling" flow asks users to paste a 
 
 ---
 
+## [0.17.18] - 2026-10-31
+
+### Fixed: dual-model mode never ran both models; provider 429 shown as "Daily scan limit reached"; failed scans charged; title fragments as names
+
+**Evidence**: extension logs from three scans. Request A: Claude ok, Mistral
+`403 Scan authorization invalid, expired, or already used`. Request B: Claude
+the same 403, Mistral `502` wrapping `Mistral HTTP 429 ... rate_limited`, so
+both failed. Popup then showed `FREE · 27 SCANS REMAINING TODAY` directly above
+`Daily scan limit reached.` Candidates `Republican Gov` (from "Republican Gov.
+Joe Lombardo") and `Rep. Beth Doglio` (title kept).
+
+**Root causes (confirmed in code)**:
+1. One scan token, one slot, two providers. `consumeScanToken` did get-then-del
+   on `scantoken:{token}`; `src/llm.js` sends that token to Claude and Mistral in
+   parallel, so whichever arrived second got 403. The `requireScanToken` comment
+   described this as intended. Dual mode has effectively been single-model since
+   the scan-token hardening, with the survivor decided by arrival order. The
+   plain get-then-del also let two truly concurrent presentations both pass.
+2. `background.js` mapped any extraction error whose text contained `"429"` to
+   `rate_limited` ("Daily scan limit reached"). Mistral's upstream 429 inside a
+   502 matched. The header count comes from `/api/scan-status`, so the two
+   contradicted. The "All accounts share a daily scan pool" copy was also wrong:
+   each account has its own daily limit (free: 30 at today's user count, stepping
+   down by total users per `FREE_TIER_TABLE`; Pro: 100). The only shared cap is
+   `WEB_DAILY_SITE_LIMIT` for liarsledger.com/scan, which the extension never hits.
+3. Partly confirmed. The early "rate_limited" return skipped commit, so Request B
+   was not charged, but its reservation held a slot for up to 180s. When both
+   models failed without "429" in the error, the scan fell back to the content.js
+   regex and committed (charged) once data sources responded.
+4. Not a sentence splitter (there is none). `content.js` `TITLE_PATTERN` treated
+   party words as titles and any capitalized word as a name ("Republican" + "Gov"),
+   and kept the whole match including the title. The extraction prompt itself asked
+   for "Sen. Lastname" / "Rep. Lastname" and told the model to omit anyone not in
+   Congress, so the model, not the dictionary, decided membership.
+
+**server/providers/store.js**
+- Scan tokens carry one single-use slot per provider: `scantoken:{token}:claude`,
+  `scantoken:{token}:mistral` (`SCAN_TOKEN_PROVIDERS`, 60s TTL). `consumeScanToken(token,
+  provider)` proceeds only when `DEL` returns 1, closing the concurrent race. Kept
+  get + del rather than `getdel`, which failed in live testing earlier (see history
+  in the function comment). Counted once at reserve, unchanged.
+- `reserveScan` writes `scanres:{token}` (commitToken, pendingKey, webKey), server-only.
+- New `recordProviderFailure(token)`: increments `scanfail:{token}`; once every
+  provider slot has failed, releases the reservation (deletes the commit key, removes
+  the pending entry, returns the web-origin budget). Gated on the commit key's `DEL`
+  result, and `commitScan` now uses the same gate, so a commit and a release can never
+  both finalize one reservation. Only the server calls this; the client cannot request
+  a release, so it cannot run an extraction and then cancel its charge.
+
+**server/middleware/auth.js** - `requireScanToken(provider)` is now a factory; each
+route consumes only its own slot. Rejections include `code: "ERR-SCAN-AUTH"`.
+
+**server/providers/providerFetch.js (new)** - shared provider fetch: up to 2 retries
+with backoff on 429/5xx/529 (honors `Retry-After`, capped at 4s), never on other 4xx,
+whole call capped at 25s so it finishes inside the extension's 30s timeout. Every
+failure carries `category`: `rate_limited`, `upstream`, or `timeout`.
+**server/providers/claude.js, mistral.js** - use `fetchWithRetry`; all failures categorized.
+
+**server/index.js** - extraction routes share `extractionRoute(provider)`, which calls
+`recordProviderFailure` on a provider failure. `requireScanToken("claude")` /
+`("mistral")`. Dual-mode comment updated.
+
+**server/providers/_shared.js + src/llm.js (prompt mirror)** - `lookup_name` is the
+person's name with every title, honorific, party label, and role word removed. Include
+every named officeholder, candidate, or titled political figure (President and Vice
+President still omitted); the model no longer decides Congress membership ("Rep." can
+be a state legislator). Explicit abbreviation and title-fragment rules. Both copies
+verified identical.
+
+**src/llm.js** - every failure carries `category` (`auth` for a 401/403 from our proxy,
+the server's category when present, else `rate_limited`/`upstream`/`timeout`). Single-model
+results keep `loser_error` and add `loser_category` on `_meta` (survives a winner with no
+figures). Both-failed results return `category` (`auth` only if every failure was auth)
+and per-provider `categories`.
+
+**background.js** - removed the `includes("429")` quota mapping. When analysis fails
+entirely: no commit, no regex fallback, `syncTier()` refresh, and status
+`service_busy` ("The analysis service is busy. Try again in a minute. This did not use
+a scan.") or `scan_unverified` ("Scan could not be verified. Reload the page and try
+again."). "Daily scan limit reached" now only ever comes from `/api/scan/start`'s 429.
+Single-model log line includes `loser_category`. `no_members` message lists named
+people who are not current members of Congress, without asserting their office.
+
+**popup.js** - handles `service_busy` and `scan_unverified`. Once "Daily scan limit
+reached" is shown, the header shows 0 remaining (`quotaExhaustedShown`), so the two can
+never contradict. Upgrade copy: "Free accounts get a limited number of scans each day."
+
+**src/lookup.js** - `cleanName` strips leading titles/party/role words (abbreviation-aware,
+never the last word, so "Sen. Justice" keeps "Justice"), trailing party-state tags
+(", R-Ohio"), generational suffixes, and possessives, keeping capitalization; `stripTitle`
+uses it. `isTitleOnly` drops candidates like "Republican Gov" (status `invalid`). The
+last-name-only fallback now requires a compatible first name (nicknames both ways), so a
+non-member such as "John Smith" no longer resolves to Rep. Adrian Smith; this mattered
+little before because the prompt filtered non-members out. Unresolved names are shown
+cleaned and deduplicated.
+
+**content.js** - fallback regex rebuilt: party/place words are optional prefixes, a name
+can never start with a title or institution word, a bare party word needs a two-word name,
+adds Lt. Gov., Attorney General, Dr., middle initials. Sidebar labels unified to "Not a
+current member of Congress"; upgrade copy as in popup.js.
+
+**Tests** - `src/test/name-extraction.test.js` (24, real dictionary: the four example
+sentences, first-name check, Crockett/Paxton/Talarico regression, inline-link line break),
+`src/test/llm-dual.test.js` (5: same token to both, 429 fallback, Request B shape is busy
+not auth, all-auth, timeout). `server/test/unit/scan-token.test.js` (10, in-memory Redis:
+both slots once, replay, concurrent race, release on all-fail, commit-wins, web budget,
+middleware) and `provider-fetch.test.js` (6). New `npm run test:unit` (offline) in server/;
+default vitest config now also includes `test/unit/`. `server/test/cost/name-extraction.test.js`
+(real model calls, not run by default; only meaningful once this server is deployed).
+`src/test/lookup.test.js` Sawant expectation updated to the cleaned name.
+
+**Cost impact**: before this, nearly every scan ran one model (the second was rejected).
+Now every scan runs both: about +$0.0005 per scan for Mistral Small against about $0.005
+for the Claude Haiku 4.5 call on a full article, roughly +10% (estimates from list
+prices, not measured). Retries add calls only on 429/5xx. Dual mode stays on for all tiers
+for now; decision deferred until the Mistral 429 rate and real cost are measured.
+
+**Explicitly deferred**:
+- Second model only for Pro or on a sample (hook: `issueScanToken`'s provider list).
+- `claude-haiku-4-5` to `claude-haiku-5-5` on the server (about 10x cheaper per call); not evaluated.
+- liarsledger.com/scan: its vendored `js/vendor/ll-llm.js` and `ll-lookup.js` (copied from
+  v0.17.13) need re-copying to pick up categories and title handling; the server fix
+  (per-provider slots) already applies to it.
+- Existing `server/test/cost/extraction-quality.test.js` calls the extraction routes
+  without a scanToken, so it has presumably failed with 403 since the scan-token hardening.
+- No automated popup UI test (no harness for popup.js); behavior covered by the
+  background/llm unit tests and manual check.
+- Pending reservations from auth-failed scans still expire after 180s rather than being
+  released (no provider call happened, so nothing is recorded).
+
+## [0.17.17] - 2026-09-12
+
+### Added: aggregate daily cap on liarsledger.com/scan traffic across all visitors combined
+
+**Why**: `/scan` is the first fully anonymous, no-signup surface on the
+product. Each visitor already draws from the shared per-token free-tier
+pool (v0.17.13), which bounds any *one* visitor's cost - but nothing
+bounded total cost from the surface as a whole if visitor volume itself
+spiked. Wanted a simple ceiling on total daily Claude/Mistral spend from
+`/scan` specifically, independent of how many distinct visitors show up.
+
+**Explicitly rejected approach**: a single shared bearer token embedded
+in `scan.js` with its own larger limit (the original ask). Any value
+client-side JS sends is visible to anyone via DevTools' Network tab
+regardless of how it's stored in the source - obfuscation doesn't help,
+since the real token has to go out over the wire in plaintext for the
+API call to work at all. A single shared credential would be easier to
+drain than today's per-visitor design (one token to extract instead of
+needing to mint many), and has no way to reconcile with an individual's
+own extension install the way a per-visitor token can. Went with a
+server-side-only aggregate counter instead - nothing new is ever exposed
+to the browser, so there is no new credential worth stealing.
+
+**Implementation**:
+- `server/providers/store.js`: new `WEB_DAILY_SITE_LIMIT` (1000).
+  `reserveScan(tokenId, tier, isWebOrigin)` gains a third parameter;
+  when true, checks+increments a plain `web:scans:{date}` Redis counter
+  *before* touching this token's own per-token count/pending state, so a
+  site-wide rejection never consumes any of that visitor's own daily
+  allowance. Checked at reserve time (when `/api/scan/start` issues a
+  scanToken), not commit time - the actual Claude/Mistral cost happens
+  once a scanToken is issued regardless of whether the client later
+  calls `/api/scan/commit`, so gating only on committed counts would
+  undercount real exposure, same reasoning the existing per-token
+  pending-set logic already relies on. Deliberately does NOT mirror that
+  per-token pending/expiry-reclaim mechanism for the site-wide counter -
+  an abandoned web-origin reservation is not reclaimed back into the
+  day's budget. Acceptable for a soft aggregate ceiling, not a
+  per-visitor guarantee; revisit if abandonment rate turns out to matter.
+- `server/middleware/auth.js`: `countScan` derives `isWebOrigin` from
+  `req.headers.origin === "https://liarsledger.com"` - the Origin header
+  is browser-enforced and can't be set by page JS, so this needed zero
+  changes to `scan.js` to identify web traffic. Caveat: a non-browser
+  caller hitting the API directly with a stolen token can omit or fake
+  Origin, which just means that traffic isn't counted against the
+  site-wide bucket - it's still bound by its own token's per-day limit
+  and `extractLimiter` exactly as before. Soft cost-control signal, not a
+  security boundary - documented as such in the code rather than
+  overclaiming what it protects against. Returns a distinct
+  `ERR-SITE-CAPACITY` code (429) so the client can tell "the site as a
+  whole is out for today" apart from "you personally hit your own daily
+  limit" (the pre-existing, unchanged per-token 429).
+- `js/scan.js` (website repo) / `css/scan.css` (website repo): new
+  branch for `ERR-SITE-CAPACITY` in the `/api/scan/start` 429 handler,
+  styled the same non-alarming way as the existing rate-limited and
+  `ERR-SITE-BLOCKED` states - this is nobody's fault and not a bug,
+  same category as those two.
+
+**Not affected**: the extension (`chrome-extension://` origin) and
+direct/non-browser API callers (no Origin header) both fall through to
+the existing per-token-only behavior, completely unchanged - confirmed
+`reserveScan`'s only other caller (the two-phase reserve/commit flow
+itself) and grepped for every other reference to it before landing this
+(`server/bot/runAnalysis.js` has an unrelated same-named local function,
+not importing from `providers/store.js` at all).
+
+---
+
+## [0.17.16] - 2026-09-12
+
+### Fixed: `/api/scan/extract` mislabeled bot-blocked sites as a network failure
+
+**Discovered**: live, scanning a real thehill.com article via `/scan` -
+got `That page returned an error (HTTP 403). [ERR-NET]`.
+
+**Root cause confirmed, not a bug in the fetch/SSRF logic itself**: The
+Hill runs PerimeterX bot mitigation (`_pxhd` cookie observed in its
+response). Tested the identical request (same URL, same
+`LiarsLedgerBot` User-Agent, `fetchWithGuard`'s exact header set) from
+two different source IPs: 200 OK from one, a flat 403 from the other,
+repeatable both ways across multiple attempts. This is IP-reputation-
+based blocking, not a User-Agent or header problem - also confirmed a
+fully browser-shaped UA + `Accept`/`Accept-Language` headers made it
+*worse* (403 every time) from the IP that otherwise got 200 with the
+honest bot UA, consistent with PerimeterX flagging a UA/TLS-fingerprint
+mismatch (claims Chrome, connects like curl/Node) more aggressively than
+an honestly-declared bot. Render's egress range is a plausible target
+for this kind of publisher-side datacenter-IP blocklist, same pattern
+scraping-adjacent services on Heroku/Vercel/Render commonly hit.
+
+**Not attempted, and not planned**: IP rotation, TLS-fingerprint
+spoofing, or a stealth headless browser to get past this. That would be
+deliberately defeating a control the origin site put up on purpose,
+which is a materially different thing from fixing our own fetch logic -
+not doing that without a real product decision to accept the ToS
+exposure, not going to happen as a quiet side effect of this bug report.
+
+**Fix (`server/providers/articleFetch.js`)**: `fetchWithGuard` now
+splits upstream `403`/`429`/`451` into a new `ERR-SITE-BLOCKED` code
+("This site blocks automated readers and can't be scanned.") instead of
+lumping every non-2xx origin response into `ERR-NET` ("Couldn't fetch
+that URL") - the old message reads like a problem on our end, when the
+origin refused us on purpose. `server/index.js`'s existing
+`ArticleFetchError` handler (`res.status(...).json({error, code})`)
+relays the new code to the client with no route change needed.
+
+**Follow-up required in the website repo, not done here** (not open in
+this workspace): `scan.html`'s error-rendering needs its own branch for
+`ERR-SITE-BLOCKED` - right now it will fall through to whatever generic
+handling it has for an unrecognized code. Given how common bot-mitigated
+publishers are, this will recur regularly, not as a rare edge case.
+
+---
+
 ## [0.17.15] - 2026-09-12
 
 ### Fixed: production crash - `Cannot find package 'jsdom'` on `/api/scan/extract`

@@ -90,7 +90,8 @@ describe("resolveAll - bare surname coreference", () => {
     assert.equal(resolved.length, 1);
     assert.equal(resolved[0].full_name, "Adam Smith");
     assert.equal(notFound.length, 1);
-    assert.equal(notFound[0], "Rep. Sawant");
+    // Titles are stripped from the displayed name as of v0.17.18.
+    assert.equal(notFound[0], "Sawant");
   });
 
   it("still resolves a bare surname via the dictionary alias when no fuller name appeared earlier in the scan", async () => {

@@ -51,7 +51,7 @@ const scansInFlight = new Set();
 // --- Message listener ---
 browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "ping") {
-    sendResponse({ status: "ok", version: "0.17.15" });
+    sendResponse({ status: "ok", version: "0.17.18" });
     return true;
   }
 
@@ -273,22 +273,39 @@ async function handleAnalyze({ politicians, articleText }) {
         figures          = ann.figures || [];
         mainTopicsGlobal = ann.main_topics || [];
         if (ann._meta) {
-          const loserError = figures?.[0]?._loser_error || "unknown";
+          const loserError    = ann._meta.loser_error || figures?.[0]?._loser_error || "unknown";
+          const loserCategory = ann._meta.loser_category || "unknown";
           const logMsg = ann._meta.provider === "single_model"
-            ? `LLM ok - provider=single_model, winner=${ann._meta.winner}, loser=${ann._meta.loser}, loser_error=${loserError}, figures=${figures.length}, topics=${mainTopicsGlobal.length}`
+            ? `LLM ok - provider=single_model, winner=${ann._meta.winner}, loser=${ann._meta.loser}, loser_category=${loserCategory}, loser_error=${loserError}, figures=${figures.length}, topics=${mainTopicsGlobal.length}`
             : `LLM ok - provider=${ann._meta.provider}, figures=${figures.length}, topics=${mainTopicsGlobal.length}, verified=${ann._meta.verified ?? "n/a"}, ambiguous=${ann._meta.ambiguous ?? "n/a"}`;
           logger.info("background", logMsg);
         } else {
           logger.info("background", `LLM ok - ${figures.length} figure(s), ${mainTopicsGlobal.length} topic(s)`);
         }
-      } else if (ann?.error?.includes("429")) {
-        return {
-          status: "rate_limited",
-          message: "Daily scan limit reached. Upgrade to Pro for unlimited scans.",
-          upgrade_url: upgradeUrl,
-        };
       } else {
-        logger.warn("background", `LLM failed: ${ann.error} - continuing with keyword fallback`);
+        // Both models failed (or the only model run failed). The scan is NOT
+        // charged: no commit is sent, and the server releases the
+        // reservation itself once every provider call for this scan has
+        // failed (store.js recordProviderFailure), so the remaining count
+        // is refreshed right away. There is no keyword fallback here any
+        // more: a scan whose analysis failed reports that plainly.
+        //
+        // "rate_limited" is never the user's quota here: the quota is only
+        // ever reported by /api/scan/start's 429 (above). A 429 inside an
+        // extraction error is the provider's own rate limit.
+        const category = ann?.category || "upstream";
+        logger.warn("background", `LLM failed (category=${category}${ann?.categories ? `, claude=${ann.categories.claude}, mistral=${ann.categories.mistral}` : ""}): ${ann?.error} - not charged`);
+        await syncTier().catch(() => {});
+        if (category === "auth") {
+          return {
+            status: "scan_unverified",
+            message: "Scan could not be verified. Reload the page and try again.",
+          };
+        }
+        return {
+          status: "service_busy",
+          message: "The analysis service is busy. Try again in a minute. This did not use a scan.",
+        };
       }
     }
 
@@ -321,7 +338,14 @@ async function handleAnalyze({ politicians, articleText }) {
     if (allMembers.length === 0) {
       logger.warn("background", "no Congress members found");
       await doCommitScan(proxyUrl, commitToken);
-      return { status: "no_members", notMembers, notFound, message: "No current or former members of Congress detected." };
+      // People who were named but aren't in the Congress dictionary are a
+      // distinct result, not a generic failure. Their office is never
+      // asserted: the dictionary only tells us they aren't current members.
+      const named = [...notFound, ...notMembers];
+      const message = named.length
+        ? `No current members of Congress in this article. Not current members of Congress: ${named.join(", ")}.`
+        : "No current or former members of Congress detected.";
+      return { status: "no_members", notMembers, notFound, message };
     }
 
     logger.info("background", `resolved: ${allMembers.map((m) => m.full_name).join(", ")}`);
@@ -513,7 +537,7 @@ function classifyError(err) {
   return "ERR-UNKNOWN";
 }
 
-logger.info("background", "service worker loaded v0.17.15");
+logger.info("background", "service worker loaded v0.17.18");
 
 // Initialize token and sync tier
 getOrCreateToken().then((t) => {

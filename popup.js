@@ -1,4 +1,4 @@
-// Liar's Ledger - popup.js v0.17.15
+// Liar's Ledger - popup.js v0.17.18
 
 const browser = window.browser || window.chrome;
 const toggle         = document.getElementById("enableToggle");
@@ -316,7 +316,14 @@ function runScan(tab) {
   });
 }
 
+// True once this popup has shown "Daily scan limit reached". That status
+// only ever comes from /api/scan/start rejecting the scan for quota, so the
+// header must agree and show 0 remaining, never "N scans remaining" next to
+// "limit reached" (a stale synced count could otherwise say otherwise).
+let quotaExhaustedShown = false;
+
 function handleResult(result) {
+  if (result.status === "rate_limited") quotaExhaustedShown = true;
   // Refresh scan count display - background.js's syncTier() call after
   // /api/scan/start means storage.sync should already reflect the new
   // count by now, regardless of which branch below fires.
@@ -334,6 +341,11 @@ function handleResult(result) {
     setStatus(`${userMsg} [${code}]`, "error");
   } else if (result.status === "no_members") {
     setStatus(result.message || "No current Congress members found.", "");
+  } else if (result.status === "service_busy") {
+    // A provider was busy or failing. Not a quota problem, and not charged.
+    setStatus(result.message || "The analysis service is busy. Try again in a minute. This did not use a scan.", "error");
+  } else if (result.status === "scan_unverified") {
+    setStatus(result.message || "Scan could not be verified. Reload the page and try again.", "error");
   } else if (result.status === "no_topics") {
     setStatus("Members found but no policy topics detected.", "");
   } else if (result.status === "rate_limited") {
@@ -342,7 +354,7 @@ function handleResult(result) {
     cardsContainer.innerHTML = `
       <div class="upgrade-prompt">
         <div class="upgrade-heading">Upgrade to Pro</div>
-        <div class="upgrade-body">All accounts share a daily scan pool. Pro unlocks AI summaries, claim verdicts, and full VoteSmart data.</div>
+        <div class="upgrade-body">Free accounts get a limited number of scans each day. Pro unlocks AI summaries, claim verdicts, and full VoteSmart data.</div>
         <a class="upgrade-btn" id="upgradeBtn" href="${upgradeUrl}" target="_blank">View Pricing →</a>
       </div>`;
     // Append the install token as a query param so /pricing can pre-fill
@@ -374,7 +386,7 @@ function loadScanInfo() {
     if (!token) return;
     const used = token.scansToday ?? 0;
     const limit = token.limit ?? 30;
-    const remaining = token.remaining ?? (limit - used);
+    const remaining = quotaExhaustedShown ? 0 : (token.remaining ?? (limit - used));
     const tierLabel = token.tier === "pro" ? "Pro" : "Free";
 
     // token.downgradeReason is expected to be copied through from

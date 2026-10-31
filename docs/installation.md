@@ -43,7 +43,7 @@ Load unpacked in `chrome://extensions` pointing at the project root.
 The dictionary is committed to the repo and doesn't need to be rebuilt for normal use. To rebuild against the latest Congress.gov data:
 
 ```bash
-node build-dictionary.js YOUR_CONGRESS_API_KEY
+node scripts/build-dictionary.cjs YOUR_CONGRESS_API_KEY
 ```
 
 Register for a free key at [api.congress.gov/sign-up](https://api.congress.gov/sign-up/).
@@ -55,7 +55,7 @@ See [Backend Proxy - Local development](backend-proxy#local-development).
 ## Building a release zip
 
 ```bash
-node build-release.js
+node scripts/build-release.js
 ```
 
 Produces `liars-ledger-vX.X.X.zip` in the project root. The GitHub Actions workflow runs this automatically on every version tag push.

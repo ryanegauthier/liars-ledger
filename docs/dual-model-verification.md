@@ -32,7 +32,7 @@ Both models receive the same article text (capped at 12,000 characters) via the 
 }
 ```
 
-Both models use `temperature: 0.0` for deterministic output.
+Both models use `temperature: 0.0` for deterministic output. Each model is prompted to order its own `main_topics` from most to least prominent in the article, so the topic given the most attention or mentioned most often comes first - the two models' lists are then concatenated (Claude's first, then Mistral's) rather than reconciled into a single cross-model ranking.
 
 Claims are then compared per politician using **Jaccard similarity** - the percentage of meaningful words the two claims share out of their combined unique word count. Words of two characters or fewer are excluded before scoring.
 

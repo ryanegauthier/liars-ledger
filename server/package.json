@@ -8,6 +8,7 @@
     "dev": "node --watch index.js",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:unit": "vitest run --config vitest.unit.config.js",
     "test:cost": "vitest run --config vitest.cost.config.js"
   },
   "engines": {

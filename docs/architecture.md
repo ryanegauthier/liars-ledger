@@ -46,26 +46,26 @@ Backend Proxy (Node.js / Render)
 When you click **Scan This Page**:
 
 1. **`content.js`** extracts article text and runs it against the politician dictionary via regex. Both are sent to the popup.
-2. **`popup.js`** sends an `analyze` message to the background service worker and begins polling `browser.storage.session` every 500ms.
+2. **`popup.js`** sends an `analyze` message to the background service worker and begins polling `browser.storage.session` every 500ms. If a scan for this tab's URL is already in flight (e.g. the popup was closed and reopened mid-scan), it skips re-sending `analyze` and just resumes polling the existing scan instead of starting a duplicate one.
 3. **`background.js`** hits `GET /api/scan-status` to get a fresh tier and scan count from Redis (falls back to cached value on failure).
 4. **`background.js`** calls `POST /api/scan/start`, which atomically reserves a scan slot in Redis and returns two single-use tokens:
    - `scanToken` - required by the extraction endpoints; consumed on first use
    - `commitToken` - used later to finalize the scan count only if data was retrieved
    - Returns `429` if the daily limit is already hit; pipeline aborts here before any AI call.
+   - An in-memory `scansInFlight` set (keyed by tab URL) rejects a second concurrent `analyze` for the same URL rather than launching a duplicate reservation and pipeline - closing and reopening the popup mid-scan no longer doubles backend cost and daily scan charges.
 5. **`src/llm.js`** fires both extraction calls in parallel via `Promise.allSettled`:
    - `POST /api/claude/extract`
    - `POST /api/mistral/extract`
    - Both receive the same `scanToken`. Claims are merged via Jaccard similarity (threshold 0.65). See [Dual-Model Verification](dual-model-verification).
-6. **`background.js`** resolves LLM-extracted politician names against the 3,606-key dictionary via `resolveAll()`, returning structured member objects with `bioguide_id`, chamber, party, state.
-7. **`src/api.js`** fans out parallel fetches per member:
-   - Congress.gov: sponsored + cosponsored legislation (up to 100 bills each)
-   - GovTrack: roll-call vote history (last 50 votes, topic-filtered)
-   - All responses cached in `browser.storage.session` under `api:*` keys
-8. **`src/votesmart.js`** fetches interest group ratings and vote history per member via paginated VoteSmart API calls. Responses cached under `vs:*` keys.
-9. **Scan commit decision**: if every government API call errored for every member, `commitToken` is discarded and the reservation expires. If any source responded, `POST /api/scan/commit` is called.
-10. **Pro only**: `src/verify.js` sends each `{ claim, member, record }` to `POST /api/verify-claim`. Claude reads the actual legislative record and returns a verdict: `supported / contradicted / mixed / insufficient`.
-11. **Tier gating**: Pro-only fields (`claim`, `verdict`, `verdict_explanation`, verification metadata) are stripped from results before storage for free-tier users. The real security boundary is server-side; this is a defensive fallback.
-12. Results are written to `browser.storage.session`. The popup's poll picks them up and closes. The content script renders the sidebar.
+6. **`background.js`** resolves LLM-extracted politician names against the 3,606-key dictionary via `resolveAll()`, returning structured member objects with `bioguide_id`, chamber, party, state. A later bare surname (e.g. "Rep. Smith" appearing after "Rep. Adam Smith" earlier in the same article) is treated as a back-reference to the fuller name already resolved earlier in the same scan, rather than falling through to the dictionary's single hardcoded alias for that surname - but only when exactly one distinct person with that surname has been resolved so far, so two real same-surname members mentioned in one article are never silently guessed between.
+7. **`src/api.js`** and **`src/votesmart.js`** fan out fetches per member, processed in batches of 3 members at a time (each member's own Congress.gov/GovTrack/VoteSmart calls still run in parallel within a batch) to avoid overwhelming VoteSmart's API, which load-sheds under burst concurrency from a single client:
+   - Congress.gov: sponsored + cosponsored legislation (up to 100 bills each), cached under `api:*` keys
+   - GovTrack: roll-call vote history (last 50 votes, topic-filtered), cached under `api:*` keys
+   - VoteSmart: interest group ratings and vote history via paginated API calls, cached under `vs:*` keys
+8. **Scan commit decision**: if every government API call errored for every member, `commitToken` is discarded and the reservation expires. If any source responded, `POST /api/scan/commit` is called.
+9. **Pro only**: `src/verify.js` sends each `{ claim, member, record }` to `POST /api/verify-claim`. Claude reads the actual legislative record and returns a verdict: `supported / contradicted / mixed / insufficient`.
+10. **Tier gating**: Pro-only fields (`claim`, `verdict`, `verdict_explanation`, verification metadata) are stripped from results before storage for free-tier users. The real security boundary is server-side; this is a defensive fallback.
+11. Results are written to `browser.storage.session`. The popup's poll picks them up and closes. The content script renders the sidebar.
 
 ## Freemium system
 
@@ -97,6 +97,19 @@ Subscriptions are managed via Square webhooks (`subscription.created/updated`, `
 `safeSessionSet()` (exported from `cache-maintenance.js`, called by both `cacheSet` in `api.js` and `vsSet` in `votesmart.js`) adds a second layer: it checks usage before each individual write and evicts if needed, with a retry-after-eviction path on quota errors.
 
 Evictable keys: all `api:*` and `vs:*` prefixed entries (request cache data). Preserved: `ll_results` (last scan result), `vs:id:*` (VoteSmart candidateId resolution cache - small but expensive to re-fetch).
+
+## Error codes
+
+`background.js`'s `classifyError()` maps pipeline exceptions to a short code shown in brackets in the popup's error message, so a user can report a failure without needing DevTools access:
+
+| Code | Meaning |
+|---|---|
+| `ERR-CACHE` | Session storage quota exceeded |
+| `ERR-NET` | Network error / failed to fetch |
+| `ERR-TIMEOUT` | Request aborted or timed out |
+| `ERR-AUTH` | 401 or 403 from the backend |
+| `ERR-UNKNOWN` | Anything else |
+| `ERR-HANG` | Service worker crashed or stalled before writing any result (popup's poll timeout fired with nothing in `ll_results`) |
 
 ## Key design decisions
 

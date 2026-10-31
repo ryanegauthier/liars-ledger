@@ -153,12 +153,89 @@ function normalizeKey(name) {
   return name.toLowerCase().trim();
 }
 
-function stripTitle(name) {
-  return name
-    .toLowerCase()
+// Leading words removed before lookup: titles, honorifics, party labels, and
+// role words (with or without a trailing period, case-insensitive). The last
+// remaining word is never removed, because some of these are also surnames
+// ("Sen. Jim Justice", "Rep. Speaker" style edge cases).
+const LEADING_TITLE_WORDS = new Set([
+  "u.s", "us", "state", "former", "the",
+  "rep", "representative", "congressman", "congresswoman", "congressmember",
+  "sen", "senator", "gov", "governor", "lt", "lieutenant", "mayor",
+  "president", "vice", "secretary", "sec", "speaker", "leader", "majority",
+  "minority", "whip", "attorney", "general", "ag", "del", "delegate",
+  "resident", "commissioner", "assemblymember", "assemblyman", "assemblywoman",
+  "councilmember", "councilman", "councilwoman", "chair", "chairman",
+  "chairwoman", "judge", "justice", "sheriff",
+  "dr", "mr", "mrs", "ms", "mx", "gen", "col", "colonel", "sgt", "sergeant",
+  "capt", "captain", "adm", "admiral", "rev",
+  "democrat", "democratic", "republican", "gop", "independent",
+]);
+
+// Words that are never a person's name. A candidate made only of these
+// ("Republican Gov", "U.S. Rep") is a title fragment, not a person, and is
+// dropped instead of looked up. Deliberately excludes words that are also
+// surnames (Justice, Speaker, Judge, Mayor, ...).
+const NEVER_A_NAME_WORDS = new Set([
+  "u.s", "us", "state", "former", "the",
+  "rep", "representative", "congressman", "congresswoman", "congressmember",
+  "sen", "senator", "gov", "governor", "lt", "lieutenant", "secretary", "sec",
+  "attorney", "ag", "del", "delegate", "commissioner",
+  "dr", "mr", "mrs", "ms", "mx", "gen", "col", "sgt", "capt", "adm", "rev",
+  "democrat", "democratic", "republican", "gop", "independent",
+]);
+
+function titleWord(token) {
+  return token.toLowerCase().replace(/\.+$/, "");
+}
+
+/**
+ * Removes leading titles/party/role words and trailing party-state tags
+ * (", R-Ohio", "(D-Texas)"), generational suffixes, and possessives, keeping
+ * the original capitalization of what remains.
+ *   "Republican Gov. Joe Lombardo" -> "Joe Lombardo"
+ *   "U.S. Rep. Jasmine Crockett"   -> "Jasmine Crockett"
+ *   "Dr. Jane Smith, R-Ohio"       -> "Jane Smith"
+ */
+function cleanName(name) {
+  let s = String(name || "")
+    .replace(/\s+/g, " ")
     .trim()
-    .replace(/^(rep\.?|sen\.?|senator|representative|president|vice\s+president|gov\.?|governor|mayor|secretary|sec\.?|democrat|republican|independent)\s+/i, "")
+    .replace(/[\s,]*\(?\b[RDI]-[A-Za-z. ]+\)?$/, "")      // ", R-Ohio" / "(D-Texas)"
+    .replace(/,?\s+(jr|sr|ii|iii|iv)\.?$/i, "")          // ", Jr."
+    .replace(/['’]s$/i, "")                          // possessive
     .trim();
+  const tokens = s.split(" ").filter(Boolean);
+  while (tokens.length > 1 && LEADING_TITLE_WORDS.has(titleWord(tokens[0]))) tokens.shift();
+  return tokens.join(" ");
+}
+
+function stripTitle(name) {
+  return cleanName(name).toLowerCase();
+}
+
+// True when the candidate is only titles/party/role words, e.g. "Republican Gov".
+function isTitleOnly(name) {
+  const tokens = String(name || "").trim().split(/\s+/).filter(Boolean);
+  return tokens.length === 0 || tokens.every((t) => NEVER_A_NAME_WORDS.has(titleWord(t)));
+}
+
+// For the last-name-only fallback: a full name only matches a member by
+// surname if the first names are compatible, so a non-member who shares a
+// common surname ("John Smith", a state senator) is not resolved to a member
+// of Congress ("Adrian Smith").
+function firstNameCompatible(first, entry) {
+  const f = (first || "").toLowerCase().replace(/\./g, "");
+  const candidates = [entry.first_name, (entry.full_name || "").split(/\s+/)[0]]
+    .map((x) => (x || "").toLowerCase().split(/\s+/)[0].replace(/\./g, ""))
+    .filter(Boolean);
+  if (!f || !candidates.length) return true;
+  return candidates.some((ef) =>
+    f === ef ||
+    NICKNAME_FIRST[f] === ef ||
+    NICKNAME_FIRST[ef] === f ||
+    (f.length === 1 && ef.startsWith(f)) ||
+    (f.length >= 3 && ef.startsWith(f)) ||
+    (ef.length >= 3 && f.startsWith(ef)));
 }
 
 function applyNicknames(stripped) {
@@ -178,6 +255,10 @@ function applyNicknames(stripped) {
 
 // --- Resolve a single name ---
 async function resolvePolitician(rawName) {
+  // 0. A title fragment with no actual name ("Republican Gov") is not a
+  //    person; drop it instead of reporting it as someone not found.
+  if (isTitleOnly(rawName)) return { status: "invalid", name: rawName };
+
   const dict = await loadDictionary();
 
   // 1. Exact normalized match
@@ -204,12 +285,12 @@ async function resolvePolitician(rawName) {
     if (m4) return { status: m4.is_current ? "found" : "former", entry: m4 };
   }
 
-  // 5. Last-name-only fallback
+  // 5. Last-name-only fallback, only when the first name is compatible
   const parts = stripped.split(/\s+/);
   if (parts.length > 1) {
     const lastNameOnly = parts[parts.length - 1];
     const m5 = lookupAlias(dict, lastNameOnly);
-    if (m5) return { status: m5.is_current ? "found" : "former", entry: m5 };
+    if (m5 && firstNameCompatible(parts[0], m5)) return { status: m5.is_current ? "found" : "former", entry: m5 };
   }
 
   // 6. Known non-member title
@@ -279,10 +360,15 @@ async function resolveAll(names) {
         if (!lastNameSeen.has(last)) lastNameSeen.set(last, new Set());
         lastNameSeen.get(last).add(result.entry.bioguide_id);
       }
-    } else if (result.status === "not_member") {
-      notMembers.push(name);
+    } else if (result.status === "invalid") {
+      console.log("[Liars Ledger] dropped title-only candidate:", name);
     } else {
-      notFound.push(name);
+      // Both lists are shown as "Not a current member of Congress" with the
+      // cleaned name (titles removed), deduplicated. notMembers keeps the
+      // separate bucket for people whose title marks them as a non-member.
+      const list = result.status === "not_member" ? notMembers : notFound;
+      const display = cleanName(name);
+      if (display && !list.some((n) => n.toLowerCase() === display.toLowerCase())) list.push(display);
     }
   }
 
