@@ -52,6 +52,8 @@ The Account panel's "Restore Pro after reinstalling" flow asks users to paste a 
 
 **Not fixed**: TODOs added at both spots (`getOrCreateToken`'s `!res.ok` branch and `syncTier()`'s catch block, `src/token.js`) documenting the gap, but no visible retry state in the popup UI and no re-registration code path exist yet. Deferred - needs a UX decision (what the user sees, what they click), not just a backend retry loop.
 
+**Partially mitigated in v0.17.18**: a scan attempt with an unregistered token now surfaces it (`token_unregistered` status in the popup, asking the user to copy their token from the Account panel and email support@liarsledger.com) instead of a generic error. Still no automatic re-registration, and nothing surfaces until the user tries a scan. Recovery is manual: register the token in Redis via the Upstash REST API.
+
 ---
 
 ### Render server-side logs have shown nothing for recent sessions - no visibility into backend behavior
@@ -146,8 +148,15 @@ a scan.") or `scan_unverified` ("Scan could not be verified. Reload the page and
 again."). "Daily scan limit reached" now only ever comes from `/api/scan/start`'s 429.
 Single-model log line includes `loser_category`. `no_members` message lists named
 people who are not current members of Congress, without asserting their office.
+A 401 from `/api/scan/start` (server has no record of the install token) now returns
+status `token_unregistered` immediately, before any model call, instead of failing
+open into two 401 extraction calls reported as `scan_unverified`. Keyed on the HTTP
+status alone, so it works against the currently deployed server too.
 
-**popup.js** - handles `service_busy` and `scan_unverified`. Once "Daily scan limit
+**popup.js** - handles `service_busy`, `scan_unverified`, and `token_unregistered`
+("There was an issue registering your token. Open the Account panel below, copy your
+token, and send it to support@liarsledger.com."), which also opens the Account panel so
+the Copy button is in view. Once "Daily scan limit
 reached" is shown, the header shows 0 remaining (`quotaExhaustedShown`), so the two can
 never contradict. Upgrade copy: "Free accounts get a limited number of scans each day."
 
@@ -174,6 +183,20 @@ middleware) and `provider-fetch.test.js` (6). New `npm run test:unit` (offline) 
 default vitest config now also includes `test/unit/`. `server/test/cost/name-extraction.test.js`
 (real model calls, not run by default; only meaningful once this server is deployed).
 `src/test/lookup.test.js` Sawant expectation updated to the cleaned name.
+
+**src/votesmart.js** - removed the three `[LL DEBUG]` / TEMP DEBUG console logs before Web
+Store submission. The PARTIAL-pagination `logger.warn` calls that sat inside two of those
+blocks are kept; they are real warnings, not debug output.
+
+**scripts/build-release.js** - rewritten for Web Store packaging. The old hand-maintained
+file list (last synced around v0.17.6) is replaced by one read from manifest.json,
+background.js `importScripts`, and the `<script>` tags in popup.html/report.html, plus the
+dictionary. `src/config.js` is built from the committed `config.example.js`. Fails the build
+on a missing file, an API key in the packaged config, a non-production `PROXY_URL`, or any
+TEMP DEBUG code. Writes `build/liars-ledger-v{version}.zip` with manifest.json at the zip
+root (the old script zipped the parent folder, which the Web Store rejects) using `tar`
+(forward-slash paths). No SETUP.md in the package. `src/ll-bar.js` is not packaged: nothing
+loads it.
 
 **Cost impact**: before this, nearly every scan ran one model (the second was rejected).
 Now every scan runs both: about +$0.0005 per scan for Mistral Small against about $0.005

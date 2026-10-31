@@ -232,6 +232,19 @@ async function handleAnalyze({ politicians, articleText }) {
           };
         }
 
+        // 401 from requireToken means the server has no record of this
+        // install token (registration never completed - see the "token.js
+        // fresh-install registration failures" known issue). Every later
+        // call would 401 too, so stop here and tell the user how to get help
+        // instead of running the models and reporting a generic auth error.
+        if (scanRes.status === 401) {
+          logger.warn("background", "scan/start HTTP 401 - install token is not registered server-side");
+          return {
+            status: "token_unregistered",
+            message: "There was an issue registering your token. Open the Account panel below, copy your token, and send it to support@liarsledger.com.",
+          };
+        }
+
         if (scanRes.ok) {
           const scanData = await scanRes.json();
           scanToken   = scanData.scanToken   || null;

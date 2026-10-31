@@ -346,6 +346,11 @@ function handleResult(result) {
     setStatus(result.message || "The analysis service is busy. Try again in a minute. This did not use a scan.", "error");
   } else if (result.status === "scan_unverified") {
     setStatus(result.message || "Scan could not be verified. Reload the page and try again.", "error");
+  } else if (result.status === "token_unregistered") {
+    // The server does not recognize this install token. Open the Account
+    // panel so the token and its Copy button are already in view.
+    setStatus(result.message || "There was an issue registering your token. Open the Account panel below, copy your token, and send it to support@liarsledger.com.", "error");
+    if (accountPanel && !accountPanel.classList.contains("open")) accountToggle?.click();
   } else if (result.status === "no_topics") {
     setStatus("Members found but no policy topics detected.", "");
   } else if (result.status === "rate_limited") {
