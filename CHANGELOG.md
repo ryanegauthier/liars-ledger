@@ -194,9 +194,14 @@ background.js `importScripts`, and the `<script>` tags in popup.html/report.html
 dictionary. `src/config.js` is built from the committed `config.example.js`. Fails the build
 on a missing file, an API key in the packaged config, a non-production `PROXY_URL`, or any
 TEMP DEBUG code. Writes `build/liars-ledger-v{version}.zip` with manifest.json at the zip
-root (the old script zipped the parent folder, which the Web Store rejects) using `tar`
-(forward-slash paths). No SETUP.md in the package. `src/ll-bar.js` is not packaged: nothing
-loads it.
+root (the old script zipped the parent folder, which the Web Store rejects) using bsdtar
+`tar -a` on Windows/macOS (forward-slash paths) and `zip` on Linux, since GNU tar on the
+Actions runner cannot write zip and would emit a plain tar named .zip. Checks the zip
+signature before listing. No SETUP.md in the package. `src/ll-bar.js` is not packaged:
+nothing loads it.
+
+**.github/workflows/release.yml** - uploads `build/liars-ledger-*.zip` (was the repo
+root, where the rewritten script no longer writes, so the release would have had no asset).
 
 **Cost impact**: before this, nearly every scan ran one model (the second was rejected).
 Now every scan runs both: about +$0.0005 per scan for Mistral Small against about $0.005

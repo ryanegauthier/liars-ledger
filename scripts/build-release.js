@@ -78,9 +78,22 @@ console.log("  config: production proxy, no API keys");
 console.log("  no TEMP DEBUG code");
 
 // --- Zip with manifest.json at the root ---
-// tar ships with Windows 10+ and macOS; -a picks zip from the extension and
+// Windows 10+ and macOS ship bsdtar, where -a picks zip from the extension and
 // writes forward-slash paths (Windows PowerShell 5's Compress-Archive does not).
-execFileSync("tar", ["-a", "-c", "-f", `../${zipPath.split("/").pop()}`, ...[...files].sort()], { cwd: buildDir, stdio: "inherit" });
-const listing = execFileSync("tar", ["-t", "-f", zipPath], { encoding: "utf8" }).split(/\r?\n/).filter(Boolean);
+// Linux (the GitHub Actions release runner) ships GNU tar, which cannot write
+// zip and would silently produce a plain tar named .zip, so use zip/unzip there.
+const zipName = zipPath.split("/").pop();
+const sorted  = [...files].sort();
+const isLinux = process.platform === "linux";
+if (isLinux) {
+  execFileSync("zip", ["-q", "-X", `../${zipName}`, ...sorted], { cwd: buildDir, stdio: "inherit" });
+} else {
+  execFileSync("tar", ["-a", "-c", "-f", `../${zipName}`, ...sorted], { cwd: buildDir, stdio: "inherit" });
+}
+if (readFileSync(zipPath).readUInt32LE(0) !== 0x04034b50) fail(`${zipPath} is not a zip archive`);
+const listing = (isLinux
+  ? execFileSync("unzip", ["-Z1", zipPath], { encoding: "utf8" })
+  : execFileSync("tar", ["-t", "-f", zipPath], { encoding: "utf8" })
+).split(/\r?\n/).filter(Boolean);
 if (!listing.includes("manifest.json")) fail("manifest.json is not at the root of the zip");
 console.log(`\nBuilt ${zipPath} (${(statSync(zipPath).size / 1024).toFixed(0)} KB, ${listing.length} entries)`);
