@@ -1,4 +1,4 @@
-// Liars Ledger - content.js v0.17.15
+// Liars Ledger - content.js v0.17.18
 const browser = window.browser || window.chrome;
 
 function escapeHtml(s) {
@@ -443,7 +443,7 @@ function initSidebar() {
       <div id="ll-footer-right">
         <span id="ll-pro-badge" style="display:none;color:#c8a96e;font-family:'Inter',sans-serif;font-size:0.5rem;letter-spacing:0.1em;text-transform:uppercase;margin-right:8px;">★ Pro</span>
         <span class="ll-ticker-dot"></span>
-        <span id="ll-version">v0.17.15</span>
+        <span id="ll-version">v0.17.18</span>
       </div>
     </div>
   `;
@@ -552,7 +552,7 @@ function renderSidebar(results) {
     cardsHTML += `
       <div class="ll-not-found-card">
         <div class="ll-not-found-name">${escapeHtml(name)}</div>
-        <div class="ll-not-found-reason">Not in current Congress</div>
+        <div class="ll-not-found-reason">Not a current member of Congress</div>
       </div>`;
   });
 
@@ -560,7 +560,7 @@ function renderSidebar(results) {
     cardsHTML += `
       <div class="ll-not-found-card">
         <div class="ll-not-found-name">${escapeHtml(name)}</div>
-        <div class="ll-not-found-reason">Not a member of Congress</div>
+        <div class="ll-not-found-reason">Not a current member of Congress</div>
       </div>`;
   });
 
@@ -794,14 +794,38 @@ function findArticleBody() {
 }
 
 // --- Name extraction ---
-const TITLE_PATTERN = /\b(?:President|Vice\s+President|Sen\.?|Senator|Rep\.?|Representative|Gov\.?|Governor|Mayor|Secretary|Sec\.?|Democrat|Republican|Independent)\s+([A-Z][a-z]+(?:[-'\s][A-Z][a-z]+)?)/g;
+// Fallback name finder, used only when AI extraction returns no figures.
+// Party and place words ("Republican", "U.S.", "state") are optional
+// prefixes before a title, never part of the name, so
+// "Republican Gov. Joe Lombardo" yields "Gov. Joe Lombardo" (lookup.js then
+// strips the title before the dictionary lookup). A party word alone still
+// works as a title ("Republican Thomas Massie"). The name itself can never
+// start with a title word, so a title fragment like "Republican Gov" is
+// never produced. Periods in abbreviations (Gov., Sen., U.S., middle
+// initials) are matched explicitly, not treated as sentence ends.
+const NAME_WORD = "[A-Z][\\p{L}'\\u2019-]+";
+const TITLE_WORDS_NOT_NAMES = "(?!(?:Gov|Governor|Sen|Senator|Rep|Representative|Lt|Dr|Mayor|Secretary|Sec|President|Attorney|Republican|Democrat|Democratic|GOP|Independent|Senate|House|Party|Caucus|Congress|National|Convention)\\b)";
+const PARTY_TITLES = new Set(["Republican", "Democratic", "Democrat", "Independent"]);
+const TITLE_PATTERN = new RegExp(
+  "\\b(?:(?:U\\.S\\.|[Ss]tate|Republican|Democratic|Democrat|GOP|Independent)\\s+)*" +
+  "(President|Vice\\s+President|Lt\\.?\\s+Gov\\.?|Sen\\.?|Senator|Rep\\.?|Representative|Gov\\.?|Governor|Mayor|" +
+  "Secretary|Sec\\.?|Attorney\\s+General|Dr\\.?|Republican|Democratic|Democrat|Independent)\\s+" +
+  TITLE_WORDS_NOT_NAMES +
+  "(" + NAME_WORD + "(?:\\s+[A-Z]\\.)?(?:\\s+" + NAME_WORD + ")?)",
+  "gu"
+);
 
 function extractPoliticianNames(text) {
   const found = new Set();
   let match;
   TITLE_PATTERN.lastIndex = 0;
   while ((match = TITLE_PATTERN.exec(text)) !== null) {
-    found.add(match[0].trim());
+    const title = match[1].replace(/\s+/g, " ");
+    const name = match[2];
+    // A bare party word is a weak signal ("Democratic Senate primary"), so
+    // it only counts as a title when a full first-and-last name follows.
+    if (PARTY_TITLES.has(title) && !/\s/.test(name)) continue;
+    found.add(`${title} ${name}`);
   }
   return Array.from(found);
 }
@@ -866,7 +890,7 @@ function renderRateLimited(response) {
         font-size: 0.58rem;
         color: #c4c9d7;
         line-height: 1.5;
-      ">All accounts share a daily scan pool. Pro unlocks AI summaries, claim verdicts, and full VoteSmart data.</div>
+      ">Free accounts get a limited number of scans each day. Pro unlocks AI summaries, claim verdicts, and full VoteSmart data.</div>
       <a href="${escapeHtml(upgradeUrl)}" target="_blank" style="
         display: inline-block;
         margin-top: 4px;

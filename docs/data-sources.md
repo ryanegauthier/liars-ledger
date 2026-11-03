@@ -16,10 +16,10 @@ All political ground truth in Liar's Ledger comes from official government sourc
 
 Congress.gov is the official U.S. government source for congressional records. We fetch up to 100 sponsored and 100 cosponsored bills per member per scan, then filter by topic relevance using a two-pass matching algorithm:
 
-1. **Pass 1** - keyword category matching against 19 predefined topic buckets
-2. **Pass 2** - direct title substring match against the LLM's per-figure `search_terms`
+1. **Pass 1** - keyword category matching against 26 predefined topic buckets (including dedicated `israel` and `foreign policy` categories covering Gaza, arms sales, ceasefires, and security assistance)
+2. **Pass 2** - word-aware match against the LLM's per-figure `search_terms`: at least one non-filler word from the term must appear in the bill title/description, rather than requiring every word verbatim. This avoids false negatives on real terms like "healthcare reform" (official bill titles rarely contain the literal word "healthcare") and false positives from generic padding words ("reform", "funding", "expansion") being trusted as distinctive on their own. Matching is word-boundary aware, so a short word can't match inside an unrelated word (e.g. "public" no longer matches inside "Republic").
 
-Results are deduplicated by bill URL and title prefix. Ceremonial bills (honoring, congratulating, commemorating, designating, etc.) are filtered out before display.
+Results are deduplicated by bill URL and title prefix, with re-introduced bills (same title, new bill number each Congress) collapsed to their most recent version. Ceremonial bills (honoring, congratulating, commemorating, designating, etc.) are filtered out before display.
 
 ## GovTrack
 
@@ -30,7 +30,7 @@ Results are deduplicated by bill URL and title prefix. Ceremonial bills (honorin
 
 GovTrack member IDs are resolved from bioguide IDs using the `unitedstates/congress-legislators` dataset hosted at `unitedstates.github.io`. The bioguide→GovTrack ID map is cached in `browser.storage.session` after the first fetch.
 
-We fetch the 50 most recent votes per member and filter by topic relevance using both direct string matching and a category expansion map that translates GovTrack category names (e.g. "Finance and Banking") to internal topic keywords (e.g. "taxation", "federal budget").
+We fetch the 50 most recent votes per member and filter by topic relevance using direct string matching, a category expansion map that translates GovTrack category names (e.g. "Finance and Banking") to internal topic keywords (e.g. "taxation", "federal budget"), and the same word-aware fallback described above for non-category LLM search terms.
 
 ## VoteSmart
 
@@ -64,11 +64,13 @@ VoteSmart uses JWT authentication. The backend proxy handles token refresh autom
 
 ### ID resolution
 
-VoteSmart identifies politicians by a numeric `candidateId`, not a bioguide ID. Resolution goes through a paginated `by-lastname` lookup (`perPage=50`, all pages fetched). Common issues handled:
+VoteSmart identifies politicians by a numeric `candidateId`, not a bioguide ID. Resolution tries a fast path first, falling back to a paginated `by-lastname` lookup (`perPage=50`, all pages fetched) if needed. Common issues handled:
 
+- **Office+state fast path**: `/v1/officials/by-office-id` fetches a member's entire state delegation in one call, matched by office, state, last name, and first name/nickname. This replaced a previously assumed endpoint, `/v1/officials/by-office-state`, which was never real on VoteSmart's API (confirmed against their own Swagger spec) and had been silently 502ing 100% of the time. The fast path requires an exact last-name match in addition to office/state/first-name, since the state delegation it returns isn't narrowed by surname and two members can share a common first name or nickname.
 - **Compound surnames**: politicians whose VoteSmart record files a multi-word last name (e.g. "Gluesenkamp Perez") are retried with the compound form if the simple surname lookup fails
 - **Preferred names**: VoteSmart's `firstName` field may differ from the politician's public name; `nickName` and `preferredName` fields are also checked
 - **Pagination failures**: if any page of results fails after retries, the lookup salvages whatever pages succeeded and flags the result as `partial` - the scan is not charged when a partial result is detected
+- **Batched lookups**: member lookups (Congress.gov + GovTrack + VoteSmart fetches per member) are processed in batches of 3 concurrently, not all at once - VoteSmart's API load-sheds under burst concurrency from a single client, and batching eliminated a repeated 502 storm seen live on multi-member scans
 
 ## Politician dictionary
 
@@ -76,4 +78,4 @@ The extension ships with a 3,606-key dictionary covering all members of Congress
 
 Nickname resolution handles common cases automatically: Chuck Schumer → Charles E. Schumer, Mitch McConnell → Addison McConnell, Ted Cruz → Rafael Cruz, Bernie Sanders → Bernard Sanders, and 40+ others.
 
-The dictionary is built with `node build-dictionary.js` using the Congress.gov members API and is committed to the repo as `src/data/politicians.json`.
+The dictionary is built with `node scripts/build-dictionary.cjs` using the Congress.gov members API and is committed to the repo as `src/data/politicians.json`.

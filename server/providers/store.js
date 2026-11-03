@@ -12,8 +12,9 @@
 //   square:downgradereason:{tokenId}  → JSON { reason, at } (TTL 30d) - set only on
 //                                        failure-driven downgrade, lets the popup
 //                                        explain why Pro was lost (vs. never subscribed)
-//   scantoken:{scanToken}             → tokenId (TTL 60s, single-use via get+del) - server-
-//                                        issued authorization for extraction calls, closes
+//   scantoken:{scanToken}:{provider}  → tokenId (TTL 60s, single-use) - server-issued
+//                                        authorization for extraction calls, one slot
+//                                        per provider (claude, mistral) per scan, closes
 //                                        the scan-limit bypass (see SECURITY.md)
 //
 // The square:* keys contain only opaque IDs - no PII. They exist to:
@@ -65,6 +66,20 @@ const FREE_TIER_TABLE = [
 // and the number is small enough not to be a meaningful cost driver even
 // if it doesn't scale down later.
 const PRO_DAILY_LIMIT = 100;
+
+// Aggregate daily cap across ALL anonymous web-page visitors combined
+// (liarsledger.com/scan), separate from and on top of each visitor's own
+// per-token free-tier limit above. Exists purely to bound total Claude/
+// Mistral cost exposure from the fully anonymous, no-signup web surface -
+// not a per-visitor fairness mechanism, so unlike FREE_TIER_TABLE this
+// doesn't scale with userCount. Deliberately NOT a separate credential -
+// see CHANGELOG.md for why a single shared token would just be a bigger,
+// easier target than the per-visitor design it would replace. Identified
+// as "web-originated" via the Origin header (see reserveScan below and
+// countScan in middleware/auth.js) rather than anything the client sends,
+// so there is nothing new for scan.js to construct or for an attacker to
+// steal.
+const WEB_DAILY_SITE_LIMIT = 1000;
 
 function todayKey() {
   return new Date().toISOString().slice(0, 10); // "2026-06-13"
@@ -235,16 +250,18 @@ export async function incrementScans(tokenId, tier = "free") {
 // POST /api/scan/start.
 //
 // Dual-model mode (background.js calling both /api/claude/extract and
-// /api/mistral/extract for one logical scan) is handled by reusing the SAME
-// scan token for both calls - whichever extraction request reaches the
-// server first consumes it via get-then-delete (see consumeScanToken's doc
-// comment for why this isn't a single atomic op, and why that's an
-// accepted tradeoff here). The second call finds the token already gone.
-// countScan in auth.js treats "already consumed" as "fine, proceed" rather
-// than "reject" - the scan was already counted once when the token was
-// issued; consumption only gates extraction, it doesn't re-count. This
-// preserves the existing no-double-charge guarantee while closing the
-// actual bypass.
+// /api/mistral/extract for one logical scan) sends the SAME scan token to
+// both calls. Each scan token carries one single-use slot per provider
+// (scantoken:{scanToken}:claude and scantoken:{scanToken}:mistral), so both
+// calls of one scan can proceed, each exactly once. Before v0.17.18 a scan
+// token was a single slot shared by both providers: whichever call arrived
+// second was rejected with 403, so dual mode never actually ran both models.
+//
+// What a scan token still cannot do: authorize a second scan, or a second
+// call to the same provider. Once a provider's slot is consumed, any later
+// presentation of the token to that provider gets the same 403 as a token
+// that never existed. The scan is counted once, at reserve time, no matter
+// how many provider slots it carries.
 //
 // Short TTL (60s) is a backstop, not the primary mechanism - a client that
 // requests a scan token and never uses it just lets it expire; this isn't a
@@ -252,14 +269,25 @@ export async function incrementScans(tokenId, tier = "free") {
 
 const SCAN_TOKEN_TTL_SECONDS = 60;
 
+// Providers each scan token carries a slot for. Every scan gets both today
+// (dual mode for all tiers). Issuing fewer slots per tier is the hook for
+// running the second model only for some tiers, if that is ever decided.
+export const SCAN_TOKEN_PROVIDERS = ["claude", "mistral"];
+
+function scanSlotKey(scanToken, provider) {
+  return `scantoken:${scanToken}:${provider}`;
+}
+
 /**
- * Issue a new single-use scan token. Called internally by incrementScans
- * via incrementScansWithToken - not exported standalone, since a scan token
- * should only ever be issued alongside an actual counted scan.
+ * Issue a new scan token with one single-use slot per provider. Called
+ * internally alongside an actual counted (or reserved) scan - not exported
+ * standalone, since a scan token should never exist without one.
  */
-async function issueScanToken(tokenId) {
+async function issueScanToken(tokenId, providers = SCAN_TOKEN_PROVIDERS) {
   const scanToken = `st_${tokenId.slice(0, 8)}_${randomUUID()}`;
-  await redis.set(`scantoken:${scanToken}`, tokenId, { ex: SCAN_TOKEN_TTL_SECONDS });
+  for (const provider of providers) {
+    await redis.set(scanSlotKey(scanToken, provider), tokenId, { ex: SCAN_TOKEN_TTL_SECONDS });
+  }
   return scanToken;
 }
 
@@ -307,13 +335,49 @@ const SCAN_COMMIT_TTL_SECONDS = 180; // 3 min -- covers full pipeline incl. Pro 
  * Reserve a scan slot and issue both tokens needed for the two-phase flow.
  * Replaces incrementScansWithToken as what POST /api/scan/start calls.
  *
+ * @param {boolean} isWebOrigin - true when this request came from
+ *   liarsledger.com/scan (see countScan in middleware/auth.js, which
+ *   derives this from the Origin header - nothing the client sends
+ *   explicitly). Gates against WEB_DAILY_SITE_LIMIT, the aggregate cap
+ *   across all anonymous web visitors combined, BEFORE touching this
+ *   token's own per-token count/pending state below - a rejection here is
+ *   the site's shared budget being out, not this visitor's own allowance,
+ *   so it must not consume any of theirs. Checked at reserve time, not
+ *   commit time, same reasoning as the per-token limit already below: the
+ *   actual Claude/Mistral cost happens once a scanToken is issued,
+ *   regardless of whether the client ever calls /api/scan/commit
+ *   afterward, so gating only on committed counts would undercount real
+ *   exposure. Unlike the per-token pending-set mechanism, an abandoned
+ *   web-origin reservation is NOT reclaimed back into the site's daily
+ *   budget - acceptable here since this is a soft aggregate ceiling, not
+ *   a per-visitor guarantee; revisit with proper pending/expiry tracking
+ *   (mirroring pendingKey below) if abandonment rate turns out to matter
+ *   in practice. Always false for the extension (chrome-extension://
+ *   origin) and for direct/non-browser API callers (no Origin header) -
+ *   both fall through to the existing per-token-only behavior, unchanged.
+ *
  * Returns the same shape as incrementScansWithToken plus { commitToken }.
- * Both scanToken and commitToken are null when !allowed.
+ * Both scanToken and commitToken are null when !allowed. When rejected
+ * specifically by the site-wide cap, siteCapacityReached is true so
+ * countScan (middleware/auth.js) can return a distinct error code instead
+ * of the per-token "Daily scan limit reached" message.
  *
  * remaining reflects slots not yet taken by either real or pending scans.
  */
-export async function reserveScan(tokenId, tier = "free") {
+export async function reserveScan(tokenId, tier = "free", isWebOrigin = false) {
   const date = todayKey();
+
+  if (isWebOrigin) {
+    const webKey = `web:scans:${date}`;
+    const webCount = Number((await redis.get(webKey)) || 0);
+    if (webCount >= WEB_DAILY_SITE_LIMIT) {
+      return {
+        count: 0, limit: 0, remaining: 0, allowed: false, warn: false,
+        scanToken: null, commitToken: null, siteCapacityReached: true,
+      };
+    }
+  }
+
   const scanKey    = `scans:${tokenId}:${date}`;
   const pendingKey = `scans:pending:${tokenId}:${date}`;
   const now = Date.now();
@@ -339,6 +403,21 @@ export async function reserveScan(tokenId, tier = "free") {
   await redis.set(`scancommit:${commitToken}`, tokenId, { ex: SCAN_COMMIT_TTL_SECONDS });
   await redis.zadd(pendingKey, { score: expiresAt, member: commitToken });
   await redis.expire(pendingKey, SCAN_TTL_SECONDS); // keep the set alive through the day
+
+  // Links the scan token back to its reservation so the server can release
+  // the reservation itself if every provider call for this scan fails (see
+  // recordProviderFailure). Never sent to the client.
+  await redis.set(
+    `scanres:${scanToken}`,
+    JSON.stringify({ commitToken, pendingKey, webKey: isWebOrigin ? `web:scans:${date}` : null }),
+    { ex: SCAN_COMMIT_TTL_SECONDS },
+  );
+
+  if (isWebOrigin) {
+    const webKey = `web:scans:${date}`;
+    const webCount = await redis.incr(webKey);
+    if (webCount === 1) await redis.expire(webKey, SCAN_TTL_SECONDS);
+  }
 
   return {
     count: currentCount,
@@ -368,7 +447,9 @@ export async function commitScan(commitToken) {
   const commitKey = `scancommit:${commitToken}`;
   const tokenId   = await redis.get(commitKey);
   if (!tokenId) return { committed: false };
-  await redis.del(commitKey);
+  // DEL's result decides, so a commit and a concurrent release (or two
+  // commits) can never both finalize the same reservation.
+  if ((await redis.del(commitKey)) !== 1) return { committed: false };
 
   const date       = todayKey();
   const scanKey    = `scans:${tokenId}:${date}`;
@@ -382,18 +463,55 @@ export async function commitScan(commitToken) {
 }
 
 /**
- * Atomically consume a scan token. Returns the tokenId it was issued for
- * if the scan token was valid and unconsumed, or null if it was invalid,
- * expired, or already consumed by a prior call (the dual-model second-call
- * case - see module comment above).
+ * Record that one provider call for this scan failed. When every provider
+ * the scan token was issued for has failed, release the scan's reservation
+ * right away instead of letting it hold a slot for SCAN_COMMIT_TTL_SECONDS,
+ * so a scan whose analysis failed completely never costs the user a scan,
+ * not even temporarily.
  *
- * IMPORTANT: this does not throw or distinguish "never existed" from
- * "already consumed" - both return null, and callers (see auth.js's
- * requireScanToken) treat null as "no valid token for THIS call" rather
- * than necessarily an error, since the dual-model second call legitimately
- * expects this.
+ * Only the server calls this, from the extraction routes, after a provider
+ * actually returned a failure. The client cannot request a release, so it
+ * cannot run an extraction and then cancel its charge.
  *
- * CORRECTED: originally implemented via redis.getdel(key). Live curl
+ * Returns { released } - true only when this call released the reservation.
+ */
+export async function recordProviderFailure(scanToken) {
+  if (!scanToken) return { released: false };
+  const failKey  = `scanfail:${scanToken}`;
+  const failures = await redis.incr(failKey);
+  if (failures === 1) await redis.expire(failKey, SCAN_COMMIT_TTL_SECONDS);
+  if (failures < SCAN_TOKEN_PROVIDERS.length) return { released: false };
+  return releaseReservation(scanToken);
+}
+
+async function releaseReservation(scanToken) {
+  const raw = await redis.get(`scanres:${scanToken}`);
+  if (!raw) return { released: false };
+  const { commitToken, pendingKey, webKey } = typeof raw === "string" ? JSON.parse(raw) : raw;
+  // Same DEL gate as commitScan: an already-committed scan stays committed.
+  if ((await redis.del(`scancommit:${commitToken}`)) !== 1) return { released: false };
+  await redis.zrem(pendingKey, commitToken);
+  if (webKey) await redis.decr(webKey);
+  await redis.del(`scanres:${scanToken}`);
+  return { released: true };
+}
+
+/**
+ * Consume one provider's slot on a scan token. Returns the tokenId the scan
+ * token was issued for if that provider's slot was valid and unconsumed, or
+ * null if the scan token is invalid, expired, has no slot for this
+ * provider, or that slot was already used.
+ *
+ * Does not throw or distinguish "never existed" from "already consumed" -
+ * both return null, and requireScanToken (auth.js) rejects both with 403.
+ *
+ * Single use is enforced by DEL's return value, not by the GET: two
+ * concurrent requests can both read the slot, but only one DEL removes the
+ * key and returns 1, and only that request proceeds. This closes the race
+ * window the original get-then-del accepted (see below), without getdel or
+ * a Lua script.
+ *
+ * History: originally implemented via redis.getdel(key). Live curl
  * testing showed every consumption attempt failing - including on tokens
  * used within one second of issuance, ruling out TTL expiry as the cause.
  * Root cause not fully confirmed (direct package inspection shows getdel
@@ -406,28 +524,17 @@ export async function commitScan(commitToken) {
  * rather than keep investigating, the safer fix is two calls built on
  * primitives with no remaining doubt about their correctness.
  *
- * This reintroduces a small theoretical race window (read-then-delete is
- * two round trips, not one atomic op) - accepted here rather than reaching
- * for redis.eval()/a Lua script for atomicity, because the actual threat
- * model doesn't need it: the realistic concurrent case is dual-model
- * mode's two near-simultaneous calls from the SAME client for the SAME
- * already-counted scan, not an attacker racing to multiply free
- * extractions. Worst case if both calls somehow both read a valid value
- * before either deletes it: one extra extraction call succeeds for a scan
- * that was already counted once - not unlimited bypass, just a narrow
- * edge case of "this one scan got processed twice instead of once,"
- * which is a UX/cost nicety to tighten further, not the security boundary
- * itself. The security boundary (a token can't be fabricated, can't be
- * reused indefinitely, and a missing/expired one is always rejected) holds
- * regardless of this race window.
+ * That plain get-then-del left a small race window (two concurrent reads
+ * of the same key could both succeed). As of v0.17.18 the DEL result
+ * decides, which removes that window using the same two verified commands.
  */
-export async function consumeScanToken(scanToken) {
-  if (!scanToken) return null;
-  const key = `scantoken:${scanToken}`;
+export async function consumeScanToken(scanToken, provider) {
+  if (!scanToken || !provider) return null;
+  const key = scanSlotKey(scanToken, provider);
   const tokenId = await redis.get(key);
   if (!tokenId) return null;
-  await redis.del(key);
-  return tokenId;
+  const deleted = await redis.del(key);
+  return deleted === 1 ? tokenId : null;
 }
 
 /**

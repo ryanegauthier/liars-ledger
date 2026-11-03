@@ -377,12 +377,9 @@ async function resolveVoteSmartId(member) {
       officials = lastnameResult.officials;
       isPartialResult = lastnameResult.partial;
 
-      // TEMP DEBUG - remove after diagnosing name-resolution mismatch
-      console.log(`[LL DEBUG] fell back to by-lastname="${member.last_name}", returned ${officials.length} officials across all pages (path=${pathTried}, partial=${isPartialResult}${isPartialResult ? `, failedAtPage=${lastnameResult.failedAtPage}` : ""})`);
       if (isPartialResult) {
         logger.warn("votesmart", `PARTIAL pagination result for "${member.full_name}" - page ${lastnameResult.failedAtPage} failed after all retries. A real match may exist on the missing page and be silently absent here.`);
       }
-      // END TEMP DEBUG
     }
 
     // Pass 1/Pass 2 below assume `officials` was narrowed by a lastname
@@ -433,12 +430,9 @@ async function resolveVoteSmartId(member) {
       const compoundOfficials = compoundResult.officials;
       if (compoundResult.partial) isPartialResult = true;
 
-      // TEMP DEBUG - remove after diagnosing name-resolution mismatch
-      console.log(`[LL DEBUG] compound-surname retry lastName="${compoundLastNameGuess}", returned ${compoundOfficials.length} officials (partial=${compoundResult.partial})`);
       if (compoundResult.partial) {
         logger.warn("votesmart", `PARTIAL pagination result for compound-surname retry on "${member.full_name}" - page ${compoundResult.failedAtPage} failed after all retries.`);
       }
-      // END TEMP DEBUG
 
       match = compoundOfficials.find(o =>
         normalizeVoteSmartOfficeId(o.officeId) === targetOffice &&
@@ -453,19 +447,8 @@ async function resolveVoteSmartId(member) {
         );
       }
 
-      if (match) officials = compoundOfficials; // for the debug log below
+      if (match) officials = compoundOfficials; // keep officials in step with where the match came from
     }
-
-    // TEMP DEBUG - remove after diagnosing name-resolution mismatch
-    console.log(`[LL DEBUG] match result for "${member.full_name}" (pathTried=${pathTried}, partial=${isPartialResult}):`, {
-      targetOffice,
-      state,
-      firstNameCandidates: [...firstNameCandidates],
-      officialsConsidered: officials.length,
-      matchFound: !!match,
-      match: match || null,
-    });
-    // END TEMP DEBUG
 
     const id = match?.id || null;
     if (id) await vsSet(cacheKey, id);

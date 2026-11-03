@@ -33,7 +33,7 @@ import { congress }  from "./providers/congress.js";
 import { votesmart } from "./providers/votesmart.js";
 import { govtrack }  from "./providers/govtrack.js";
 import { verifyClaim } from "./providers/verify.js";
-import { createToken, getToken, getScans, incrementUserCount, getScanLimit, upgradeTier, commitScan, storeOrderTemplateMapping, lookupTokenByOrderTemplate, storeSquareCustomerMapping, lookupTokenBySquareCustomer, storeSquareSubscriptionMapping, lookupTokenBySquareSubscription, recordFailedCharge, clearFailedCharges, setDowngradeReason, clearDowngradeReason, getDowngradeReason } from "./providers/store.js";
+import { createToken, getToken, getScans, incrementUserCount, getScanLimit, upgradeTier, commitScan, recordProviderFailure, storeOrderTemplateMapping, lookupTokenByOrderTemplate, storeSquareCustomerMapping, lookupTokenBySquareCustomer, storeSquareSubscriptionMapping, lookupTokenBySquareSubscription, recordFailedCharge, clearFailedCharges, setDowngradeReason, clearDowngradeReason, getDowngradeReason } from "./providers/store.js";
 import { requireToken, countScan, requireScanToken } from "./middleware/auth.js";
 import * as square from "./providers/square.js";
 import { extractArticleTextPublic, ArticleFetchError } from "./providers/articleFetch.js";
@@ -357,7 +357,7 @@ const extractLimiter = rateLimit({
 
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => {
-  res.json({ status: "ok", version: process.env.npm_package_version || "0.17.15", ts: new Date().toISOString() });
+  res.json({ status: "ok", version: process.env.npm_package_version || "0.17.18", ts: new Date().toISOString() });
 });
 
 // ── Registration ──────────────────────────────────────────────────────────────
@@ -447,8 +447,9 @@ app.get("/api/scan-status", requireToken, wrap(async (req, res) => {
 // cannot accumulate unlimited free reservations to bypass the cap.
 //
 // Dual-model mode: the same scanToken is passed to both /api/claude/extract
-// and /api/mistral/extract; the first call to arrive consumes it, the second
-// is rejected by requireScanToken (not re-counted). One commitToken per scan.
+// and /api/mistral/extract. It carries one single-use slot per provider, so
+// both calls proceed once each; a replay to either provider is rejected by
+// requireScanToken(provider). Counted once here. One commitToken per scan.
 app.post("/api/scan/start", requireToken, countScan, wrap(async (req, res) => {
   res.json({
     allowed:     req.scanAllowed,
@@ -561,21 +562,29 @@ function gateExtractionResult(result, tier) {
   };
 }
 
+// Shared body for both extraction routes. A provider failure is recorded
+// against the scan token; once every provider call for that scan has failed,
+// store.js releases the scan's reservation so a fully failed scan never uses
+// a scan (see recordProviderFailure). Failures carry a short `category`
+// (rate_limited, upstream, timeout) from providerFetch.js.
+function extractionRoute(provider) {
+  return wrap(async (req, res) => {
+    const { articleText, scanToken } = req.body;
+    if (!articleText) return res.status(400).json({ error: "articleText required" });
+    const result = await provider.extract(articleText);
+    if (!result.ok) {
+      await recordProviderFailure(scanToken).catch((e) =>
+        console.error("[extract] recordProviderFailure failed:", e.message));
+    }
+    res.status(result.ok ? 200 : 502).json(gateExtractionResult(result, req.tier));
+  });
+}
+
 // POST /api/claude/extract
-app.post("/api/claude/extract", requireToken, requireScanToken, wrap(async (req, res) => {
-  const { articleText } = req.body;
-  if (!articleText) return res.status(400).json({ error: "articleText required" });
-  const result = await claude.extract(articleText);
-  res.status(result.ok ? 200 : 502).json(gateExtractionResult(result, req.tier));
-}));
+app.post("/api/claude/extract", requireToken, requireScanToken("claude"), extractionRoute(claude));
 
 // POST /api/mistral/extract
-app.post("/api/mistral/extract", requireToken, requireScanToken, wrap(async (req, res) => {
-  const { articleText } = req.body;
-  if (!articleText) return res.status(400).json({ error: "articleText required" });
-  const result = await mistral.extract(articleText);
-  res.status(result.ok ? 200 : 502).json(gateExtractionResult(result, req.tier));
-}));
+app.post("/api/mistral/extract", requireToken, requireScanToken("mistral"), extractionRoute(mistral));
 
 // ── Pro-tier gating ────────────────────────────────────────────────────────────
 // Server-side enforcement - the actual security boundary. Client-side stripping

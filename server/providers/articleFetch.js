@@ -112,6 +112,20 @@ async function fetchWithGuard(url, redirectsRemaining) {
   }
 
   if (!res.ok) {
+    // 403/429/451 from the origin almost always means bot mitigation
+    // (Cloudflare, PerimeterX, Akamai, etc.) refused the request on purpose
+    // - not a transient network problem. Confirmed live against a
+    // PerimeterX-protected site (thehill.com): the identical request
+    // succeeds from some source IPs and gets a flat 403 from others,
+    // regardless of headers - this is IP-reputation-based, not something a
+    // User-Agent or Accept header change fixes. Surfacing it as ERR-NET
+    // ("Couldn't fetch that URL") reads like a problem on our end; splitting
+    // it into its own code lets the frontend tell the visitor the real
+    // reason (this publisher blocks automated readers) instead of implying
+    // our infrastructure is broken.
+    if ([403, 429, 451].includes(res.status)) {
+      throw new ArticleFetchError("ERR-SITE-BLOCKED", "This site blocks automated readers and can't be scanned.");
+    }
     throw new ArticleFetchError("ERR-NET", `That page returned an error (HTTP ${res.status}).`);
   }
 

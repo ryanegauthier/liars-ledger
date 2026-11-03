@@ -9,12 +9,12 @@
 //   app.post("/api/scan/start", requireToken, countScan, wrap(async (req, res) => { ... }));
 //
 //   // On scan-triggering extraction routes (claude/extract, mistral/extract):
-//   // requireScanToken, NOT countScan - the scan was already counted when
-//   // the token was issued above. This just verifies a valid, unconsumed
-//   // scan token was presented - see store.js's scan-token module comment
-//   // for the full design rationale (closes the bypass found in the June
-//   // 2026 security review - see SECURITY.md).
-//   app.post("/api/claude/extract", requireToken, requireScanToken, wrap(async (req, res) => { ... }));
+//   // requireScanToken(provider), NOT countScan - the scan was already
+//   // counted when the token was issued above. This verifies a valid,
+//   // unconsumed slot for that provider was presented - see store.js's
+//   // scan-token module comment for the full design rationale (closes the
+//   // bypass found in the June 2026 security review - see SECURITY.md).
+//   app.post("/api/claude/extract", requireToken, requireScanToken("claude"), wrap(async (req, res) => { ... }));
 //
 //   // On read-only routes (congress, govtrack, votesmart, legislators):
 //   app.get("/api/congress/*", requireToken, wrap(async (req, res) => { ... }));
@@ -74,6 +74,19 @@ export async function requireToken(req, res, next) {
   }
 }
 
+// The site's own marketing domain - matches the website entry in
+// ALLOWED_ORIGINS (server/index.js). Used only to identify web-originated
+// requests for the aggregate WEB_DAILY_SITE_LIMIT check (see reserveScan's
+// doc comment in providers/store.js) - NOT part of CORS enforcement itself,
+// which `cors` middleware already handles separately before this ever runs.
+// The Origin header is browser-enforced and can't be set by page JS, so
+// this is a reliable signal for genuine browser traffic; a non-browser
+// caller hitting the API directly can omit or fake it, which just means
+// that traffic isn't counted against the site-wide web bucket - it's still
+// bound by its own token's per-day limit and extractLimiter exactly as
+// before. Soft cost-control signal, not a security boundary.
+const WEB_ORIGIN = "https://liarsledger.com";
+
 /**
  * countScan - increments the daily scan counter, issues a single-use scan
  * token, and blocks if over the daily limit. Only attach this to
@@ -82,9 +95,16 @@ export async function requireToken(req, res, next) {
  *
  * The issued scanToken is returned in the response body and must be passed
  * by the client to the extraction call(s) that follow. Dual-model mode
- * reuses the SAME scanToken for both the Claude and Mistral calls - see
- * store.js's consumeScanToken for how the single-use/no-double-charge
- * property is preserved.
+ * sends the SAME scanToken to both the Claude and Mistral calls; it carries
+ * one single-use slot per provider (see store.js's consumeScanToken), and
+ * the scan is counted once here regardless.
+ *
+ * Also gates web-originated requests (see WEB_ORIGIN above) against the
+ * aggregate WEB_DAILY_SITE_LIMIT in providers/store.js, on top of the
+ * per-token limit every caller already gets - returns a distinct
+ * ERR-SITE-CAPACITY code when that's what tripped, so the client can tell
+ * "the site as a whole is out for today" apart from "you personally hit
+ * your own daily limit."
  *
  * Fails CLOSED on Redis errors by default - same rationale as requireToken
  * above. A Redis error here previously meant "scan proceeds, uncounted,
@@ -98,10 +118,18 @@ export async function countScan(req, res, next) {
   const token = req.tokenId;
   if (!token) return next(); // shouldn't happen if requireToken ran; nothing to count
 
+  const isWebOrigin = req.headers.origin === WEB_ORIGIN;
+
   try {
-    const result = await reserveScan(token, req.tier);
+    const result = await reserveScan(token, req.tier, isWebOrigin);
 
     if (!result.allowed) {
+      if (result.siteCapacityReached) {
+        return res.status(429).json({
+          error: "liarsledger.com/scan has reached today's total capacity across all visitors. Try again tomorrow, or install the extension for your own daily allowance.",
+          code: "ERR-SITE-CAPACITY",
+        });
+      }
       return res.status(429).json({
         error: "Daily scan limit reached",
         limit: result.limit,
@@ -127,68 +155,60 @@ export async function countScan(req, res, next) {
 }
 
 /**
- * requireScanToken - verifies a valid, unconsumed scan token was presented
- * for this extraction call. This is the actual fix for the bypass found in
- * the June 2026 security review: extraction endpoints previously had no
- * server-side check that a scan had been counted at all.
+ * requireScanToken(provider) - returns middleware that verifies a valid,
+ * unconsumed scan token slot for THIS provider was presented. Attach as
+ * requireScanToken("claude") / requireScanToken("mistral") on the matching
+ * extraction route. Closes the bypass found in the June 2026 security
+ * review: extraction endpoints previously had no server-side check that a
+ * scan had been counted at all.
  *
- * Expects the scan token in the request body as `scanToken`. Atomically
- * consumes it via store.js's consumeScanToken (Redis GETDEL) - the first
- * of the (possibly two, in dual-model mode) extraction calls to arrive
- * consumes it and proceeds; the second finds it already gone.
+ * Expects the scan token in the request body as `scanToken`. Consumes this
+ * provider's slot via store.js's consumeScanToken. Each scan token carries
+ * one slot per provider, so in dual-model mode the Claude and Mistral calls
+ * of the same scan both proceed, each once. A replay (a second call to the
+ * same provider, or reuse for another scan) finds the slot gone and is
+ * rejected with 403, same as a token that never existed.
  *
- * IMPORTANT: a missing/already-consumed scan token is NOT necessarily an
- * attack - it's the expected, correct outcome for the second call in
- * dual-model mode. So this middleware doesn't reject outright on "already
- * consumed AND req.tier exists" - it only rejects when there's no
- * indication this could legitimately be the second of a pair. In practice,
- * since we can't distinguish "legitimate second call" from "replay attack
- * using a stale token value" at this layer alone, the policy is: the FIRST
- * consumption of a given scanToken always proceeds (that's the real,
- * counted scan). Any SUBSEQUENT presentation of that same scanToken value
- * - including a deliberate replay - finds it already deleted from Redis
- * and is rejected with 403, same as a token that never existed. This is
- * safe because a scan token can only ever authorize ONE successful
- * extraction call to proceed past this check; dual-model mode's "second
- * call" and an attacker's "replay" are handled identically (both get
- * rejected) UNLESS the client deliberately sends the SAME scanToken to
- * both Claude and Mistral calls AT THE APPLICATION LAYER before either
- * reaches the server - at which point only one wins the race, which is
- * the intended, correct behavior for closing this gap.
+ * Responds with code ERR-SCAN-AUTH on rejection so the client can show
+ * "could not be verified" instead of a generic or quota message.
  *
  * Fails CLOSED on Redis errors - same rationale as requireToken/countScan.
  */
-export async function requireScanToken(req, res, next) {
-  const scanToken = req.body?.scanToken;
+export function requireScanToken(provider) {
+  return async function requireScanTokenForProvider(req, res, next) {
+    const scanToken = req.body?.scanToken;
 
-  if (!scanToken) {
-    return res.status(403).json({
-      error: "Missing scan authorization. Call /api/scan/start first.",
-    });
-  }
-
-  try {
-    const issuedForTokenId = await consumeScanToken(scanToken);
-
-    if (!issuedForTokenId) {
+    if (!scanToken) {
       return res.status(403).json({
-        error: "Scan authorization invalid, expired, or already used.",
+        error: "Missing scan authorization. Call /api/scan/start first.",
+        code: "ERR-SCAN-AUTH",
       });
     }
 
-    if (issuedForTokenId !== req.tokenId) {
-      // Scan token was issued to a different tokenId than the one presenting
-      // it now - should be unreachable in normal operation (tokens are
-      // tied to the Bearer token that requested them), but checked
-      // explicitly rather than trusting it can't happen.
-      console.error(`[auth] scan token tokenId mismatch: issued for ${issuedForTokenId?.slice(0,8)}…, presented by ${req.tokenId?.slice(0,8)}…`);
-      return res.status(403).json({ error: "Scan authorization invalid." });
-    }
+    try {
+      const issuedForTokenId = await consumeScanToken(scanToken, provider);
 
-    next();
-  } catch (err) {
-    console.error("[auth] requireScanToken error:", err);
-    if (FAIL_OPEN) return next();
-    return res.status(503).json({ error: "Service temporarily unavailable. Please try again shortly." });
-  }
+      if (!issuedForTokenId) {
+        return res.status(403).json({
+          error: "Scan authorization invalid, expired, or already used.",
+          code: "ERR-SCAN-AUTH",
+        });
+      }
+
+      if (issuedForTokenId !== req.tokenId) {
+        // Scan token was issued to a different tokenId than the one presenting
+        // it now - should be unreachable in normal operation (tokens are
+        // tied to the Bearer token that requested them), but checked
+        // explicitly rather than trusting it can't happen.
+        console.error(`[auth] scan token tokenId mismatch: issued for ${issuedForTokenId?.slice(0,8)}..., presented by ${req.tokenId?.slice(0,8)}...`);
+        return res.status(403).json({ error: "Scan authorization invalid.", code: "ERR-SCAN-AUTH" });
+      }
+
+      next();
+    } catch (err) {
+      console.error("[auth] requireScanToken error:", err);
+      if (FAIL_OPEN) return next();
+      return res.status(503).json({ error: "Service temporarily unavailable. Please try again shortly." });
+    }
+  };
 }

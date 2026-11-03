@@ -22,3 +22,6 @@ dist/
 node_modules/
 package-lock.json
 build/
+
+# Personal VS Code workspace (points at local sibling folders)
+*.code-workspace

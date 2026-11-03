@@ -1,132 +1,99 @@
-// build-release.js
-// Creates a distributable zip of the extension for sharing.
-// Run from the project root: node build-release.js
+// scripts/build-release.js
+// Builds the Chrome Web Store package: build/liars-ledger-v{version}.zip
+// Run from the project root: node scripts/build-release.js
 //
-// Output: liars-ledger-v{version}.zip
-// Contains everything needed to load the extension in Chrome dev mode.
-// Does NOT include config.js (has API keys), server/, or node_modules.
+// The file list is read from what the extension actually loads, so it cannot
+// drift out of sync again (the previous hand-maintained list had):
+//   - manifest.json: service worker, content scripts, popup, icons
+//   - background.js importScripts(...)
+//   - <script src> tags in popup.html and report.html
+//   - src/data/politicians.json (fetched at runtime by src/lookup.js)
+// src/config.js is built from the committed src/config.example.js, never
+// from the local (gitignored) src/config.js, which may hold dev API keys.
+//
+// The build fails instead of packaging if a referenced file is missing, if
+// the packaged config contains an API key or does not point at the
+// production proxy, or if any TEMP DEBUG / [LL DEBUG] code remains.
+//
+// The zip has manifest.json at its root, as the Web Store requires.
 
-import { execSync } from "child_process";
-import { existsSync, mkdirSync, copyFileSync, readFileSync, writeFileSync, rmSync } from "fs";
-import { join } from "path";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, copyFileSync, readFileSync, rmSync, statSync } from "node:fs";
+import { dirname, join } from "node:path";
+import vm from "node:vm";
 
-// Read version from manifest
 const manifest = JSON.parse(readFileSync("manifest.json", "utf8"));
 const version  = manifest.version;
-const zipName  = `liars-ledger-v${version}.zip`;
 const buildDir = `build/liars-ledger-v${version}`;
+const zipPath  = `build/liars-ledger-v${version}.zip`;
 
-console.log(`Building Liar's Ledger v${version}...`);
-
-// Clean and recreate build dir
-if (existsSync("build")) rmSync("build", { recursive: true });
-mkdirSync(buildDir, { recursive: true });
-mkdirSync(`${buildDir}/src/data`, { recursive: true });
-mkdirSync(`${buildDir}/icons`, { recursive: true });
-
-// Files to include
-// NOTE: rootFiles and srcFiles must stay in sync with background.js importScripts
-const rootFiles = [
-  "manifest.json",
-  "background.js",
-  "content.js",
-  "popup.html",
-  "popup.js",
-  "report.html",
-  "report.js",
-];
-
-const srcFiles = [
-  "src/config.example.js",  // user renames to config.js
-  "src/logger.js",
-  "src/lookup.js",
-  "src/keywords.js",
-  "src/llm.js",
-  "src/topic-match.js",
-  "src/cache-maintenance.js",
-  "src/api.js",
-  "src/votesmart.js",
-  "src/verify.js",
-  "src/token.js",
-  "src/data/politicians.json",
-];
-
-const iconFiles = [
-  "icons/icon16.png",
-  "icons/icon48.png",
-  "icons/icon128.png",
-];
-
-// Copy files
-for (const f of rootFiles) {
-  if (existsSync(f)) {
-    copyFileSync(f, join(buildDir, f));
-  } else {
-    console.warn(`  ⚠ missing: ${f}`);
-  }
+function fail(msg) {
+  console.error(`\nBUILD FAILED: ${msg}`);
+  process.exit(1);
 }
 
-for (const f of srcFiles) {
-  if (existsSync(f)) {
-    copyFileSync(f, join(buildDir, f));
-  } else {
-    console.warn(`  ⚠ missing: ${f}`);
-  }
+// --- Collect every file the extension loads ---
+const files = new Set(["manifest.json"]);
+files.add(manifest.background.service_worker);
+for (const cs of manifest.content_scripts || []) for (const f of cs.js || []) files.add(f);
+files.add(manifest.action.default_popup);
+for (const f of Object.values(manifest.icons || {})) files.add(f);
+for (const f of Object.values(manifest.action.default_icon || {})) files.add(f);
+
+const background = readFileSync(manifest.background.service_worker, "utf8");
+const importBlock = background.match(/importScripts\(([\s\S]*?)\);/);
+if (!importBlock) fail("could not find importScripts(...) in the service worker");
+for (const m of importBlock[1].matchAll(/["']([^"']+)["']/g)) files.add(m[1]);
+
+for (const page of ["popup.html", "report.html"]) {
+  files.add(page);
+  for (const m of readFileSync(page, "utf8").matchAll(/<script[^>]+src=["']([^"']+)["']/g)) files.add(m[1]);
 }
+files.add("src/data/politicians.json");
 
-for (const f of iconFiles) {
-  if (existsSync(f)) {
-    copyFileSync(f, join(buildDir, f));
-  } else {
-    console.warn(`  ⚠ missing icon: ${f}`);
-  }
+// --- Copy into the build folder ---
+if (existsSync(buildDir)) rmSync(buildDir, { recursive: true });
+if (existsSync(zipPath)) rmSync(zipPath);
+for (const f of [...files].sort()) {
+  const source = f === "src/config.js" ? "src/config.example.js" : f;
+  if (!existsSync(source)) fail(`referenced file is missing: ${source}`);
+  mkdirSync(dirname(join(buildDir, f)), { recursive: true });
+  copyFileSync(source, join(buildDir, f));
 }
+console.log(`Liar's Ledger v${version}: ${files.size} files`);
 
-// Copy config.example.js as config.js so it works out of the box
-if (existsSync("src/config.example.js")) {
-  copyFileSync("src/config.example.js", join(buildDir, "src/config.js"));
-  console.log("  ✓ config.example.js → config.js");
+// --- Safety checks on the packaged copy ---
+const sandbox = {};
+vm.runInNewContext(`${readFileSync(join(buildDir, "src/config.js"), "utf8")}\nthis.CONFIG = CONFIG;`, sandbox);
+const config = sandbox.CONFIG;
+for (const [k, v] of Object.entries(config)) {
+  if (/KEY|SECRET|TOKEN/i.test(k) && v) fail(`packaged config has a value for ${k}`);
 }
-
-// Write a setup README into the zip
-const setupReadme = `# Liar's Ledger - Setup
-
-## Step 1 - Load the extension
-
-1. Open Chrome and go to \`chrome://extensions\`
-2. Turn on **Developer mode** (toggle in the top right)
-3. Click **Load unpacked**
-4. Select this folder
-5. The Liar's Ledger icon will appear in your toolbar
-
-No API keys needed - everything runs through api.liarsledger.com.
-
-## Step 2 - Use it
-
-Navigate to any political news article, click the Liar's Ledger icon, and hit **Scan This Page**.
-
----
-
-Questions? https://github.com/ryanegauthier/liars-ledger
-`;
-
-writeFileSync(join(buildDir, "SETUP.md"), setupReadme);
-console.log("  ✓ SETUP.md written");
-
-// Create zip
-try {
-  execSync(`zip -r ${zipName} build/liars-ledger-v${version}/`, { stdio: "inherit" });
-  console.log(`\n✅ Built: ${zipName}`);
-} catch (e) {
-  // Windows fallback
-  try {
-    execSync(
-      `powershell -NoProfile -ExecutionPolicy Bypass -Command "Import-Module Microsoft.PowerShell.Archive; Compress-Archive -Path '${buildDir}' -DestinationPath '${zipName}' -Force"`,
-      { stdio: "inherit" }
-    );
-    console.log(`\n✅ Built: ${zipName}`);
-  } catch (e2) {
-    console.error("Could not create zip.");
-    console.log(`Build folder ready at: build/liars-ledger-v${version}`);
-  }
+if (config.PROXY_URL !== "https://api.liarsledger.com") fail(`packaged PROXY_URL is ${config.PROXY_URL}`);
+for (const f of files) {
+  if (!/\.(js|html)$/.test(f)) continue;
+  if (/TEMP DEBUG|\[LL DEBUG\]/.test(readFileSync(join(buildDir, f), "utf8"))) fail(`debug code left in ${f}`);
 }
+console.log("  config: production proxy, no API keys");
+console.log("  no TEMP DEBUG code");
+
+// --- Zip with manifest.json at the root ---
+// Windows 10+ and macOS ship bsdtar, where -a picks zip from the extension and
+// writes forward-slash paths (Windows PowerShell 5's Compress-Archive does not).
+// Linux (the GitHub Actions release runner) ships GNU tar, which cannot write
+// zip and would silently produce a plain tar named .zip, so use zip/unzip there.
+const zipName = zipPath.split("/").pop();
+const sorted  = [...files].sort();
+const isLinux = process.platform === "linux";
+if (isLinux) {
+  execFileSync("zip", ["-q", "-X", `../${zipName}`, ...sorted], { cwd: buildDir, stdio: "inherit" });
+} else {
+  execFileSync("tar", ["-a", "-c", "-f", `../${zipName}`, ...sorted], { cwd: buildDir, stdio: "inherit" });
+}
+if (readFileSync(zipPath).readUInt32LE(0) !== 0x04034b50) fail(`${zipPath} is not a zip archive`);
+const listing = (isLinux
+  ? execFileSync("unzip", ["-Z1", zipPath], { encoding: "utf8" })
+  : execFileSync("tar", ["-t", "-f", zipPath], { encoding: "utf8" })
+).split(/\r?\n/).filter(Boolean);
+if (!listing.includes("manifest.json")) fail("manifest.json is not at the root of the zip");
+console.log(`\nBuilt ${zipPath} (${(statSync(zipPath).size / 1024).toFixed(0)} KB, ${listing.length} entries)`);

@@ -53,14 +53,16 @@ function buildPrompt(articleText) {
     '{"article_summary":"2-5 sentences in plain English what the piece is about politically",' +
     '"main_topics":["2-8 short noun phrases for Congress.gov bill search - policy areas only, no names"],' +
     '"figures":[' +
-    '{"lookup_name":"string that can identify a current U.S. Senator or Representative - prefer \\"Sen. Lastname\\", \\"Rep. Lastname\\", \\"Senator Lastname\\", or \\"Representative Lastname\\"; use the surname as it is usually written in Congress",' +
+    '{"lookup_name":"the person\'s name as the article gives it, with every title, honorific, party label, and role word removed - for example \\"Elizabeth Warren\\", never \\"Sen. Warren\\" or \\"Democratic Sen. Elizabeth Warren\\"; use the full first and last name when the article gives it, otherwise the surname alone",' +
     '"claim":"one sentence: the article\'s main policy-related assertion about this person, or null",' +
     '"search_terms":["2-6 short phrases for bill title search - never include the person\'s name"]}' +
     "]}\n\n" +
     "Rules:\n" +
-    "- Include every current U.S. Senator or Representative named in the article, even if their role is secondary. Omit the President, Vice President, Cabinet secretaries, governors, and anyone not currently serving in Congress.\n" +
-    "- Include at most 10 figures. If none qualify, use an empty figures array.\n" +
-    "- Use the most formal version of each person's name consistently. Never return the same person twice with different name formats (e.g. 'Sen. Sanders' and 'Sen. Bernie Sanders' are the same person - pick one).\n" +
+    "- Include every person named in the article who holds, held, or is seeking elected office, or who is named with a political or government title (for example Rep., Sen., Gov., state senator, attorney general), even if their role is secondary. Omit the President and Vice President.\n" +
+    "- Do not decide whether a person serves in the U.S. Congress. A title such as \"Rep.\" can mean a state legislator. Membership is checked separately against the official roster, so include the person either way.\n" +
+    "- A title is never a name: \"Republican Gov. Joe Lombardo\" is the person \"Joe Lombardo\", and words like \"Gov\", \"Republican\", or \"U.S. Rep\" must never appear in lookup_name. Periods in abbreviations such as Gov., Sen., Rep., Dr., Jr., and U.S. do not end a name.\n" +
+    "- Include at most 10 figures. If more than 10 qualify, prefer people described as members of Congress, then the people the article discusses most. If none qualify, use an empty figures array.\n" +
+    "- Never return the same person twice with different name formats (e.g. 'Bernie Sanders' and 'Sanders' are the same person - use the full name once).\n" +
     "- main_topics must reflect the dominant legislation/policy threads in the article.\n" +
     "- Order main_topics from most to least prominent in the article - the topic given the most attention or mentioned most often comes first.\n" +
     "- search_terms must be useful for matching bill titles (e.g. \"border security\", \"child tax credit\").\n\n" +
@@ -111,6 +113,24 @@ async function doFetch(url, init, timeoutMs) {
   return fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
 }
 
+// Short error category attached to every failure, used by background.js to
+// pick the user-facing message:
+//   auth         - our proxy rejected the request (scan authorization or token)
+//   rate_limited - the provider's own rate limit (never the user's scan quota)
+//   upstream     - any other provider or proxy failure
+//   timeout      - the request timed out
+function failureCategory(status, bodyText, isProxy) {
+  let body = null;
+  try { body = JSON.parse(bodyText); } catch { /* not JSON */ }
+  if (isProxy && (status === 401 || status === 403)) return "auth";
+  if (body && typeof body.category === "string") return body.category;
+  return status === 429 ? "rate_limited" : "upstream";
+}
+
+function fetchErrorCategory(e) {
+  return e?.name === "TimeoutError" || e?.name === "AbortError" ? "timeout" : "upstream";
+}
+
 // ---------------------------------------------------------------------------
 // Mistral
 // ---------------------------------------------------------------------------
@@ -154,21 +174,22 @@ async function extractArticleAnalysisViaMistral(articleText, options) {
       ok: false,
       error: e?.name === "TimeoutError" || e?.name === "AbortError"
         ? "Mistral request timed out" : e.message,
+      category: fetchErrorCategory(e),
     };
   }
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    return { ok: false, error: `Mistral HTTP ${res.status}: ${body.slice(0, 120)}` };
+    return { ok: false, error: `Mistral HTTP ${res.status}: ${body.slice(0, 120)}`, category: failureCategory(res.status, body, isProxy) };
   }
 
   let data;
   try { data = await res.json(); }
-  catch { return { ok: false, error: "Mistral returned non-JSON response" }; }
+  catch { return { ok: false, error: "Mistral returned non-JSON response", category: "upstream" }; }
 
   // Proxy returns the parsed result directly
   if (isProxy) {
-    if (!data?.ok) return { ok: false, error: data?.error || "Mistral proxy returned error" };
+    if (!data?.ok) return { ok: false, error: data?.error || "Mistral proxy returned error", category: data?.category || "upstream" };
     return { ...data, _meta: { provider: "mistral", model: MISTRAL_MODEL } };
   }
 
@@ -235,21 +256,22 @@ async function extractArticleAnalysisViaClaude(articleText, options) {
       ok: false,
       error: e?.name === "TimeoutError" || e?.name === "AbortError"
         ? "Claude request timed out" : e.message,
+      category: fetchErrorCategory(e),
     };
   }
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    return { ok: false, error: `Claude HTTP ${res.status}: ${body.slice(0, 120)}` };
+    return { ok: false, error: `Claude HTTP ${res.status}: ${body.slice(0, 120)}`, category: failureCategory(res.status, body, isProxy) };
   }
 
   let data;
   try { data = await res.json(); }
-  catch { return { ok: false, error: "Claude returned non-JSON response" }; }
+  catch { return { ok: false, error: "Claude returned non-JSON response", category: "upstream" }; }
 
   // Proxy returns the parsed result directly
   if (isProxy) {
-    if (!data?.ok) return { ok: false, error: data?.error || "Claude proxy returned error" };
+    if (!data?.ok) return { ok: false, error: data?.error || "Claude proxy returned error", category: data?.category || "upstream" };
     return { ...data, _meta: { provider: "claude", model: CLAUDE_MODEL } };
   }
 
@@ -354,28 +376,49 @@ async function extractArticleAnalysisDualVerified(articleText, options) {
   const claudeOk  = claudeResult.status  === "fulfilled" && claudeResult.value?.ok;
   const mistralOk = mistralResult.status === "fulfilled" && mistralResult.value?.ok;
 
-  // Both failed
+  const errorOf    = (r, name) => (r.status === "fulfilled" ? r.value?.error : r.reason?.message) || `${name} failed`;
+  const categoryOf = (r) => (r.status === "fulfilled" ? r.value?.category : "upstream") || "upstream";
+
+  // Both failed. The combined category is "auth" only when every failure was
+  // an authorization rejection; otherwise it is the first non-auth category,
+  // since a busy or failing provider is what the user should hear about.
   if (!claudeOk && !mistralOk) {
-    const ce = claudeResult.status  === "fulfilled" ? claudeResult.value?.error  : claudeResult.reason?.message;
-    const me = mistralResult.status === "fulfilled" ? mistralResult.value?.error : mistralResult.reason?.message;
-    return { ok: false, error: `Both models failed. Claude: ${ce}. Mistral: ${me}` };
+    const ce = errorOf(claudeResult, "Claude");
+    const me = errorOf(mistralResult, "Mistral");
+    const categories = { claude: categoryOf(claudeResult), mistral: categoryOf(mistralResult) };
+    const nonAuth = Object.values(categories).find((c) => c !== "auth");
+    return {
+      ok: false,
+      error: `Both models failed. Claude: ${ce}. Mistral: ${me}`,
+      category: nonAuth || "auth",
+      categories,
+    };
   }
 
-  // Only one succeeded - return it with single_model badge
+  // Only one succeeded - return it with single_model badge. The loser's error
+  // and category are kept on _meta too, so they survive a winner with no figures.
   if (!claudeOk || !mistralOk) {
     const winner = claudeOk ? claudeResult.value : mistralResult.value;
     const loser  = claudeOk ? "mistral" : "claude";
+    const loserResult   = claudeOk ? mistralResult : claudeResult;
+    const loserError    = errorOf(loserResult, claudeOk ? "Mistral" : "Claude");
+    const loserCategory = categoryOf(loserResult);
     return {
       ...winner,
       figures: (winner.figures || []).map(f => ({
         ...f,
-        _verification: "single_model",
-        _verified_by:  claudeOk ? "claude" : "mistral",
-        _loser_error:  claudeOk
-          ? (mistralResult.value?.error || "Mistral failed")
-          : (claudeResult.value?.error  || "Claude failed"),
+        _verification:   "single_model",
+        _verified_by:    claudeOk ? "claude" : "mistral",
+        _loser_error:    loserError,
+        _loser_category: loserCategory,
       })),
-      _meta: { provider: "single_model", winner: claudeOk ? "claude" : "mistral", loser },
+      _meta: {
+        provider: "single_model",
+        winner: claudeOk ? "claude" : "mistral",
+        loser,
+        loser_error: loserError,
+        loser_category: loserCategory,
+      },
     };
   }
 
