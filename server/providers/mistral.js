@@ -2,7 +2,7 @@
 // Mistral API provider. Prompt and parser live in _shared.js; retry and
 // error categories live in providerFetch.js.
 
-import { buildPrompt, parseContent, TEMPERATURE } from "./_shared.js";
+import { buildPrompt, parseContent, TEMPERATURE, MAX_OUTPUT_TOKENS } from "./_shared.js";
 import { fetchWithRetry } from "./providerFetch.js";
 
 const MISTRAL_API_URL = "https://api.mistral.ai/v1/chat/completions";
@@ -21,7 +21,7 @@ async function extract(articleText) {
     body: JSON.stringify({
       model:       MISTRAL_MODEL,
       temperature: TEMPERATURE,
-      max_tokens:  1024,
+      max_tokens:  MAX_OUTPUT_TOKENS,
       messages:    [{ role: "user", content: buildPrompt(articleText) }],
     }),
   }, { label: "Mistral" });
@@ -34,6 +34,9 @@ async function extract(articleText) {
     return { ok: false, error: "Mistral returned non-JSON response", category: "upstream" };
   }
 
+  if (data?.choices?.[0]?.finish_reason === "length") {
+    return { ok: false, error: `Mistral output truncated at max_tokens (${MAX_OUTPUT_TOKENS})`, category: "upstream" };
+  }
   const content = data?.choices?.[0]?.message?.content;
   if (!content) return { ok: false, error: "Mistral returned empty content", category: "upstream" };
 

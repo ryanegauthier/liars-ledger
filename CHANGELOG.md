@@ -221,6 +221,18 @@ fallback path (no body stream), which previously only checked Content-Length. Te
 no-length fallback, and four `stripNonContent` cases including a timing bound on hostile
 input. Server-only: takes effect when this branch merges to `main`.
 
+**server/providers/_shared.js, claude.js, mistral.js** - extraction output cap raised
+from 1024 to 4096 tokens (new shared `MAX_OUTPUT_TOKENS`). Confirmed live on the same CNN
+article: the extension scan failed with Claude "unparseable JSON"; a direct Haiku 4.5 call
+on the server-extracted text used 965 of 1024 output tokens (10 figures, pretty-printed
+JSON), so the extension's slightly different excerpt went over and was cut off mid-JSON.
+The v0.17.18 prompt widened figures to every named officeholder (up to 10), which is what
+pushed typical output toward the old cap. Only generated tokens are billed, so the
+headroom is free on normal articles. A truncated reply is now reported as such
+(Claude `stop_reason: "max_tokens"`, Mistral `finish_reason: "length"`) instead of as
+unparseable JSON. Not changed: the extension's direct-key dev path in `src/llm.js` still
+sends 1024 (dev-only, and changing it would need a new store build).
+
 **Cost impact**: before this, nearly every scan ran one model (the second was rejected).
 Now every scan runs both: about +$0.0005 per scan for Mistral Small against about $0.005
 for the Claude Haiku 4.5 call on a full article, roughly +10% (estimates from list
