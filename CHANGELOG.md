@@ -203,6 +203,24 @@ nothing loads it.
 **.github/workflows/release.yml** - uploads `build/liars-ledger-*.zip` (was the repo
 root, where the rewritten script no longer writes, so the release would have had no asset).
 
+**server/providers/articleFetch.js** (public `/scan` route) - CNN article pages failed
+with `ERR-TOO-LARGE`: the raw HTML is 4.8MB against a 2MB cap, but 2.8MB of it is inline
+script and 1.4MB CSS. Split the cap in two: `MAX_RESPONSE_BYTES` (download) raised to 8MB,
+and a new `MAX_PARSE_BYTES` (2MB) applied after the new `stripNonContent()` removes
+`<script>` (JSON-LD kept, Readability reads metadata from it), `<style>`, `<svg>`, and
+comments. Measured on the CNN page: 448KB after stripping, identical Readability text,
+parse 1.4s/~154MB heap down to 0.13s/~32MB. The parse cap is what bounds JSDOM memory, so
+per-request parse cost does not rise; the tradeoff is up to 8MB (was 2MB) buffered per
+in-flight download, still under the unchanged 10s fetch timeout. `stripNonContent` is a
+single forward pass with a cached next-">" index, no backtracking regex, so hostile input
+(a million unclosed `<script` openers) stays linear; an element with no end drops the
+rest of the document, as a browser does for an unclosed `<script>`. Stripping runs after
+the download, not while streaming. Also enforces the download cap on the `res.text()`
+fallback path (no body stream), which previously only checked Content-Length. Tests in
+`server/test/free/scan-extract.test.js`: CNN-shaped page, still-too-large-after-strip,
+no-length fallback, and four `stripNonContent` cases including a timing bound on hostile
+input. Server-only: takes effect when this branch merges to `main`.
+
 **Cost impact**: before this, nearly every scan ran one model (the second was rejected).
 Now every scan runs both: about +$0.0005 per scan for Mistral Small against about $0.005
 for the Claude Haiku 4.5 call on a full article, roughly +10% (estimates from list

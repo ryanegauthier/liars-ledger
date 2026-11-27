@@ -4,7 +4,8 @@
 // of server/bot/extractArticle.js's approach, needed because this route
 // takes a URL from ANY anonymous visitor rather than a curated Twitter
 // mention: SSRF guard (DNS-resolve + private/reserved-range block,
-// re-validated on every redirect hop), a streamed response-size cap, and a
+// re-validated on every redirect hop), a streamed response-size cap, a
+// parse-size cap applied after script/style stripping, and a
 // shorter timeout budget appropriate for a synchronous page load.
 //
 // server/bot/extractArticle.js has the same underlying fetch+Readability
@@ -21,7 +22,14 @@ import net from "node:net";
 
 const FETCH_TIMEOUT_MS   = 10000;
 const MAX_REDIRECTS      = 3;
-const MAX_RESPONSE_BYTES = 2 * 1024 * 1024; // 2MB
+// Two caps: what we will download, and what we will hand to JSDOM. Major
+// news pages are mostly inline script and CSS (a CNN article measured
+// 4.8MB raw, 448KB after stripNonContent, identical Readability text), so
+// the download cap is generous and the parse cap, which is what actually
+// bounds JSDOM's memory (~150MB heap for the raw CNN page vs ~30MB
+// stripped), applies to the stripped HTML.
+const MAX_RESPONSE_BYTES = 8 * 1024 * 1024; // 8MB downloaded
+const MAX_PARSE_BYTES    = 2 * 1024 * 1024; // 2MB after stripping
 const MAX_ARTICLE_CHARS  = 12000; // matches server/bot/extractArticle.js's cap
 
 const USER_AGENT = "Mozilla/5.0 (compatible; LiarsLedgerBot/1.0; +https://liarsledger.com)";
@@ -52,7 +60,10 @@ export async function extractArticleTextPublic(inputUrl) {
     throw new ArticleFetchError("ERR-INVALID-URL", "Only http and https URLs are supported.");
   }
 
-  const html = await fetchWithGuard(url, MAX_REDIRECTS);
+  const html = stripNonContent(await fetchWithGuard(url, MAX_REDIRECTS));
+  if (Buffer.byteLength(html) > MAX_PARSE_BYTES) {
+    throw new ArticleFetchError("ERR-TOO-LARGE", "That page is too large to scan.");
+  }
 
   const dom = new JSDOM(html, { url: url.toString() });
   const reader = new Readability(dom.window.document);
@@ -143,7 +154,11 @@ async function readBodyWithLimit(res) {
   }
 
   if (!res.body) {
-    return res.text();
+    const text = await res.text();
+    if (Buffer.byteLength(text) > MAX_RESPONSE_BYTES) {
+      throw new ArticleFetchError("ERR-TOO-LARGE", "That page is too large to scan.");
+    }
+    return text;
   }
 
   const reader = res.body.getReader();
@@ -162,6 +177,60 @@ async function readBodyWithLimit(res) {
   }
   html += decoder.decode();
   return html;
+}
+
+// Removes <script>, <style>, and <svg> elements and HTML comments before
+// parsing - Readability never uses them, and they are most of a modern news
+// page's bytes. JSON-LD scripts are kept (Readability reads title/byline
+// metadata from them). Single forward pass with no backtracking regex:
+// every search starts at or after where the last one ended, and the
+// position of the next ">" is cached, so a hostile page (e.g. a million
+// unclosed "<script" openers) cannot make this quadratic. An element with
+// no end drops the rest of the document, which is how a browser treats an
+// unclosed <script> as well.
+const STRIP_OPEN_RE = /<!--|<(?:script|style|svg)\b/gi;
+const STRIP_CLOSE_RE = {
+  script: /<\/script/gi,
+  style:  /<\/style/gi,
+  svg:    /<\/svg/gi,
+};
+const JSON_LD_RE = /type\s*=\s*["']?application\/ld\+json/i;
+
+export function stripNonContent(html) {
+  STRIP_OPEN_RE.lastIndex = 0;
+  let out = "";
+  let pos = 0;
+  let nextGt = -1; // cached index of the first ">" at or after the current search point
+  const gtFrom = (i) => {
+    if (nextGt < i) nextGt = html.indexOf(">", i);
+    return nextGt;
+  };
+  let m;
+  while ((m = STRIP_OPEN_RE.exec(html)) !== null) {
+    let end;
+    if (m[0] === "<!--") {
+      const close = html.indexOf("-->", STRIP_OPEN_RE.lastIndex);
+      end = close === -1 ? -1 : close + 3;
+    } else {
+      const tag = m[0].slice(1).toLowerCase();
+      const openEnd = gtFrom(STRIP_OPEN_RE.lastIndex);
+      if (openEnd === -1) return out + html.slice(pos, m.index);
+      if (tag === "script" && JSON_LD_RE.test(html.slice(STRIP_OPEN_RE.lastIndex, openEnd))) {
+        STRIP_OPEN_RE.lastIndex = openEnd + 1;
+        continue;
+      }
+      const closeRe = STRIP_CLOSE_RE[tag];
+      closeRe.lastIndex = openEnd + 1;
+      const close = closeRe.exec(html);
+      const closeEnd = close ? gtFrom(close.index) : -1;
+      end = closeEnd === -1 ? -1 : closeEnd + 1;
+    }
+    out += html.slice(pos, m.index);
+    if (end === -1) return out;
+    pos = end;
+    STRIP_OPEN_RE.lastIndex = end;
+  }
+  return out + html.slice(pos);
 }
 
 // Rejects hostnames that resolve to loopback, private, or link-local/
