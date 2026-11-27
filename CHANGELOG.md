@@ -133,6 +133,57 @@ error body, LIS mapping, chunked persistence and restart, retry after a
 failed file, the Senate 403 stop-and-resume, shared concurrent runs, and the
 GovTrack-shaped output.
 
+### Fixed: interest group ratings were missing or could be mislabeled
+
+**Found** 2026-11-27 on a live scan: five of seven members showed 0 ratings,
+including Warren and Sanders.
+- `/v1/ratings/by-candidate` pages 10 rows at a time, newest first (Warren:
+  834 ratings over 84 pages; Sanders: 2,397), and `src/votesmart.js` read
+  page 1 only.
+- The extension's hard-coded group IDs (`SIG_NAMES`) are mostly stale.
+  Checked against the rating text VoteSmart returns, only NRA (1034) and NORML
+  (599) still match. ACLU is 1378 (not 5), AFL-CIO 1161 (not 2), Human Rights
+  Campaign 1256 (not 125), Planned Parenthood 1578 (not 188), Sierra Club 657
+  (not 130), Club for Growth 1734 (not 310), U.S. Chamber 755 (not 174),
+  Americans for Democratic Action 978 (not 32). The stale IDs belong to other
+  groups: 310 is Americans for Prosperity, so a match there would have shown
+  AFP's score as "Club for Growth". Humane Society, VFW, American Family
+  Association, and AFL-CIO COPE could not be confirmed and are left out.
+
+**server/providers/vsRatings.js** (new) - fetches all of a candidate's
+ratings (`perPage=1000`, 0.2s for Sanders' 2,397 through production), keeps
+each curated group's most recent numeric score (letter grades skipped: the
+extension renders "N%"), and drops any row whose text names a different
+group than its ID expects, so a future ID change at VoteSmart drops data
+instead of mislabeling it. Cached 12h in memory and 24h in Redis
+(`vsr:v1:{candidateId}`, via the store.js `kv` helper, which gained an
+optional TTL). VoteSmart's 404 for a candidate with no ratings (Analilia
+Mejia) is an empty list, not an error.
+
+**server/index.js**
+- `/api/votesmart/v1/ratings/by-candidate` without `page`/`perPage` (how the
+  extension in the Chrome Web Store asks) now returns the curated list,
+  translated to the IDs that extension's table expects (HRC's 1256 is sent as
+  125, Club for Growth's 1734 as 310, and so on), in VoteSmart's response
+  shape. Groups that table lacks, including Americans for Prosperity, are not
+  sent. Requests that do page are passed through unchanged.
+- New `GET /api/ratings/:candidateId`: the curated list with group names and
+  the six verified extra groups (League of Conservation Voters, Heritage
+  Action, National Right to Life, Americans for Prosperity, NEA, NumbersUSA),
+  for the next extension release and the profile page.
+
+**Verified live (2026-11-27)** through an isolated local server, applying the
+shipped extension's own filter to the response: Warren 9 ratings (was 0),
+Sanders 10 (was 0), Thompson 10, Sherman 10, Stevens 9 (was 0), all with names
+matching the rating text; Mejia an empty list (was a 502). Some ratings are
+old (Sierra Club's latest for Sanders is 2003); the year is shown with each.
+
+**Tests**: `server/test/unit/vsRatings.test.js` (12) on real Warren rating
+rows: correct IDs, stale IDs never reported, 310 labeled AFP, letter grades
+skipped, text/ID mismatch dropped, legacy translation checked against the
+extension's own table, paging, caching, the 404 case, and no caching of
+other failures.
+
 **Next (same plan, not in this change)**: a topic-matched record endpoint
 that searches each member's full vote and bill history server-side (and the
 full paged Congress.gov sponsored/cosponsored history with `policyArea`

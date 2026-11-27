@@ -53,8 +53,9 @@ export const kv = {
   async getJson(key) {
     return parseStored(await redis.get(key));
   },
-  async setJson(key, value) {
-    await redis.set(key, JSON.stringify(value));
+  async setJson(key, value, { ttlSeconds } = {}) {
+    if (ttlSeconds) await redis.set(key, JSON.stringify(value), { ex: ttlSeconds });
+    else await redis.set(key, JSON.stringify(value));
   },
   async mgetJson(keys) {
     if (!keys.length) return [];
