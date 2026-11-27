@@ -1,0 +1,702 @@
+{
+ "meta": {
+  "total": 39,
+  "lastPage": 1,
+  "currentPage": 1,
+  "perPage": 1000,
+  "prev": null,
+  "next": null
+ },
+ "data": [
+  {
+   "id": 1256,
+   "timespan": "2025-2026",
+   "ratingName": "Positions",
+   "ratingText": "Senator Elizabeth Warren supported the interests of the Human Rights Campaign 100 percent in 2025-2026.",
+   "ratingId": 14368,
+   "rating": "100",
+   "categories": [
+    {
+     "id": 76,
+     "name": "Sexual Orientation and Gender Identity"
+    },
+    {
+     "id": 13,
+     "name": "Civil Liberties and Civil Rights"
+    },
+    {
+     "id": 102,
+     "name": "Marriage"
+    }
+   ]
+  },
+  {
+   "id": 2061,
+   "timespan": "2025-2026",
+   "ratingName": "Positions",
+   "ratingText": "Senator Elizabeth Warren supported the interests of the Heritage Action for America 0 percent in 2025-2026.",
+   "ratingId": 14379,
+   "rating": "0",
+   "categories": [
+    {
+     "id": 17,
+     "name": "Conservative"
+    }
+   ]
+  },
+  {
+   "id": 1378,
+   "timespan": "2025-2026",
+   "ratingName": "Positions",
+   "ratingText": "Senator Elizabeth Warren supported the interests of the American Civil Liberties Union (ACLU) 100 percent in 2025-2026.",
+   "ratingId": 14369,
+   "rating": "100",
+   "categories": [
+    {
+     "id": 13,
+     "name": "Civil Liberties and Civil Rights"
+    }
+   ]
+  },
+  {
+   "id": 1578,
+   "timespan": "2025-2026",
+   "ratingName": "Positions",
+   "ratingText": "Senator Elizabeth Warren supported the interests of the Planned Parenthood Action Fund 100 percent in 2025-2026.",
+   "ratingId": 14378,
+   "rating": "100",
+   "categories": [
+    {
+     "id": 2,
+     "name": "Abortion"
+    },
+    {
+     "id": 38,
+     "name": "Health and Health Care"
+    },
+    {
+     "id": 75,
+     "name": "Reproduction"
+    }
+   ]
+  },
+  {
+   "id": 252,
+   "timespan": "2025-2026",
+   "ratingName": "Positions",
+   "ratingText": "Senator Elizabeth Warren supported the interests of the National Right to Life Committee 0 percent in 2025-2026.",
+   "ratingId": 14371,
+   "rating": "0",
+   "categories": [
+    {
+     "id": 2,
+     "name": "Abortion"
+    },
+    {
+     "id": 109,
+     "name": "Socially Conservative"
+    }
+   ]
+  },
+  {
+   "id": 1012,
+   "timespan": "2025",
+   "ratingName": "Lifetime Positions",
+   "ratingText": "Senator Elizabeth Warren supported the interests of the League of Conservation Voters 96 percent in 2025.",
+   "ratingId": 14365,
+   "rating": "96",
+   "categories": [
+    {
+     "id": 103,
+     "name": "Natural Resources"
+    },
+    {
+     "id": 30,
+     "name": "Environment"
+    }
+   ]
+  },
+  {
+   "id": 1161,
+   "timespan": "2025",
+   "ratingName": "Positions",
+   "ratingText": "Senator Elizabeth Warren supported the interests of the AFL-CIO (American Federation of Labor and Congress of Industrial Organizations) 100 percent in 2025.",
+   "ratingId": 14377,
+   "rating": "100",
+   "categories": [
+    {
+     "id": 43,
+     "name": "Labor Unions"
+    }
+   ]
+  },
+  {
+   "id": 1012,
+   "timespan": "2025",
+   "ratingName": "Positions",
+   "ratingText": "Senator Elizabeth Warren supported the interests of the League of Conservation Voters 97 percent in 2025.",
+   "ratingId": 14366,
+   "rating": "97",
+   "categories": [
+    {
+     "id": 103,
+     "name": "Natural Resources"
+    },
+    {
+     "id": 30,
+     "name": "Environment"
+    }
+   ]
+  },
+  {
+   "id": 1161,
+   "timespan": "2025",
+   "ratingName": "Lifetime Positions",
+   "ratingText": "Senator Elizabeth Warren supported the interests of the AFL-CIO (American Federation of Labor and Congress of Industrial Organizations) 99 percent in 2025.",
+   "ratingId": 14376,
+   "rating": "99",
+   "categories": [
+    {
+     "id": 43,
+     "name": "Labor Unions"
+    }
+   ]
+  },
+  {
+   "id": 599,
+   "timespan": "2024",
+   "ratingName": "Positions [2024-10-24]",
+   "ratingText": "Supported the interests (Standard)",
+   "ratingId": 14258,
+   "rating": "100",
+   "categories": [
+    {
+     "id": 101,
+     "name": "Marijuana"
+    }
+   ]
+  },
+  {
+   "id": 1627,
+   "timespan": "2024",
+   "ratingName": "Lifetime Positions [2024-10-24]",
+   "ratingText": "Supported the interests (Standard)",
+   "ratingId": 14264,
+   "rating": "14",
+   "categories": [
+    {
+     "id": 107,
+     "name": "Religion"
+    },
+    {
+     "id": 109,
+     "name": "Socially Conservative"
+    }
+   ]
+  },
+  {
+   "id": 310,
+   "timespan": "2024",
+   "ratingName": "Lifetime Positions [2024-10-24]",
+   "ratingText": "Supported the interests (Standard)",
+   "ratingId": 14262,
+   "rating": "17",
+   "categories": [
+    {
+     "id": 82,
+     "name": "Economy and Fiscal"
+    },
+    {
+     "id": 86,
+     "name": "Fiscally Conservative"
+    },
+    {
+     "id": 10,
+     "name": "Budget, Spending and Taxes"
+    }
+   ]
+  },
+  {
+   "id": 1034,
+   "timespan": "2024",
+   "ratingName": "Candidate Positions",
+   "ratingText": "Senator Elizabeth Warren supported the interests of the National Rifle Association (NRA) 0 percent in 2024.",
+   "ratingId": 14237,
+   "rating": "0",
+   "categories": [
+    {
+     "id": 37,
+     "name": "Guns"
+    }
+   ]
+  },
+  {
+   "id": 310,
+   "timespan": "2024",
+   "ratingName": "Positions [2024-10-24]",
+   "ratingText": "Supported the interests (Standard)",
+   "ratingId": 14261,
+   "rating": "20",
+   "categories": [
+    {
+     "id": 82,
+     "name": "Economy and Fiscal"
+    },
+    {
+     "id": 86,
+     "name": "Fiscally Conservative"
+    },
+    {
+     "id": 10,
+     "name": "Budget, Spending and Taxes"
+    }
+   ]
+  },
+  {
+   "id": 1110,
+   "timespan": "2024",
+   "ratingName": "Lifetime Positions [2024-07-24]",
+   "ratingText": "Supported the interests (Standard)",
+   "ratingId": 14195,
+   "rating": "92",
+   "categories": [
+    {
+     "id": 22,
+     "name": "Defense"
+    },
+    {
+     "id": 61,
+     "name": "National Security"
+    },
+    {
+     "id": 32,
+     "name": "Foreign Affairs"
+    }
+   ]
+  },
+  {
+   "id": 125,
+   "timespan": "2024",
+   "ratingName": "Lifetime Positions [2024-10-25]",
+   "ratingText": "Supported the interests (Standard)",
+   "ratingId": 14266,
+   "rating": "50",
+   "categories": [
+    {
+     "id": 32,
+     "name": "Foreign Affairs"
+    }
+   ]
+  },
+  {
+   "id": 599,
+   "timespan": "2024",
+   "ratingName": "Candidate Positions [2024-10-24]",
+   "ratingText": "Supported the interests (Standard)",
+   "ratingId": 14257,
+   "rating": "100",
+   "categories": [
+    {
+     "id": 101,
+     "name": "Marijuana"
+    }
+   ]
+  },
+  {
+   "id": 674,
+   "timespan": "2024",
+   "ratingName": "Positions [2024-10-04]",
+   "ratingText": "Supported the interests (Standard)",
+   "ratingId": 14216,
+   "rating": "67",
+   "categories": [
+    {
+     "id": 5,
+     "name": "Animals and Wildlife"
+    }
+   ]
+  },
+  {
+   "id": 1985,
+   "timespan": "2023-2024",
+   "ratingName": "Positions [2024-10-18]",
+   "ratingText": "Supported the interests (Standard)",
+   "ratingId": 14239,
+   "rating": "11",
+   "categories": [
+    {
+     "id": 40,
+     "name": "Immigration"
+    }
+   ]
+  },
+  {
+   "id": 1985,
+   "timespan": "2023-2024",
+   "ratingName": "Lifetime Positions [2024-10-18]",
+   "ratingText": "Supported the interests (Standard)",
+   "ratingId": 14240,
+   "rating": "7",
+   "categories": [
+    {
+     "id": 40,
+     "name": "Immigration"
+    }
+   ]
+  },
+  {
+   "id": 1578,
+   "timespan": "2023-2024",
+   "ratingName": "Positions [2024-10-17]",
+   "ratingText": "Supported the interests (Standard)",
+   "ratingId": 14236,
+   "rating": "100",
+   "categories": [
+    {
+     "id": 2,
+     "name": "Abortion"
+    },
+    {
+     "id": 75,
+     "name": "Reproduction"
+    },
+    {
+     "id": 38,
+     "name": "Health and Health Care"
+    }
+   ]
+  },
+  {
+   "id": 2061,
+   "timespan": "2023-2024",
+   "ratingName": "Positions [2024-10-18]",
+   "ratingText": "Supported the interests (Standard)",
+   "ratingId": 14243,
+   "rating": "29",
+   "categories": [
+    {
+     "id": 17,
+     "name": "Conservative"
+    }
+   ]
+  },
+  {
+   "id": 252,
+   "timespan": "2023-2024",
+   "ratingName": "Positions [2024-06-25]",
+   "ratingText": "Supported the interests (Standard)",
+   "ratingId": 14158,
+   "rating": "0",
+   "categories": [
+    {
+     "id": 2,
+     "name": "Abortion"
+    }
+   ]
+  },
+  {
+   "id": 125,
+   "timespan": "2023-2024",
+   "ratingName": "Positions [2024-10-25]",
+   "ratingText": "Supported the interests (Standard)",
+   "ratingId": 14265,
+   "rating": "60",
+   "categories": [
+    {
+     "id": 32,
+     "name": "Foreign Affairs"
+    }
+   ]
+  },
+  {
+   "id": 1015,
+   "timespan": "2023-2024",
+   "ratingName": "Positions [2024-03-21]",
+   "ratingText": "Supported the interests (Standard)",
+   "ratingId": 13952,
+   "rating": "100",
+   "categories": [
+    {
+     "id": 27,
+     "name": "Education"
+    },
+    {
+     "id": 98,
+     "name": "K-12 Education"
+    },
+    {
+     "id": 93,
+     "name": "Higher Education"
+    }
+   ]
+  },
+  {
+   "id": 1627,
+   "timespan": "2023-2024",
+   "ratingName": "Positions [2024-10-24]",
+   "ratingText": "Supported the interests (Standard)",
+   "ratingId": 14263,
+   "rating": "13",
+   "categories": [
+    {
+     "id": 107,
+     "name": "Religion"
+    },
+    {
+     "id": 109,
+     "name": "Socially Conservative"
+    }
+   ]
+  },
+  {
+   "id": 1256,
+   "timespan": "2023-2024",
+   "ratingName": "Positions",
+   "ratingText": "Senator Elizabeth Warren supported the interests of the Human Rights Campaign 100 percent in 2023-2024.",
+   "ratingId": 14367,
+   "rating": "100",
+   "categories": [
+    {
+     "id": 76,
+     "name": "Sexual Orientation and Gender Identity"
+    },
+    {
+     "id": 13,
+     "name": "Civil Liberties and Civil Rights"
+    },
+    {
+     "id": 102,
+     "name": "Marriage"
+    }
+   ]
+  },
+  {
+   "id": 674,
+   "timespan": "2023",
+   "ratingName": "Positions [2024-03-05]",
+   "ratingText": "Supported the interests (Standard)",
+   "ratingId": 13935,
+   "rating": "100",
+   "categories": [
+    {
+     "id": 5,
+     "name": "Animals and Wildlife"
+    }
+   ]
+  },
+  {
+   "id": 1734,
+   "timespan": "2023",
+   "ratingName": "Lifetime Positions",
+   "ratingText": "Supported the interests (Standard)",
+   "ratingId": 14272,
+   "rating": "10",
+   "categories": [
+    {
+     "id": 90,
+     "name": "Government Budget and Spending"
+    },
+    {
+     "id": 111,
+     "name": "Taxes"
+    },
+    {
+     "id": 86,
+     "name": "Fiscally Conservative"
+    }
+   ]
+  },
+  {
+   "id": 1734,
+   "timespan": "2023",
+   "ratingName": "Positions",
+   "ratingText": "Supported the interests (Standard)",
+   "ratingId": 14271,
+   "rating": "22",
+   "categories": [
+    {
+     "id": 90,
+     "name": "Government Budget and Spending"
+    },
+    {
+     "id": 111,
+     "name": "Taxes"
+    },
+    {
+     "id": 86,
+     "name": "Fiscally Conservative"
+    }
+   ]
+  },
+  {
+   "id": 1378,
+   "timespan": "2021-2022",
+   "ratingName": "Positions [2022-03-04]",
+   "ratingText": "Senator Elizabeth Warren supported the interests of the American Civil Liberties Union (ACLU) 100 percent in 2021-2022.",
+   "ratingId": 13112,
+   "rating": "100",
+   "categories": [
+    {
+     "id": 13,
+     "name": "Civil Liberties and Civil Rights"
+    }
+   ]
+  },
+  {
+   "id": 1015,
+   "timespan": "2021-2022",
+   "ratingName": "Positions",
+   "ratingText": "Senator Elizabeth Warren supported the interests of the National Education Association (NEA) 100 percent in 2021-2022.",
+   "ratingId": 13786,
+   "rating": "100",
+   "categories": [
+    {
+     "id": 27,
+     "name": "Education"
+    },
+    {
+     "id": 98,
+     "name": "K-12 Education"
+    },
+    {
+     "id": 93,
+     "name": "Higher Education"
+    }
+   ]
+  },
+  {
+   "id": 978,
+   "timespan": "2021",
+   "ratingName": "Positions",
+   "ratingText": "Senator Elizabeth Warren supported the interests of the Americans for Democratic Action (ADA) 100 percent in 2021.",
+   "ratingId": 13549,
+   "rating": "100",
+   "categories": [
+    {
+     "id": 13,
+     "name": "Civil Liberties and Civil Rights"
+    },
+    {
+     "id": 45,
+     "name": "Liberal"
+    },
+    {
+     "id": 30,
+     "name": "Environment"
+    }
+   ]
+  },
+  {
+   "id": 755,
+   "timespan": "2020",
+   "ratingName": "Lifetime Positions",
+   "ratingText": "Senator Elizabeth Warren supported the interests of the United States Chamber of Commerce 37 percent in 2020.",
+   "ratingId": 12999,
+   "rating": "37",
+   "categories": [
+    {
+     "id": 11,
+     "name": "Business and Consumers"
+    }
+   ]
+  },
+  {
+   "id": 755,
+   "timespan": "2020",
+   "ratingName": "Positions",
+   "ratingText": "Senator Elizabeth Warren supported the interests of the United States Chamber of Commerce 53 percent in 2020.",
+   "ratingId": 12998,
+   "rating": "53",
+   "categories": [
+    {
+     "id": 11,
+     "name": "Business and Consumers"
+    }
+   ]
+  },
+  {
+   "id": 978,
+   "timespan": "2020",
+   "ratingName": "Positions",
+   "ratingText": "Senator Elizabeth Warren supported the interests of the Americans for Democratic Action (ADA) 85 percent in 2020.",
+   "ratingId": 13075,
+   "rating": "85",
+   "categories": [
+    {
+     "id": 38,
+     "name": "Health and Health Care"
+    },
+    {
+     "id": 89,
+     "name": "Foreign Aid"
+    },
+    {
+     "id": 13,
+     "name": "Civil Liberties and Civil Rights"
+    },
+    {
+     "id": 45,
+     "name": "Liberal"
+    },
+    {
+     "id": 30,
+     "name": "Environment"
+    }
+   ]
+  },
+  {
+   "id": 1034,
+   "timespan": "2018",
+   "ratingName": "Candidate Positions",
+   "ratingText": "Senator Elizabeth Warren supported the interests of the National Rifle Association (NRA) 0 percent in 2018.",
+   "ratingId": 12493,
+   "rating": "0",
+   "categories": [
+    {
+     "id": 37,
+     "name": "Guns"
+    }
+   ]
+  },
+  {
+   "id": 1110,
+   "timespan": "2015",
+   "ratingName": "Positions",
+   "ratingText": "Senator Elizabeth Warren supported the interests of the Peace Action 100 percent in 2015.",
+   "ratingId": 9966,
+   "rating": "100",
+   "categories": [
+    {
+     "id": 32,
+     "name": "Foreign Affairs"
+    },
+    {
+     "id": 22,
+     "name": "Defense"
+    },
+    {
+     "id": 61,
+     "name": "National Security"
+    }
+   ]
+  },
+  {
+   "id": 2568,
+   "timespan": "2026",
+   "ratingName": "Anti-Corruption Score",
+   "ratingText": "Senator Elizabeth Warren supported the interests of the End Citizens United A+ percent in 2026.",
+   "ratingId": 14384,
+   "rating": "A+",
+   "categories": [
+    {
+     "id": 12,
+     "name": "Elections"
+    },
+    {
+     "id": 79,
+     "name": "Campaign Finance"
+    }
+   ]
+  }
+ ]
+}

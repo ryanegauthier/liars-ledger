@@ -14,6 +14,7 @@
 //   GET  /api/congress/*       - Congress.gov proxy
 //   GET  /api/votesmart/*      - VoteSmart proxy (free - sourced data, not AI-generated)
 //   GET  /api/govtrack/vote_voter - a member's roll-call votes, GovTrack-shaped (rollcalls.js store)
+//   GET  /api/ratings/:candidateId - curated VoteSmart interest group ratings (vsRatings.js)
 //   GET  /api/legislators      - congress-legislators dataset (cached)
 //   GET  /health               - health check
 //   POST /pricing/checkout     - create Square payment link for Pro subscription
@@ -34,6 +35,7 @@ import { votesmart } from "./providers/votesmart.js";
 import { govtrack }  from "./providers/govtrack.js";
 import { verifyClaim } from "./providers/verify.js";
 import { createRollCallStore, toGovTrackEntry } from "./providers/rollcalls.js";
+import { createRatingsService, toLegacyRatingsResponse } from "./providers/vsRatings.js";
 import { kv, createToken, getToken, getScans, incrementUserCount, getScanLimit, upgradeTier, commitScan, recordProviderFailure, storeOrderTemplateMapping, lookupTokenByOrderTemplate, storeSquareCustomerMapping, lookupTokenBySquareCustomer, storeSquareSubscriptionMapping, lookupTokenBySquareSubscription, recordFailedCharge, clearFailedCharges, setDowngradeReason, clearDowngradeReason, getDowngradeReason } from "./providers/store.js";
 import { requireToken, countScan, requireScanToken } from "./middleware/auth.js";
 import * as square from "./providers/square.js";
@@ -725,6 +727,23 @@ app.get("/api/votesmart/*", requireToken, wrap(async (req, res) => {
     return res.status(400).json({ error: `Invalid VoteSmart query parameter: ${invalidParam}` });
   }
 
+  // Interest group ratings are curated and cached server-side (vsRatings.js):
+  // the raw endpoint pages 10 rows at a time and the extension's group IDs
+  // are mostly stale. A request without page/perPage is how the extension
+  // in the Chrome Web Store asks, so it gets the curated list translated to
+  // the IDs it expects. Requests that do page are passed through untouched.
+  if (path === "v1/ratings/by-candidate" && !req.query.page && !req.query.perPage) {
+    const candidateId = Number(req.query.candidateId);
+    if (!Number.isInteger(candidateId) || candidateId <= 0) {
+      return res.status(400).json({ error: "candidateId must be a VoteSmart candidate ID." });
+    }
+    try {
+      return res.json(toLegacyRatingsResponse(await ratings.get(candidateId)));
+    } catch (e) {
+      return res.status(502).json({ error: e.message });
+    }
+  }
+
   const query = buildAllowlistedQuery(req.query, VOTESMART_ALLOWED_PARAMS);
 
   try {
@@ -736,6 +755,22 @@ app.get("/api/votesmart/*", requireToken, wrap(async (req, res) => {
 }));
 
 const rollCalls = createRollCallStore({ kv });
+const ratings = createRatingsService({ votesmart, kv });
+
+// GET /api/ratings/:candidateId - curated interest group ratings with group
+// names, for the next extension release (and the profile page). Same cache
+// as the legacy path above.
+app.get("/api/ratings/:candidateId", requireToken, wrap(async (req, res) => {
+  const candidateId = Number(req.params.candidateId);
+  if (!Number.isInteger(candidateId) || candidateId <= 0) {
+    return res.status(400).json({ error: "candidateId must be a VoteSmart candidate ID." });
+  }
+  try {
+    res.json({ ok: true, candidateId, ratings: await ratings.get(candidateId), source: "VoteSmart" });
+  } catch (e) {
+    res.status(502).json({ ok: false, error: e.message });
+  }
+}));
 
 // ── Roll-call votes (replaces the GovTrack proxy) ─────────────────────────────
 // GovTrack's API was shut down in 2026: every /api/v2 request 403s (see
