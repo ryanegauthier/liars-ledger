@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?><vote_summary>
+  <congress>119</congress>
+  <session>2</session>
+  <congress_year>2026</congress_year>
+  <votes>
+    <vote>
+      <vote_number>00279</vote_number>
+      <vote_date>20-Nov</vote_date>
+      <issue>PN1272-10</issue>
+      <question>On the Cloture Motion
+         </question>
+      <result>Agreed to</result>
+      <vote_tally>
+        <yeas>45</yeas>
+        <nays>33</nays>
+      </vote_tally>
+      <title>Motion to Invoke Cloture: Jesus A. Osete to be U.S. District Judge for the Western District of Missouri</title>
+    </vote>
+    <vote>
+      <vote_number>00278</vote_number>
+      <vote_date>20-Nov</vote_date>
+      <issue>PN1272-8</issue>
+      <question>On the Cloture Motion
+         </question>
+      <result>Agreed to</result>
+      <vote_tally>
+        <yeas>48</yeas>
+        <nays>31</nays>
+      </vote_tally>
+      <title>Motion to Invoke Cloture: Peter M. Mansfield to be U.S. District Judge for the Eastern District of Louisiana</title>
+    </vote>
+    <vote>
+      <vote_number>00277</vote_number>
+      <vote_date>20-Nov</vote_date>
+      <issue>PN1272-7</issue>
+      <question>On the Cloture Motion
+         </question>
+      <result>Agreed to</result>
+      <vote_tally>
+        <yeas>47</yeas>
+        <nays>35</nays>
+      </vote_tally>
+      <title>Motion to Invoke Cloture: Robert E. Long, Jr., to be U.S. District Judge for the Middle District of Florida</title>
+    </vote>
+    </votes>
+</vote_summary>

@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rollcall-vote>
+  <vote-metadata>
+    <majority>R</majority>
+    <congress>119</congress>
+    <session>2nd</session>
+    <chamber>U.S. House of Representatives</chamber>
+    <rollcall-num>74</rollcall-num>
+    <legis-num>H RES 1075</legis-num>
+    <vote-question>On Agreeing to the Resolution</vote-question>
+    <vote-type>RECORDED VOTE</vote-type>
+    <vote-result>Passed</vote-result>
+    <action-date>24-Feb-2026</action-date>
+    <action-time time-etz="14:18">2:18 PM</action-time>
+    <vote-desc>Providing for consideration of the bill (H.R. 4626) the Don’t Mess With My Home Appliances Act; and providing for consideration of the bill (H.R. 4758) the Homeowner Energy Freedom Act</vote-desc>
+    <vote-totals>
+      <totals-by-party-header>
+        <party-header>Party</party-header>
+        <yea-header>Ayes</yea-header>
+        <nay-header>Noes</nay-header>
+        <present-header>Answered “Present”</present-header>
+        <not-voting-header>Not Voting</not-voting-header>
+      </totals-by-party-header>
+      </vote-totals>
+  </vote-metadata>
+  <vote-data>
+    <recorded-vote>
+      <legislator name-id="A000370" sort-field="Adams" unaccented-name="Adams" party="D" state="NC" role="legislator">Adams</legislator>
+      <vote>No</vote>
+    </recorded-vote>
+    <recorded-vote>
+      <legislator name-id="A000055" sort-field="Aderholt" unaccented-name="Aderholt" party="R" state="AL" role="legislator">Aderholt</legislator>
+      <vote>Aye</vote>
+    </recorded-vote>
+    <recorded-vote>
+      <legislator name-id="A000371" sort-field="Aguilar" unaccented-name="Aguilar" party="D" state="CA" role="legislator">Aguilar</legislator>
+      <vote>No</vote>
+    </recorded-vote>
+    <recorded-vote>
+      <legislator name-id="A000379" sort-field="Alford" unaccented-name="Alford" party="R" state="MO" role="legislator">Alford</legislator>
+      <vote>Aye</vote>
+    </recorded-vote>
+    </vote-data>
+</rollcall-vote>
