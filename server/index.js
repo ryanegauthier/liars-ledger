@@ -13,7 +13,7 @@
 //   POST /api/verify-claim     - claim verification (Pro only)
 //   GET  /api/congress/*       - Congress.gov proxy
 //   GET  /api/votesmart/*      - VoteSmart proxy (free - sourced data, not AI-generated)
-//   GET  /api/govtrack/*       - GovTrack proxy (no key)
+//   GET  /api/govtrack/vote_voter - a member's roll-call votes, GovTrack-shaped (rollcalls.js store)
 //   GET  /api/legislators      - congress-legislators dataset (cached)
 //   GET  /health               - health check
 //   POST /pricing/checkout     - create Square payment link for Pro subscription
@@ -33,7 +33,8 @@ import { congress }  from "./providers/congress.js";
 import { votesmart } from "./providers/votesmart.js";
 import { govtrack }  from "./providers/govtrack.js";
 import { verifyClaim } from "./providers/verify.js";
-import { createToken, getToken, getScans, incrementUserCount, getScanLimit, upgradeTier, commitScan, recordProviderFailure, storeOrderTemplateMapping, lookupTokenByOrderTemplate, storeSquareCustomerMapping, lookupTokenBySquareCustomer, storeSquareSubscriptionMapping, lookupTokenBySquareSubscription, recordFailedCharge, clearFailedCharges, setDowngradeReason, clearDowngradeReason, getDowngradeReason } from "./providers/store.js";
+import { createRollCallStore, toGovTrackEntry } from "./providers/rollcalls.js";
+import { kv, createToken, getToken, getScans, incrementUserCount, getScanLimit, upgradeTier, commitScan, recordProviderFailure, storeOrderTemplateMapping, lookupTokenByOrderTemplate, storeSquareCustomerMapping, lookupTokenBySquareCustomer, storeSquareSubscriptionMapping, lookupTokenBySquareSubscription, recordFailedCharge, clearFailedCharges, setDowngradeReason, clearDowngradeReason, getDowngradeReason } from "./providers/store.js";
 import { requireToken, countScan, requireScanToken } from "./middleware/auth.js";
 import * as square from "./providers/square.js";
 import { extractArticleTextPublic, ArticleFetchError } from "./providers/articleFetch.js";
@@ -734,29 +735,47 @@ app.get("/api/votesmart/*", requireToken, wrap(async (req, res) => {
   }
 }));
 
-// ── GovTrack proxy ────────────────────────────────────────────────────────────
-// GET /api/govtrack/* → https://www.govtrack.us/api/v2/* (no key required)
-// GovTrack allowlist is intentionally conservative: only the parameters
-// actually used by the extension are permitted (person, limit, order_by).
-// The upstream API accepts much larger page sizes than the old 100-element
-// cap, and this limit is now based on live endpoint verification rather than
-// an educated guess. Keep this bounded to avoid unbounded page-size abuse.
-const GOVTRACK_ALLOWED_PARAMS = new Set(["person", "limit", "order_by"]);
-const GOVTRACK_MAX_LIMIT = 1000;
+const rollCalls = createRollCallStore({ kv });
 
-app.get("/api/govtrack/*", requireToken, wrap(async (req, res) => {
-  const path  = req.params[0];
-  const query = buildAllowlistedQuery(req.query, GOVTRACK_ALLOWED_PARAMS, {
-    maxLimit: GOVTRACK_MAX_LIMIT,
-  });
+// ── Roll-call votes (replaces the GovTrack proxy) ─────────────────────────────
+// GovTrack's API was shut down in 2026: every /api/v2 request 403s (see
+// CHANGELOG Known Issues). Votes now come from the official House Clerk and
+// Senate LIS files, fetched once into a server-side store (rollcalls.js).
+//
+// GET /api/govtrack/vote_voter?person=<govtrack id>&limit=N keeps working
+// for extensions already in the Chrome Web Store: it answers from the store
+// in GovTrack's response shape, so their vote history returns as soon as
+// this deploys, with no extension update. The legacy limit=50 is honored
+// (larger pages would land in the client's session storage). Any other
+// /api/govtrack/* path returns 410.
+const VOTE_VOTER_MAX_LIMIT = 100;
 
-  try {
-    const result = await govtrack.fetch(`/${path}?${query.toString()}`);
-    res.json(result);
-  } catch (e) {
-    res.status(502).json({ error: e.message });
+app.get("/api/govtrack/vote_voter", requireToken, wrap(async (req, res) => {
+  const govtrackId = Number(req.query.person);
+  if (!Number.isInteger(govtrackId) || govtrackId <= 0) {
+    return res.status(400).json({ error: "person must be a GovTrack person ID." });
   }
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), VOTE_VOTER_MAX_LIMIT);
+
+  await rollCalls.load();
+  rollCalls.syncIfStale();
+
+  let bioguide = null;
+  try {
+    const leg = (await govtrack.legislators()).find((l) => l.id?.govtrack === govtrackId);
+    bioguide = leg?.id?.bioguide || null;
+  } catch (e) {
+    return res.status(502).json({ error: "Member roster is temporarily unavailable." });
+  }
+  if (!bioguide) return res.json({ meta: { limit, offset: 0, total_count: 0 }, objects: [] });
+
+  const entries = rollCalls.memberVotes(bioguide, { limit }).map(toGovTrackEntry);
+  res.json({ meta: { limit, offset: 0, total_count: rollCalls.memberVoteCount(bioguide) }, objects: entries });
 }));
+
+app.get("/api/govtrack/*", requireToken, (req, res) => {
+  res.status(410).json({ error: "GovTrack's API was discontinued. Roll-call votes are served from /api/govtrack/vote_voter." });
+});
 
 // ── Congress legislators dataset (static, cached) ─────────────────────────────
 // GET /api/legislators → unitedstates.github.io congress-legislators-current.json
@@ -1172,6 +1191,11 @@ if (process.env.NODE_ENV !== "test") {
     console.log(`[Liar's Ledger API] Congress:  ${process.env.CONGRESS_API_KEY ? "✓" : "✗ missing"}`);
     console.log(`[Liar's Ledger API] VoteSmart: ${process.env.VOTESMART_EMAIL  ? "✓" : "✗ missing"}`);
     console.log(`[Liar's Ledger API] Redis:     ${process.env.UPSTASH_REDIS_REST_URL ? "✓" : "✗ missing"}`);
+    // Load stored roll calls, then fetch any new ones. The first ever run
+    // fetches the whole Congress (~1,600 files, a few minutes) in the
+    // background; requests meanwhile get whatever is stored so far.
+    rollCalls.sync().catch((e) => console.error("[rollcalls] startup sync failed:", e.message));
+    setInterval(() => rollCalls.syncIfStale(), 10 * 60 * 1000).unref();
   });
 }
 

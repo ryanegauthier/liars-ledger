@@ -40,6 +40,28 @@ const redis = new Redis({
   token: process.env.UPSTASH_REDIS_REST_TOKEN,
 });
 
+// Generic JSON key/value access for server-side data caches (roll-call
+// votes, bill titles - see rollcalls.js), so this file stays the only one
+// that talks to Redis. Upstash may hand back already-parsed objects, so
+// reads accept either form.
+function parseStored(raw) {
+  if (raw == null) return null;
+  return typeof raw === "string" ? JSON.parse(raw) : raw;
+}
+
+export const kv = {
+  async getJson(key) {
+    return parseStored(await redis.get(key));
+  },
+  async setJson(key, value) {
+    await redis.set(key, JSON.stringify(value));
+  },
+  async mgetJson(keys) {
+    if (!keys.length) return [];
+    return (await redis.mget(...keys)).map(parseStored);
+  },
+};
+
 const SCAN_TTL_SECONDS = 60 * 60 * 48; // 48h - covers timezone edge cases
 
 // ---------------------------------------------------------------------------

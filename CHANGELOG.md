@@ -66,6 +66,82 @@ The Account panel's "Restore Pro after reinstalling" flow asks users to paste a 
 
 ---
 
+## [Unreleased] - Roll-call votes from official sources (server only)
+
+### Fixed: GovTrack's API is gone; roll-call vote history was empty on every scan
+
+**Found** 2026-11-27. Every GovTrack request from the production server
+returned 403 (`/api/govtrack/vote_voter`, `/person/...`, `/vote` all `502
+{"error":"GovTrack 403 on ..."}`); in a browser, `/api/v2/vote_voter` is
+GovTrack's own 404 page. GovTrack announced the end of its API and bulk
+data, and third-party listings say it shut down in summer 2026. Every scan's
+"roll-call votes" section has been empty since then. Scans were still
+charged: `src/api.js` sets `_govtrack_errored`, but nothing reads it, and
+background.js only skips the commit when congress.gov AND GovTrack both fail
+for every member (CLAUDE.md said otherwise; corrected locally).
+
+**server/providers/rollcalls.js** (new) - a server-side store of every roll
+call in the current Congress (119th), from the official sources: House Clerk
+XML per roll (members by bioguide ID) and Senate LIS XML per vote (LIS IDs
+mapped to bioguide through congress-legislators, 100/100 senators). Each vote
+is fetched once for all members; a member's record is read from memory.
+Bill titles come from Congress.gov `/bill`, once per bill, for topic matching.
+Quorum calls are kept (so they aren't refetched) but never appear in a
+record. Positions stored as Y/N/P/V; the House's Aye/No map to Yea/Nay.
+- Stored in Redis (new `kv` JSON helper in store.js, which stays the only
+  file that talks to Redis) as chunks of 50 votes per chamber/session
+  (`rc:v1:{h|s}:{congress}:{session}:{chunk}`), plus `rc:v1:meta:{congress}`
+  and `rc:v1:titles:{congress}`. Measured on a full sync: 31 keys, largest
+  value 315KB (Upstash's per-value limit is 1MB), 5.4MB total. A restart
+  loads from Redis and only checks the indexes for new votes.
+- Sync runs at startup and whenever the last one is over 30 minutes old
+  (checked every 10 minutes and on each request). Concurrent calls share
+  one run. Current session first.
+- House: the number of rolls per session comes from Congress.gov's
+  `/house-vote` index, not from probing, because a roll that doesn't exist
+  yet returns HTTP 200 with `<xml>Error sanitizing file ...</xml>`, the same
+  body a transient failure can produce. Fetched 4 at a time.
+- Senate: senate.gov returned 403 after a burst (live: 44 of 659 votes refused
+  at 4 at a time, then the next session's menu, and the block lasted at least
+  several minutes). Senate files are now fetched one at a time with a 400ms
+  pause, newest first, and a 403 ends the Senate part of that run; the rest
+  is picked up 30 minutes later.
+- Failed files are not stored, so they're retried on the next run.
+
+**server/index.js** - `GET /api/govtrack/vote_voter?person=<govtrack id>` now
+answers from the store in GovTrack's response shape (`option.value`,
+`vote.{created, question, description, related_bill, chamber, congress,
+session, number}`), so extensions already in the Chrome Web Store get their
+vote history back as soon as this deploys, with no extension update. The
+legacy `limit=50` is honored (cap 100): larger pages would land in the
+client's session storage. Any other `/api/govtrack/*` path returns 410. The
+old pass-through proxy and its allowlist are removed.
+
+**Verified live (2026-11-27)**, full sync into an in-memory store (no
+production Redis writes): 687 House and 616 Senate votes, 481 bill titles,
+78s. Records checked for Baumgartner, Begich, Wasserman Schultz (686 votes
+each, latest Nov 19), Warren (616), and Speaker Johnson (532: the Clerk omits
+the Speaker on votes he doesn't cast, so he has no "Not Voting" entries
+rather than invented ones). **Not yet verified**: Senate session 2 (2026),
+blocked by senate.gov's 403 after the first burst; the paced fetch has not
+been tried live yet. Official vote links (clerk.house.gov/Votes/{year}{roll}
+and the senate.gov .htm pages) not yet opened.
+
+**Tests**: `server/test/unit/rollcalls.test.js` (16) with trimmed real House,
+Senate, and Senate-menu files in `test/unit/fixtures/`: parsing, the Clerk
+error body, LIS mapping, chunked persistence and restart, retry after a
+failed file, the Senate 403 stop-and-resume, shared concurrent runs, and the
+GovTrack-shaped output.
+
+**Next (same plan, not in this change)**: a topic-matched record endpoint
+that searches each member's full vote and bill history server-side (and the
+full paged Congress.gov sponsored/cosponsored history with `policyArea`
+matching), moving these lists out of the extension's session storage; a
+per-article extraction cache; Claude first with Mistral only as a fallback.
+Those need an extension release.
+
+---
+
 ## [0.17.18] - 2026-10-31
 
 ### Fixed: dual-model mode never ran both models; provider 429 shown as "Daily scan limit reached"; failed scans charged; title fragments as names
