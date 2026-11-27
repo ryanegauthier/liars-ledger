@@ -2,7 +2,7 @@
 // Claude API provider. Prompt and parser live in _shared.js; retry and
 // error categories live in providerFetch.js.
 
-import { buildPrompt, parseContent, TEMPERATURE } from "./_shared.js";
+import { buildPrompt, parseContent, TEMPERATURE, MAX_OUTPUT_TOKENS } from "./_shared.js";
 import { fetchWithRetry } from "./providerFetch.js";
 
 const CLAUDE_API_URL = "https://api.anthropic.com/v1/messages";
@@ -21,7 +21,7 @@ async function extract(articleText) {
     },
     body: JSON.stringify({
       model:       CLAUDE_MODEL,
-      max_tokens:  1024,
+      max_tokens:  MAX_OUTPUT_TOKENS,
       temperature: TEMPERATURE,
       messages:    [{ role: "user", content: buildPrompt(articleText) }],
     }),
@@ -35,6 +35,9 @@ async function extract(articleText) {
     return { ok: false, error: "Claude returned non-JSON response", category: "upstream" };
   }
 
+  if (data?.stop_reason === "max_tokens") {
+    return { ok: false, error: `Claude output truncated at max_tokens (${MAX_OUTPUT_TOKENS})`, category: "upstream" };
+  }
   const content = data?.content?.[0]?.text;
   if (!content) return { ok: false, error: "Claude returned empty content", category: "upstream" };
 

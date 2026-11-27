@@ -9,6 +9,12 @@
 
 export const MAX_ARTICLE_CHARS = 12000;
 export const TEMPERATURE       = 0.0;   // deterministic output across all providers
+// Output cap for both providers. Was 1024, which a 10-figure article fills:
+// a CNN piece measured 965 output tokens on Haiku 4.5 (pretty-printed JSON),
+// and a slightly different excerpt went over and was cut off mid-JSON,
+// surfacing as "unparseable JSON". Only generated tokens are billed, so the
+// headroom costs nothing on normal articles.
+export const MAX_OUTPUT_TOKENS = 4096;
 
 export function buildPrompt(articleText) {
   const excerpt = articleText.trim().slice(0, MAX_ARTICLE_CHARS);
