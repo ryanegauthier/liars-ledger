@@ -108,11 +108,39 @@ describe("extractArticleTextPublic - SSRF guard", () => {
 describe("extractArticleTextPublic - size and content limits", () => {
   it("rejects a response whose Content-Length exceeds the cap", async () => {
     mockFetch.mockResolvedValue(fakeResponse({
-      headers: { "content-length": String(3 * 1024 * 1024) }, // 3MB > 2MB cap
+      headers: { "content-length": String(9 * 1024 * 1024) }, // 9MB > 8MB download cap
       text: "irrelevant",
     }));
     const { extractArticleTextPublic } = await import("../../providers/articleFetch.js");
     await expect(extractArticleTextPublic("http://public.example.com/big")).rejects.toMatchObject({ code: "ERR-TOO-LARGE" });
+  });
+
+  it("scans a page over the parse cap when most of it is script and CSS (the CNN case)", async () => {
+    // ~4.5MB raw, like a real CNN article page: the article is a sliver,
+    // the rest is inline script and style that stripNonContent removes.
+    const bulk = "x".repeat(1024 * 1024);
+    const html = htmlWithArticle("Single Payer Gets a Second Wind", "The senator voted yes on the bill. ".repeat(20))
+      .replace("<head>", `<head><script>${bulk}${bulk}</script><style>${bulk}</style>`)
+      .replace("</body>", `<script>${bulk}</script><svg>${"<path/>".repeat(50000)}</svg></body>`);
+    expect(html.length).toBeGreaterThan(4 * 1024 * 1024);
+    mockFetch.mockResolvedValue(fakeResponse({ headers: { "content-length": String(html.length) }, text: html }));
+    const { extractArticleTextPublic } = await import("../../providers/articleFetch.js");
+    const result = await extractArticleTextPublic("http://public.example.com/cnn");
+    expect(result.title).toBe("Single Payer Gets a Second Wind");
+    expect(result.text).toContain("The senator voted yes");
+  });
+
+  it("rejects a page that is still over the parse cap after stripping", async () => {
+    const html = htmlWithArticle("Huge", "word ".repeat(600 * 1024)); // ~3MB of real text
+    mockFetch.mockResolvedValue(fakeResponse({ text: html }));
+    const { extractArticleTextPublic } = await import("../../providers/articleFetch.js");
+    await expect(extractArticleTextPublic("http://public.example.com/huge")).rejects.toMatchObject({ code: "ERR-TOO-LARGE" });
+  });
+
+  it("enforces the download cap when the response has no Content-Length or stream", async () => {
+    mockFetch.mockResolvedValue(fakeResponse({ text: "a".repeat(9 * 1024 * 1024) }));
+    const { extractArticleTextPublic } = await import("../../providers/articleFetch.js");
+    await expect(extractArticleTextPublic("http://public.example.com/nolength")).rejects.toMatchObject({ code: "ERR-TOO-LARGE" });
   });
 
   it("rejects a page with no extractable article content", async () => {
@@ -132,5 +160,34 @@ describe("extractArticleTextPublic - size and content limits", () => {
     expect(result.text).not.toContain("<p>");
     expect(result.text).not.toContain("<article>");
     expect(result.text).toContain("The senator voted yes");
+  });
+});
+
+describe("stripNonContent", () => {
+  it("removes script, style, svg, and comments, case-insensitively, keeping the content", async () => {
+    const { stripNonContent } = await import("../../providers/articleFetch.js");
+    const html = `<p>a</p><SCRIPT src="x.js">var s = "<p>no</p>";</Script ><p>b</p><style media="all">p{}</STYLE>`
+      + `<svg viewBox="0 0 1 1"><path d="M0"/></svg><!-- note <p>no</p> --><p>c</p>`;
+    expect(stripNonContent(html)).toBe("<p>a</p><p>b</p><p>c</p>");
+  });
+
+  it("keeps JSON-LD scripts, which Readability reads metadata from", async () => {
+    const { stripNonContent } = await import("../../providers/articleFetch.js");
+    const ld = `<script type="application/ld+json">{"headline":"H"}</script>`;
+    expect(stripNonContent(`${ld}<script>x()</script><p>a</p>`)).toBe(`${ld}<p>a</p>`);
+  });
+
+  it("drops the rest of the document after an unclosed element, like a browser", async () => {
+    const { stripNonContent } = await import("../../providers/articleFetch.js");
+    expect(stripNonContent("<p>a</p><script>never closed <p>b</p>")).toBe("<p>a</p>");
+    expect(stripNonContent("<p>a</p><!-- never closed <p>b</p>")).toBe("<p>a</p>");
+  });
+
+  it("stays linear on hostile input (many unclosed openers, no '>')", async () => {
+    const { stripNonContent } = await import("../../providers/articleFetch.js");
+    const hostile = "<script".repeat(1_000_000); // 7MB, under the download cap
+    const t0 = Date.now();
+    stripNonContent(hostile);
+    expect(Date.now() - t0).toBeLessThan(2000);
   });
 });
